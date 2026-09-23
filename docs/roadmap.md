@@ -32,12 +32,12 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `hooks` | Hook runner: dispatch, wait, timeout, stop, recovery of a run | #3, `internal/hooks` |
 | `vocabulary` | [Vocabulary](vocabulary.md) of the terms used everywhere | #4 |
 | `pr-template` | No PR template: the description is the commit body | #5, #6 |
+| `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | `internal/config` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`config`](#config) | none | yes |
 | [`redact`](#redact) | none | yes |
 | [`notify`](#notify) | `config` | yes |
 | [`gitwatch`](#gitwatch) | `config` | plan first |
@@ -47,26 +47,6 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### config
-
-Flags and environment variables, with validation.
-
-- **Read first:** [development.md](development.md#go-conventions) (every flag
-  has its `NOPS_<NAME>` env var; every interval and timeout is configurable),
-  [dashboard.md](dashboard.md#authentication) (`NOPS_AUTH_HEADER`),
-  [architecture.md](architecture.md#execution-model-active-not-lazy).
-- **Scope:** `internal/config`. Everything the other packages will need: Nomad
-  address and namespace (starting from `api.DefaultConfig()`), git repo, branch
-  and credentials, database path, listen address, auth header, notification
-  URL, and the intervals and timeouts (git poll, Nomad drift check, engine
-  tick, hook poll for `hooks.New`, apply timeout). Not in scope: reading the
-  config in the other packages.
-- **Done when:** `docs/configuration.md` exists (it is listed as "not present
-  yet" in [docs/README.md](README.md)) and lists every flag, env var and
-  default; unit tests cover flag over env over default and every invalid value.
-- **Notes:** precedence flag > env > default is the usual choice: record it in
-  the decision log.
 
 ### redact
 
@@ -92,14 +72,16 @@ Notifications through a generic webhook.
 
 - **Read first:** [error-handling.md](error-handling.md#notifications).
 - **Scope:** `internal/notify`. A JSON POST to a configurable URL when a
-  deployment becomes `pending_approval` and when it becomes `failed`. Fixed
-  request timeout, no retries. A failed delivery is logged at WARN and never
-  blocks the state machine.
+  deployment becomes `pending_approval` and when it becomes `failed`. A
+  configurable request timeout, no retries. A failed delivery is logged at
+  WARN and never blocks the state machine.
 - **Done when:** `httptest` tests cover the payload, a non-2xx answer, a
   timeout and an unreachable URL (all WARN, no error to the caller).
 - **Notes:** the payload should carry `deployment_id`, `job`, `namespace`,
   `state`, `error` and `commit`, so ntfy, Gotify or n8n can use it without
-  looking anything up.
+  looking anything up. The URL and the request timeout come from
+  `config.Config` (`NotifyURL`, `NotifyTimeout`); an empty URL means
+  notifications are disabled, which is not an error.
 
 ### gitwatch
 
@@ -115,8 +97,12 @@ The repo, read-only, kept in memory.
   come from. Read-only: invariant 5.
 - **Ready: plan first.** Questions for the plan: the interface the engine
   consumes; how a job file is told from a hook file and from a vars file; how
-  the hook job is found by its ID; credentials for a private repo (token or
-  SSH key); how to test against a local bare repository.
+  the hook job is found by its ID; how to test against a local bare
+  repository.
+- **Notes from `config`:** credentials are settled: HTTPS basic auth with
+  `config.Config.GitUsername` and `GitToken` (already read from its file; empty
+  means a public repo), no SSH. Branch and poll interval are `GitBranch` and
+  `GitPollInterval`.
 
 ### engine-detection
 
@@ -198,6 +184,12 @@ The dashboard and the git webhook.
 - **Read first:** [architecture.md](architecture.md), the config docs.
 - **Scope:** `cmd/nops`: build config, store, Nomad client, engine and web,
   start the three loops, shut down cleanly on a signal.
+- **Notes from `config`:** `config.Load(os.Args[1:], os.Getenv, os.Stderr)`
+  (exit 0 on `flag.ErrHelp`); the Nomad client is
+  `nomadx.New(cfg.Nomad(), cfg.NomadNamespace)`, never `api.DefaultConfig()`;
+  `hooks.New` takes `HookPollInterval`; log a WARN at startup when
+  `NomadTLSSkipVerify` is set. Never log the `Config` itself: it holds the
+  tokens.
 - **Done when:** `go build ./...` produces the binary and it starts against a
   `nomad agent -dev` (a smoke test in `tests/integration`).
 

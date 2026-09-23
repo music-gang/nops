@@ -40,7 +40,7 @@ type Client struct {
 	namespace string
 }
 
-// New creates a Client. Use api.DefaultConfig() to start from the standard
+// New creates a Client. nops passes config.Config.Nomad(), which ignores the
 // NOMAD_* environment variables. An empty namespace means "default".
 func New(cfg *api.Config, namespace string) (*Client, error) {
 	c, err := api.NewClient(cfg)
