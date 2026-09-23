@@ -79,11 +79,13 @@ option is listed here).
 |---|---|---|---|
 | `-git-url` | `NOPS_GIT_URL` | **required** | URL of the repository holding the jobs. |
 | `-git-branch` | `NOPS_GIT_BRANCH` | `main` | Branch to read. |
+| `-git-path` | `NOPS_GIT_PATH` | none | Subdirectory of the repository holding the job files. Relative, no `..`. Unset: the repository root. |
 | `-git-username` | `NOPS_GIT_USERNAME` | `git` | Username sent with the token (GitHub ignores it; GitLab wants `oauth2`, Gitea the account name). |
 | `-git-token-file` | `NOPS_GIT_TOKEN_FILE` | none | File holding the HTTPS token. Unset: public repository. Requires an `https://` URL. |
 
 A private repository is read over HTTPS with a token (basic auth). SSH is not
-supported.
+supported. Which files under `-git-path` are read as jobs is described in
+[gitwatch](design/gitwatch.md#which-files-are-read).
 
 ## Dashboard
 

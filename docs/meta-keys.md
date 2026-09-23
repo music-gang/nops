@@ -52,9 +52,13 @@ job "api" {
 
 **HCL2 variables.** Verified on Nomad 2.0.3: `/v1/jobs/parse` accepts the
 contents of a var-file in the `Variables` field; with no value and no default
-it answers `Unset variable`. Rule: if a `<job>.vars.hcl` exists next to
-`<job>.hcl`, nops passes it as `Variables`; otherwise every variable must have
-a default. A job that cannot be parsed creates no deployment and is logged at
+it answers `Unset variable`. Rule: if a `<name>.vars.hcl` exists next to the
+job file `<name>.nomad.hcl` (or `<name>.nomad`), nops passes it as
+`Variables`; otherwise every variable must have a default. It is what
+`nomad job run -var-file=...` would do: a generic job keeps its changing
+values (image tag, count, domain) in that small file, which is in git and so
+never holds a secret. Which files are read is described in
+[gitwatch](design/gitwatch.md#which-files-are-read). A job that cannot be parsed creates no deployment and is logged at
 ERROR. Hooks do not need variables: they receive everything through dispatch
 meta.
 

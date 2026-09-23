@@ -35,39 +35,18 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | #8, `internal/config` |
 | `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | #9, `internal/redact` |
 | `notify` | Notifications through built-in adapters ([notifications](error-handling.md#notifications)) | `internal/notify` |
+| `gitwatch` | In-memory git watcher ([design](design/gitwatch.md)), `-git-path` in `config` | #12, `internal/gitwatch` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`gitwatch`](#gitwatch) | `config` | plan first |
 | [`engine-detection`](#engine-detection) | `gitwatch`, `redact`, `notify` | plan first |
 | [`engine-apply`](#engine-apply) | `engine-detection` | plan first |
 | [`engine-recovery`](#engine-recovery) | `engine-apply` | plan first |
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### gitwatch
-
-The repo, read-only, kept in memory.
-
-- **Read first:** [architecture.md](architecture.md#execution-model-active-not-lazy),
-  the patterns table in [philosophy.md](philosophy.md#patterns-reused-from-nomad-gitops)
-  (go-git in memory, poll, webhook with a coalescing trigger), and
-  [meta-keys.md](meta-keys.md#syntax-and-parsing) (`<job>.vars.hcl`).
-- **Scope:** `internal/gitwatch`. Clone and poll with go-git, a trigger for the
-  webhook (a channel of size 1, so bursts coalesce), and a way for the engine
-  to get the job files (content, optional vars file) with the commit SHA they
-  come from. Read-only: invariant 5.
-- **Ready: plan first.** Questions for the plan: the interface the engine
-  consumes; how a job file is told from a hook file and from a vars file; how
-  the hook job is found by its ID; how to test against a local bare
-  repository.
-- **Notes from `config`:** credentials are settled: HTTPS basic auth with
-  `config.Config.GitUsername` and `GitToken` (already read from its file; empty
-  means a public repo), no SSH. Branch and poll interval are `GitBranch` and
-  `GitPollInterval`.
 
 ### engine-detection
 
@@ -101,6 +80,15 @@ Compare the repo with Nomad and create the deployments.
   returns an error. It is synchronous and can take up to `-notify-timeout` per
   adapter, so call it in a goroutine if the cycle must not wait. Declare a
   one-method interface for it in `engine`.
+- **Notes from `gitwatch`:** `Watcher.Snapshot()` gives `{Commit, Files}`;
+  each `File` has `Path`, `Content`, and `VarsPath`/`Vars` (empty when there
+  is no vars file). Parse every file with `nomadx.ParseHCL(ctx, f.Content,
+  f.Vars)`, then classify by `meta.Parse`'s result: `nops_role == "hook"` is
+  a hook, `nops_managed` is a managed job, anything else is ignored. Two
+  files parsing to the same job ID are both ignored, with an ERROR. Run
+  detection on `Watcher.Changed()` and on the drift ticker; a parse cache
+  keyed by `(Content, Vars)` avoids re-parsing unchanged files on every drift
+  tick.
 
 ### engine-apply
 
@@ -165,6 +153,9 @@ The dashboard and the git webhook.
 - **Notes from `notify`:** notifications link to
   `<PublicURL>/deployments/<id>` (`config.Config.PublicURL`, no trailing
   slash): the dashboard must serve the deployment page at that path.
+- **Notes from `gitwatch`:** the webhook handler calls `Watcher.Trigger()`
+  (non-blocking) after checking the shared secret; it does not wait for a
+  poll to happen.
 
 ### wiring
 
@@ -182,6 +173,11 @@ The dashboard and the git webhook.
   `NotifyWebhookToken`, `NotifyDiscordURL`, `NotifySlackURL`, `NotifyNtfyURL` /
   `NotifyNtfyToken`, `NotifyGotifyURL` / `NotifyGotifyToken`, `PublicURL`,
   `NotifyTimeout`). With no adapter set it is a no-op, not an error.
+- **Notes from `gitwatch`:** `gitwatch.New(gitwatch.Options{URL: cfg.GitURL,
+  Branch: cfg.GitBranch, Path: cfg.GitPath, Username: cfg.GitUsername,
+  Token: cfg.GitToken, PollInterval: cfg.GitPollInterval}, log)`; call
+  `Start` before serving (its error is fatal, there is nothing to run
+  detection on), then run `Run` in its own goroutine.
 - **Done when:** `go build ./...` produces the binary and it starts against a
   `nomad agent -dev` (a smoke test in `tests/integration`).
 

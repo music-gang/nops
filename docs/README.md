@@ -27,6 +27,7 @@ New here? Start with the [project README](../README.md).
 **Contributing**
 - [development.md](development.md): tests, coverage, commands, Go conventions.
 - [design/decisions.md](design/decisions.md): the decision log.
+- [design/gitwatch.md](design/gitwatch.md): how the git repository is read.
 
 Not present yet, created together with the code: `acceptance/` (manual
 checklists for the real cluster).
