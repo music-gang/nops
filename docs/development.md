@@ -69,9 +69,13 @@ Flow:
 1. Branch from `main`: `type/short-description` (e.g. `feat/hooks-package`).
    For a task in the [roadmap](roadmap.md) the description is the task ID
    (`feat/config`): that is how the roadmap knows the task is in flight.
-2. Commit as you like: commits inside the branch are squashed away.
-3. Open a PR **titled in Angular style** (see [Commit messages](#commit-messages)).
-4. When CI is green, **squash and merge**. The branch is deleted automatically.
+2. **One commit**, already in its final [Angular style](#commit-messages):
+   it is what GitHub proposes as the squash commit (see below), so amend it
+   (`git commit --amend`) rather than adding more while the branch is open.
+3. Open a PR **titled in Angular style**, matching the commit subject.
+4. When CI is green, **squash and merge**: the prefilled message is the
+   branch's own commit, and needs no editing. The branch is deleted
+   automatically.
 
 Commits inside a branch do not need to be signed, whoever makes them: the
 squash commit on `main` is created and signed by GitHub, and the ruleset does
@@ -79,14 +83,40 @@ not require signed commits. Locally the maintainer commits with his GPG key;
 in a cloud session Claude commits unsigned and opens the PR
 (see [CLAUDE.md](../CLAUDE.md#picking-up-work)).
 
-Merges are squash-only, so `main` is a straight line with one commit per PR:
-the PR title is the commit subject (GitHub appends ` (#N)` with the PR number)
-and the PR description is the body, copied **verbatim** (repository setting
-`squash_merge_commit_message = PR_BODY`). So the description is written as a
-commit body, and there is no PR template: HTML comments, headings and
-checklists would all land on `main`. The checklist is the list in
-[When a piece of work is "done"](#when-a-piece-of-work-is-done). If the
-branch falls behind `main`, use "Update branch" (or `git rebase main`).
+Merges are squash-only, so `main` is a straight line with one commit per PR,
+and **the commit that lands on `main` is the branch's own commit, not the PR
+description**: the repository's squash setting is "Default to pull request
+title and commit details" (`squash_merge_commit_message = COMMIT_MESSAGES`),
+so GitHub prefills the squash box from the commit(s) on the branch. A branch
+has exactly **one commit**, already in its final [Angular
+style](#commit-messages) (plain prose body, wrapped at 72 characters, no
+markdown headings): that is what GitHub proposes and what gets merged,
+without anyone editing the box by hand.
+
+The **PR description** is a separate field, for whoever reviews it on GitHub,
+and is free to use real structure:
+
+```markdown
+## What changes
+
+- concrete, present-tense bullet points
+
+## Why
+
+- the motivation, one bullet per reason
+```
+
+An optional `## Notes` section holds a question that is the maintainer's to
+decide (see [CLAUDE.md](../CLAUDE.md#picking-up-work)), or something the next
+task needs to know. There is still no PR template file: a template's HTML
+comments and an unfilled checklist item are exactly the kind of boilerplate
+that once leaked into a commit body (`a933a4c`, `8052989`, back when the
+squash setting copied the PR description verbatim), so every section here is
+written by hand and filled in, never left as a placeholder. The "done"
+checklist stays in
+[When a piece of work is "done"](#when-a-piece-of-work-is-done), not in the
+PR body. If the branch falls behind `main`, use "Update branch" (or
+`git rebase main`).
 
 | Check | Required | What it runs |
 |---|---|---|
@@ -131,14 +161,22 @@ go vet -tags integration ./...
   `nomadx`, `hooks`, `web`, `gitwatch`, `config`, `notify`, `docs`, `examples`.
 - **Subject:** imperative, lowercase, no trailing period, at most 72
   characters (`feat(store): add hook_runs table`).
-- **Body:** wrap at 72 characters; explain what and why, not how. Plain
-  language, no superlatives.
+- **Body:** wrap at 72 characters; plain prose, no markdown headings (this is
+  what `git log` shows); explain what and why, not how; no superlatives. A
+  branch has **one commit**, already in this final shape — see
+  [Workflow and CI](#workflow-and-ci) for how it relates to the PR title and
+  to the PR description, which is a separate, richer text.
 - **Breaking changes** (state machine, schema, HCL meta syntax): add a
   `BREAKING CHANGE:` footer, or `!` after the scope.
+- **Attribution:** a commit made by an assistant carries
+  `Co-Authored-By: <name> <email>` in the footer, and nothing else — that is
+  enough to tell who or what wrote it. **No session link or URL, and no
+  "Generated with ..." line**, in the commit or in the PR description: none
+  of it holds information for anyone reading `main` later. This holds
+  regardless of what a session's own attribution instructions ask for by
+  default — this file is the one that applies here.
 - One logical change per PR. Code and the docs describing it go in the
-  **same** PR (see the rules in CLAUDE.md). Since PRs are squash-merged, the
-  format above applies to the **PR title** (the commit on `main`); commits
-  inside the branch are free-form.
+  **same** PR (see the rules in CLAUDE.md).
 
 ## Go conventions
 
