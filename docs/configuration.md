@@ -11,7 +11,7 @@ option is listed here).
   by the flag name in upper case, with dashes as underscores:
   `-apply-timeout` → `NOPS_APPLY_TIMEOUT`.
 - **Precedence: flag > variable > default.** A variable set to the empty
-  string counts as unset. A flag set to the empty string (`-notify-url=`) is a
+  string counts as unset. A flag set to the empty string (`-notify-ntfy-url=`) is a
   value and wins.
 - **nops reads nothing else.** The standard `NOMAD_*` variables (`NOMAD_ADDR`,
   `NOMAD_TOKEN`, `NOMAD_NAMESPACE`, …) are **ignored**. When nops runs as a
@@ -19,11 +19,13 @@ option is listed here).
   environment (and `NOMAD_TOKEN` with `identity { env = true }`). With the
   Nomad client's defaults nops would then work on the namespace it runs in,
   not on the one you configured.
-- **Secrets are files.** Tokens are passed as the path of a file that holds
-  them (`-git-token-file`, `-nomad-token-file`). That way they never appear in
+- **Secrets are files.** Tokens, and URLs that carry a token (Discord and
+  Slack webhooks), are passed as the path of a file that holds them
+  (`-git-token-file`, `-notify-discord-url-file`, …). That way they never appear in
   the command line (`ps`, `/proc/<pid>/cmdline`) or in the `args` of the job
   spec. The file is read once at startup and surrounding whitespace is
   trimmed. A path that cannot be read, or a file that is empty, is an error.
+  An error about a URL read from a file names the file, never the URL.
 - **Every error is reported at once**, each one prefixed with where the value
   came from (`flag -apply-timeout: ...`, `NOPS_APPLY_TIMEOUT: ...`, or
   `-git-url / NOPS_GIT_URL: required` when neither was set).
@@ -54,14 +56,36 @@ option is listed here).
 A private repository is read over HTTPS with a token (basic auth). SSH is not
 supported.
 
-## Dashboard and notifications
+## Dashboard
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
 | `-auth-header` | `NOPS_AUTH_HEADER` | `Remote-User` | Request header carrying the user authenticated by the reverse proxy (see [dashboard](dashboard.md#authentication)). |
-| `-notify-url` | `NOPS_NOTIFY_URL` | none | URL that receives [notifications](error-handling.md#notifications) as a JSON POST. Unset: notifications disabled. |
-| `-notify-timeout` | `NOPS_NOTIFY_TIMEOUT` | `10s` | Timeout of one notification request. |
+| `-public-url` | `NOPS_PUBLIC_URL` | none | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (nops sits behind a proxy and cannot know it). Notifications link to `<public-url>/deployments/<id>`. Unset: no links. |
+
+## Notifications
+
+Each [notification adapter](error-handling.md#notifications) has its own
+options and is on when its URL is set. Several can be on at once: each
+receives every notification. None set: notifications are off.
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-notify-webhook-url-file` | `NOPS_NOTIFY_WEBHOOK_URL_FILE` | none | File holding the URL that receives the generic JSON (n8n, Home Assistant, your own receiver). |
+| `-notify-webhook-token-file` | `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` | none | File holding a token sent as `Authorization: Bearer`. Needs the URL. |
+| `-notify-discord-url-file` | `NOPS_NOTIFY_DISCORD_URL_FILE` | none | File holding the Discord webhook URL (channel settings → Integrations → Webhooks). |
+| `-notify-slack-url-file` | `NOPS_NOTIFY_SLACK_URL_FILE` | none | File holding the Slack incoming webhook URL (`https://hooks.slack.com/services/...`). |
+| `-notify-ntfy-url` | `NOPS_NOTIFY_NTFY_URL` | none | ntfy topic URL, e.g. `https://ntfy.example.com/nops`. |
+| `-notify-ntfy-token-file` | `NOPS_NOTIFY_NTFY_TOKEN_FILE` | none | File holding an ntfy access token (`tk_...`). Needs the URL. |
+| `-notify-gotify-url` | `NOPS_NOTIFY_GOTIFY_URL` | none | Gotify server URL, e.g. `https://gotify.example.com`; nops posts to `<url>/message`. |
+| `-notify-gotify-token-file` | `NOPS_NOTIFY_GOTIFY_TOKEN_FILE` | none | File holding the Gotify application token. **Required** with the URL. |
+| `-notify-timeout` | `NOPS_NOTIFY_TIMEOUT` | `10s` | Timeout of one notification request, for every adapter. |
+
+The Discord and Slack URLs contain their token, so they are files like the
+other secrets. The ntfy and Gotify URLs are plain server addresses and their
+tokens are files. On the public `ntfy.sh` anyone who knows the topic can read
+it, so use a topic nobody can guess, or your own server with a token.
 
 ## Storage, intervals and timeouts
 
@@ -92,14 +116,22 @@ task "nops" {
     change_mode = "restart"
   }
 
+  template {
+    destination = "secrets/discord-url"
+    data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .discord_url }}{{ end }}"
+    change_mode = "restart"
+  }
+
   env {
-    NOPS_GIT_URL        = "https://git.example.com/ops/jobs.git"
-    NOPS_GIT_TOKEN_FILE = "${NOMAD_SECRETS_DIR}/git-token"
-    NOPS_NOMAD_ADDR     = "https://nomad.service.consul:4646"
-    NOPS_DB_PATH        = "/data/nops.db"
+    NOPS_GIT_URL                 = "https://git.example.com/ops/jobs.git"
+    NOPS_GIT_TOKEN_FILE          = "${NOMAD_SECRETS_DIR}/git-token"
+    NOPS_NOTIFY_DISCORD_URL_FILE = "${NOMAD_SECRETS_DIR}/discord-url"
+    NOPS_PUBLIC_URL              = "https://nops.example.com"
+    NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
+    NOPS_DB_PATH                 = "/data/nops.db"
   }
 }
 ```
 
-`change_mode = "restart"` restarts nops when the token changes, since it is
-read only at startup.
+`change_mode = "restart"` restarts nops when a secret changes, since secrets
+are read only at startup.

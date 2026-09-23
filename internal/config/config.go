@@ -45,8 +45,25 @@ type Config struct {
 	ListenAddr string
 	AuthHeader string
 
-	NotifyURL     string // empty means notifications are disabled
-	NotifyTimeout time.Duration
+	// Notification adapters: each one is on when its URL is set. URLs that
+	// carry a token and every token are read from files by Load.
+	NotifyWebhookURLFile   string
+	NotifyWebhookURL       string
+	NotifyWebhookTokenFile string
+	NotifyWebhookToken     string
+	NotifyDiscordURLFile   string
+	NotifyDiscordURL       string
+	NotifySlackURLFile     string
+	NotifySlackURL         string
+	NotifyNtfyURL          string
+	NotifyNtfyTokenFile    string
+	NotifyNtfyToken        string
+	NotifyGotifyURL        string
+	NotifyGotifyTokenFile  string
+	NotifyGotifyToken      string
+	NotifyTimeout          time.Duration
+
+	PublicURL string // external URL of the dashboard, without trailing slash; may be empty
 
 	GitPollInterval  time.Duration
 	DriftInterval    time.Duration
@@ -121,16 +138,50 @@ var options = []option{
 			return nil
 		}},
 
-	{name: "notify-url", usage: "URL that receives notifications as a JSON POST (empty: disabled)",
+	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
-			if v == "" {
-				return nil
-			}
-			c.NotifyURL, err = httpURL(v)
+			c.NotifyWebhookURLFile = v
+			c.NotifyWebhookURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-webhook-token-file", usage: "file holding a token sent to the webhook as Authorization: Bearer",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyWebhookTokenFile = v
+			c.NotifyWebhookToken, err = secretFile(v)
+			return
+		}},
+	{name: "notify-discord-url-file", usage: "file holding the Discord webhook URL (empty: off)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyDiscordURLFile = v
+			c.NotifyDiscordURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-slack-url-file", usage: "file holding the Slack incoming webhook URL (empty: off)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifySlackURLFile = v
+			c.NotifySlackURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-ntfy-url", usage: "ntfy topic URL, e.g. https://ntfy.example.com/nops (empty: off)",
+		set: func(c *Config, v string) (err error) { c.NotifyNtfyURL, err = optionalURL(v); return }},
+	{name: "notify-ntfy-token-file", usage: "file holding the ntfy access token",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyNtfyTokenFile = v
+			c.NotifyNtfyToken, err = secretFile(v)
+			return
+		}},
+	{name: "notify-gotify-url", usage: "Gotify server URL; messages go to <url>/message (empty: off)",
+		set: func(c *Config, v string) (err error) { c.NotifyGotifyURL, err = optionalURL(v); return }},
+	{name: "notify-gotify-token-file", usage: "file holding the Gotify application token (required with -notify-gotify-url)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyGotifyTokenFile = v
+			c.NotifyGotifyToken, err = secretFile(v)
 			return
 		}},
 	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
 		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
+	{name: "public-url", usage: "external URL of the dashboard, used for links in notifications (empty: no links)",
+		set: func(c *Config, v string) (err error) { c.PublicURL, err = optionalURL(v); return }},
 
 	{name: "git-poll-interval", def: "1m", usage: "how often the repository is fetched",
 		set: func(c *Config, v string) (err error) { c.GitPollInterval, err = positiveDuration(v); return }},
@@ -211,6 +262,18 @@ func (c *Config) check() []error {
 			errs = append(errs, errors.New("-git-token-file needs a non-empty -git-username"))
 		}
 	}
+	for _, t := range []struct{ token, url, tokenFlag, urlFlag string }{
+		{c.NotifyWebhookToken, c.NotifyWebhookURL, "notify-webhook-token-file", "notify-webhook-url-file"},
+		{c.NotifyNtfyToken, c.NotifyNtfyURL, "notify-ntfy-token-file", "notify-ntfy-url"},
+		{c.NotifyGotifyToken, c.NotifyGotifyURL, "notify-gotify-token-file", "notify-gotify-url"},
+	} {
+		if t.token != "" && t.url == "" {
+			errs = append(errs, fmt.Errorf("-%s needs -%s", t.tokenFlag, t.urlFlag))
+		}
+	}
+	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
+		errs = append(errs, errors.New("-notify-gotify-url needs -notify-gotify-token-file"))
+	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
 	}
@@ -274,6 +337,29 @@ func httpURL(v string) (string, error) {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("%q is not an http:// or https:// URL with a host", v)
+	}
+	return v, nil
+}
+
+// optionalURL accepts an empty value or an http(s) URL with a host, and drops
+// a trailing slash so paths can be appended.
+func optionalURL(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	u, err := httpURL(v)
+	return strings.TrimRight(u, "/"), err
+}
+
+// urlFile reads a URL that carries a secret (a Discord or Slack webhook
+// holds its token) from a file. Errors name the file, never the URL.
+func urlFile(path string) (string, error) {
+	v, err := secretFile(path)
+	if err != nil || v == "" {
+		return "", err
+	}
+	if _, err := httpURL(v); err != nil {
+		return "", fmt.Errorf("%s does not hold an http:// or https:// URL with a host", path)
 	}
 	return v, nil
 }

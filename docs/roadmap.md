@@ -33,13 +33,13 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `vocabulary` | [Vocabulary](vocabulary.md) of the terms used everywhere | #4 |
 | `pr-template` | No PR template: the description is the commit body | #5, #6 |
 | `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | #8, `internal/config` |
-| `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | `internal/redact` |
+| `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | #9, `internal/redact` |
+| `notify` | Notifications through built-in adapters ([notifications](error-handling.md#notifications)) | `internal/notify` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`notify`](#notify) | `config` | yes |
 | [`gitwatch`](#gitwatch) | `config` | plan first |
 | [`engine-detection`](#engine-detection) | `gitwatch`, `redact`, `notify` | plan first |
 | [`engine-apply`](#engine-apply) | `engine-detection` | plan first |
@@ -47,23 +47,6 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### notify
-
-Notifications through a generic webhook.
-
-- **Read first:** [error-handling.md](error-handling.md#notifications).
-- **Scope:** `internal/notify`. A JSON POST to a configurable URL when a
-  deployment becomes `pending_approval` and when it becomes `failed`. A
-  configurable request timeout, no retries. A failed delivery is logged at
-  WARN and never blocks the state machine.
-- **Done when:** `httptest` tests cover the payload, a non-2xx answer, a
-  timeout and an unreachable URL (all WARN, no error to the caller).
-- **Notes:** the payload should carry `deployment_id`, `job`, `namespace`,
-  `state`, `error` and `commit`, so ntfy, Gotify or n8n can use it without
-  looking anything up. The URL and the request timeout come from
-  `config.Config` (`NotifyURL`, `NotifyTimeout`); an empty URL means
-  notifications are disabled, which is not an error.
 
 ### gitwatch
 
@@ -112,6 +95,12 @@ Compare the repo with Nomad and create the deployments.
   `Deployment.PlanDiff` (as a string); it never modifies the plan, so the same
   `JobDiff` can still drive the decision. An error from it is a bug, not a
   Nomad failure: fail the cycle loudly, never save the unredacted diff.
+- **Notes from `notify`:** call `Notifier.Notify(ctx, d)` with the deployment
+  as saved, right after `Store.Transition` to `pending_approval` or `failed`
+  succeeds, never before (invariant 7) and never for other states. It never
+  returns an error. It is synchronous and can take up to `-notify-timeout` per
+  adapter, so call it in a goroutine if the cycle must not wait. Declare a
+  one-method interface for it in `engine`.
 
 ### engine-apply
 
@@ -137,6 +126,12 @@ Move a deployment from approval to `completed`.
   the target job (parsed spec). The timeout is counted from `started_at`, so a
   restart does not extend it. A run that is already terminal returns its stored
   result without touching Nomad. Every transition goes through `Store.Transition`.
+- **Notes from `notify`:** call `Notifier.Notify(ctx, d)` with the deployment
+  as saved, right after `Store.Transition` to `failed` succeeds, never before
+  (invariant 7); `pending_approval` is detection's. It never returns an error.
+  It is synchronous and can take up to `-notify-timeout` per adapter, so call
+  it in a goroutine if the cycle must not wait. Declare a one-method interface
+  for it in `engine`.
 
 ### engine-recovery
 
@@ -167,6 +162,9 @@ The dashboard and the git webhook.
 - **Done when:** `httptest` tests for the handlers, header auth, CSRF and 403.
   There is no coverage target. Complete [dashboard.md](dashboard.md), which is
   still marked "to be completed".
+- **Notes from `notify`:** notifications link to
+  `<PublicURL>/deployments/<id>` (`config.Config.PublicURL`, no trailing
+  slash): the dashboard must serve the deployment page at that path.
 
 ### wiring
 
@@ -178,7 +176,12 @@ The dashboard and the git webhook.
   `nomadx.New(cfg.Nomad(), cfg.NomadNamespace)`, never `api.DefaultConfig()`;
   `hooks.New` takes `HookPollInterval`; log a WARN at startup when
   `NomadTLSSkipVerify` is set. Never log the `Config` itself: it holds the
-  tokens.
+  tokens and the notification URLs.
+- **Notes from `notify`:** `notify.New(notify.Options{...}, log)` built from
+  the `config.Config` notification fields (`NotifyWebhookURL` /
+  `NotifyWebhookToken`, `NotifyDiscordURL`, `NotifySlackURL`, `NotifyNtfyURL` /
+  `NotifyNtfyToken`, `NotifyGotifyURL` / `NotifyGotifyToken`, `PublicURL`,
+  `NotifyTimeout`). With no adapter set it is a no-op, not an error.
 - **Done when:** `go build ./...` produces the binary and it starts against a
   `nomad agent -dev` (a smoke test in `tests/integration`).
 
