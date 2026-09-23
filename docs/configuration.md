@@ -19,18 +19,47 @@ option is listed here).
   environment (and `NOMAD_TOKEN` with `identity { env = true }`). With the
   Nomad client's defaults nops would then work on the namespace it runs in,
   not on the one you configured.
-- **Secrets are files.** Tokens, and URLs that carry a token (Discord and
-  Slack webhooks), are passed as the path of a file that holds them
-  (`-git-token-file`, `-notify-discord-url-file`, …). That way they never appear in
-  the command line (`ps`, `/proc/<pid>/cmdline`) or in the `args` of the job
-  spec. The file is read once at startup and surrounding whitespace is
-  trimmed. A path that cannot be read, or a file that is empty, is an error.
-  An error about a URL read from a file names the file, never the URL.
+- **Secrets are files, by flag.** Every secret has a `-X-file` flag (and its
+  `NOPS_X_FILE` variable) that reads it from a file: tokens, and URLs that
+  carry one (Discord and Slack webhooks), never appear in the command line
+  (`ps`, `/proc/<pid>/cmdline`) or in the `args` of a job spec that way. The
+  file is read once at startup and surrounding whitespace is trimmed. A path
+  that cannot be read, or a file that is empty, is an error. An error about a
+  URL read from a file names the file, never the URL.
+- **Secrets without a file.** A flag is the only place a secret must not sit
+  in the clear: `ps` shows every process's arguments to any local user. An
+  **environment variable does not have that problem** — it is only readable
+  from `/proc/<pid>/environ`, by the same user or root, exactly like a file
+  with `0600` permissions. So every secret above also has a second, env-only
+  variable with the literal value, named like its `_FILE` variable with
+  `_FILE` dropped (`NOPS_GIT_TOKEN_FILE` → `NOPS_GIT_TOKEN`,
+  `NOPS_NOTIFY_DISCORD_URL_FILE` → `NOPS_NOTIFY_DISCORD_URL`, …). There is
+  **no flag** for it. Precedence: **flag file > variable file > this
+  variable > off**. It suits an operator whose deployment tool already
+  injects secrets into the environment safely (systemd `EnvironmentFile`,
+  `docker run --env-file`, a Kubernetes `secretKeyRef`, a Nomad `template`
+  block with `env = true`) without a temporary file. Whether a literal secret
+  ends up in a checked-in Nomad job's `env {}` block instead of coming from
+  Vault or a Nomad Variable is the operator's call: nops cannot and does not
+  try to prevent it.
 - **Every error is reported at once**, each one prefixed with where the value
   came from (`flag -apply-timeout: ...`, `NOPS_APPLY_TIMEOUT: ...`, or
   `-git-url / NOPS_GIT_URL: required` when neither was set).
 - Durations use Go syntax (`90s`, `5m`, `1h`) and must be positive.
 - `nops -h` prints every flag with its variable and default.
+
+### Secrets without a file, at a glance
+
+| `_FILE` variable (and its flag) | Plain variable, env-only |
+|---|---|
+| `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
+| `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
+| `NOPS_NOTIFY_WEBHOOK_URL_FILE` (`-notify-webhook-url-file`) | `NOPS_NOTIFY_WEBHOOK_URL` |
+| `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` (`-notify-webhook-token-file`) | `NOPS_NOTIFY_WEBHOOK_TOKEN` |
+| `NOPS_NOTIFY_DISCORD_URL_FILE` (`-notify-discord-url-file`) | `NOPS_NOTIFY_DISCORD_URL` |
+| `NOPS_NOTIFY_SLACK_URL_FILE` (`-notify-slack-url-file`) | `NOPS_NOTIFY_SLACK_URL` |
+| `NOPS_NOTIFY_NTFY_TOKEN_FILE` (`-notify-ntfy-token-file`) | `NOPS_NOTIFY_NTFY_TOKEN` |
+| `NOPS_NOTIFY_GOTIFY_TOKEN_FILE` (`-notify-gotify-token-file`) | `NOPS_NOTIFY_GOTIFY_TOKEN` |
 
 ## Nomad
 

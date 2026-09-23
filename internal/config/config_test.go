@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -317,10 +318,10 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"token without username", []string{"-git-url", repo, "-git-token-file", tok, "-git-username="}, "needs a non-empty -git-username"},
 		{"cert without key", []string{"-git-url", repo, "-nomad-client-cert", cert}, "must be set together"},
 		{"key without cert", []string{"-git-url", repo, "-nomad-client-key", cert}, "must be set together"},
-		{"webhook token without url", []string{"-git-url", repo, "-notify-webhook-token-file", tok}, "-notify-webhook-token-file needs -notify-webhook-url-file"},
-		{"ntfy token without url", []string{"-git-url", repo, "-notify-ntfy-token-file", tok}, "-notify-ntfy-token-file needs -notify-ntfy-url"},
-		{"gotify token without url", []string{"-git-url", repo, "-notify-gotify-token-file", tok}, "-notify-gotify-token-file needs -notify-gotify-url"},
-		{"gotify url without token", []string{"-git-url", repo, "-notify-gotify-url", "https://gotify.example.com"}, "-notify-gotify-url needs -notify-gotify-token-file"},
+		{"webhook token without url", []string{"-git-url", repo, "-notify-webhook-token-file", tok}, "a webhook token is set without a webhook URL (-notify-webhook-url-file)"},
+		{"ntfy token without url", []string{"-git-url", repo, "-notify-ntfy-token-file", tok}, "a ntfy token is set without a ntfy URL (-notify-ntfy-url)"},
+		{"gotify token without url", []string{"-git-url", repo, "-notify-gotify-token-file", tok}, "a gotify token is set without a gotify URL (-notify-gotify-url)"},
+		{"gotify url without token", []string{"-git-url", repo, "-notify-gotify-url", "https://gotify.example.com"}, "a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -477,5 +478,101 @@ func TestNomadCarriesSettings(t *testing.T) {
 	}
 	if got := c.Nomad(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Nomad() = %+v, want %+v", got, want)
+	}
+}
+
+func TestSecretValueFallback(t *testing.T) {
+	tests := []struct {
+		envVar string
+		value  string
+		get    func(*Config) string
+		extra  map[string]string // other env needed for a cross-check (e.g. a URL for a token)
+	}{
+		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
+		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
+		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
+		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
+			map[string]string{"NOPS_NOTIFY_WEBHOOK_URL": "https://n8n.example.com/webhook/plain"}},
+		{"NOPS_NOTIFY_DISCORD_URL", "https://discord.com/api/webhooks/1/plain", func(c *Config) string { return c.NotifyDiscordURL }, nil},
+		{"NOPS_NOTIFY_SLACK_URL", "https://hooks.slack.com/services/plain", func(c *Config) string { return c.NotifySlackURL }, nil},
+		{"NOPS_NOTIFY_NTFY_TOKEN", "plain-ntfy-token", func(c *Config) string { return c.NotifyNtfyToken },
+			map[string]string{"NOPS_NOTIFY_NTFY_URL": "https://ntfy.example.com/nops"}},
+		{"NOPS_NOTIFY_GOTIFY_TOKEN", "plain-gotify-token", func(c *Config) string { return c.NotifyGotifyToken },
+			map[string]string{"NOPS_NOTIFY_GOTIFY_URL": "https://gotify.example.com"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.envVar, func(t *testing.T) {
+			env := map[string]string{"NOPS_GIT_URL": repo, tt.envVar: tt.value}
+			for k, v := range tt.extra {
+				env[k] = v
+			}
+			c, err := Load(nil, envOf(env), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tt.get(c); got != tt.value {
+				t.Errorf("%s = %q, want %q", tt.envVar, got, tt.value)
+			}
+		})
+	}
+}
+
+func TestSecretValueFallbackLosesToFile(t *testing.T) {
+	tok := writeFile(t, "git-token-file", "from-file")
+	env := map[string]string{"NOPS_GIT_URL": repo, "NOPS_GIT_TOKEN_FILE": tok, "NOPS_GIT_TOKEN": "from-plain-env"}
+	c, err := Load(nil, envOf(env), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GitToken != "from-file" {
+		t.Errorf("GitToken = %q, want the file to win", c.GitToken)
+	}
+
+	// A flag file also wins over the plain env var.
+	c, err = Load([]string{"-git-url", repo, "-git-token-file", tok}, envOf(map[string]string{"NOPS_GIT_TOKEN": "from-plain-env"}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GitToken != "from-file" {
+		t.Errorf("GitToken = %q, want the flag file to win", c.GitToken)
+	}
+}
+
+func TestSecretValueFallbackInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"whitespace only", map[string]string{"NOPS_GIT_TOKEN": "   "}, "NOPS_GIT_TOKEN: is empty"},
+		{"not a url", map[string]string{"NOPS_NOTIFY_DISCORD_URL": "discord.com/api/webhooks/1/secret"}, "NOPS_NOTIFY_DISCORD_URL: does not hold an http"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{"NOPS_GIT_URL": repo}
+			for k, v := range tt.env {
+				env[k] = v
+			}
+			_, err := Load(nil, envOf(env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+			if strings.Contains(fmt.Sprint(err), "secret") && strings.Contains(err.Error(), "discord.com/api/webhooks/1/secret") {
+				t.Errorf("error echoes the URL: %v", err)
+			}
+		})
+	}
+}
+
+func TestSecretValuesAreDocumented(t *testing.T) {
+	b, err := os.ReadFile("../../docs/configuration.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	for _, sv := range secretValues {
+		if !strings.Contains(doc, sv.envVar) {
+			t.Errorf("docs/configuration.md does not mention %s", sv.envVar)
+		}
 	}
 }
