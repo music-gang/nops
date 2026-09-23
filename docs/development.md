@@ -6,6 +6,7 @@
 |---|---|
 | `internal/meta` | Table-driven unit tests: valid values, invalid values, unknown keys, defaults. |
 | `internal/engine` | Table-driven unit tests for **every** transition, including crash recovery and CAS conflicts, with an in-memory fake Nomad and an injected clock. |
+| `internal/nomadx` | Unit tests against an `httptest` stub of the Nomad API (request shape, error mapping) + integration tests against a real Nomad. |
 | `internal/store` | Against **real SQLite** on a temporary file (`t.TempDir()`), not mocks: constraints, the lock index, migrations. |
 | `internal/hooks` | Unit tests with a fake Nomad (success, failure, timeout, redispatch with token) + integration. |
 | Diff redaction | Unit: no secret must reach the DB or the HTML. |

@@ -78,6 +78,8 @@ At startup, for every non-terminal deployment:
 - `applying`: re-read the live job. If `JobModifyIndex == cas_index`, repeat
   the CAS register. If the index has changed and the plan of our spec is empty,
   the apply had already happened and we move on. Otherwise `failed` (conflict).
+  To record `applied_index`, re-read the live job: the index in the register
+  response is not reliable (see the decision log).
 
 The idempotency token is scoped to the parent job and lives as long as the
 child: if Nomad garbage-collects the child, a new dispatch becomes possible.

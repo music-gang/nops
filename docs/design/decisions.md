@@ -21,4 +21,7 @@ that takes or changes a decision. The extended reasoning lives in
 | 2026-09-23 | CLAUDE.md holds only the working rules; all system documentation lives in `docs/`. |
 | 2026-09-23 | Everything is written in English: code, comments, docs, examples, README, CLAUDE.md and commit messages. |
 | 2026-09-23 | Commit messages follow the Angular convention (`type(scope): subject`). |
+| 2026-09-23 | `nomadx` exposes only `RegisterCAS`: there is no register without the enforce-index check, so invariant 2 holds by construction. |
+| 2026-09-23 | Verified on Nomad 2.0.3: every CAS failure is an HTTP 500 whose message starts with `Enforcing job modify index` (three variants: `job already exists`, `job exists with conflicting job modify index: N`, `job does not exist`), so `nomadx` recognises it by that prefix. A missing job is a real 404. The dispatch idempotency token travels as the `idempotency_token` query parameter (`WriteOptions.IdempotencyToken` in the Go client, not `DispatchOptions`). |
+| 2026-09-23 | Registering a spec identical to the live one passes the CAS check and leaves the live `JobModifyIndex` unchanged, but the register response can carry a different index (raw HTTP: response 62, live 61). The engine re-reads the live job instead of trusting the response index. |
 | open | The idempotency token lives as long as the child job: if Nomad garbage-collects the child, a new dispatch is possible. Recovery must prefer the `dispatched_job_id` saved in `hook_runs`. |
