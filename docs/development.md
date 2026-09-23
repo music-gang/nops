@@ -8,7 +8,7 @@
 | `internal/engine` | Table-driven unit tests for **every** transition, including crash recovery and CAS conflicts, with an in-memory fake Nomad and an injected clock. |
 | `internal/nomadx` | Unit tests against an `httptest` stub of the Nomad API (request shape, error mapping) + integration tests against a real Nomad. |
 | `internal/store` | Against **real SQLite** on a temporary file (`t.TempDir()`), not mocks: constraints, the lock index, migrations. |
-| `internal/hooks` | Unit tests with a fake Nomad (success, failure, timeout, redispatch with token) + integration. |
+| `internal/hooks` | Unit tests with an in-memory fake Nomad, a **real SQLite** store and an injected clock (success, failure, timeout, resume, redispatch with token, Nomad/SQLite errors) + integration with `raw_exec` hooks. |
 | Diff redaction | Unit: no secret must reach the DB or the HTML. |
 | `internal/web` | `httptest` for handlers, header auth, CSRF and 403. No coverage target. |
 | Real interaction with Nomad | Integration. |
@@ -46,10 +46,10 @@ A commit/PR is complete only if:
 
 ```sh
 go test -race -cover ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+go run honnef.co/go/tools/cmd/staticcheck@latest -tags integration ./...
 
 nomad agent -dev &                     # in another terminal
-NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration ./tests/integration/...
+NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration -race -count=1 ./tests/integration/...
 ```
 
 `staticcheck`: with a recent Go, the binary in `~/go/bin` may have been built
@@ -71,15 +71,16 @@ Flow:
 4. When CI is green, **squash and merge**. The branch is deleted automatically.
 
 Merges are squash-only, so `main` is a straight line with one commit per PR:
-the PR title is the commit subject and the PR description is the body. If the
+the PR title is the commit subject (GitHub appends ` (#N)` with the PR number)
+and the PR description is the body. If the
 branch falls behind `main`, use "Update branch" (or `git rebase main`).
 
 | Check | Required | What it runs |
 |---|---|---|
 | `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
-| `lint` | yes | `staticcheck` (pinned version) |
-| `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev`, runs `go test -tags integration ./tests/integration/...` |
-| `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject without trailing period |
+| `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`) |
+| `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev`, runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
+| `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject (at most 72 characters) without trailing period |
 | `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
 
 CodeQL (default setup), secret scanning with push protection, and Dependabot

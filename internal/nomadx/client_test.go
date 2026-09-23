@@ -189,6 +189,75 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	}
 }
 
+func TestAllocations(t *testing.T) {
+	const body = `[
+	  {"ID":"a1","ClientStatus":"complete","DesiredStatus":"run"},
+	  {"ID":"a2","ClientStatus":"failed","DesiredStatus":"run","ClientDescription":"Failed tasks",
+	   "TaskStates":{
+	     "z":{"Failed":false,"Events":[{"Type":"Terminated","DisplayMessage":"ignored"}]},
+	     "t":{"Failed":true,"Events":[{"Type":"Started","DisplayMessage":"Task started"},
+	                                  {"Type":"Terminated","DisplayMessage":"Exit Code: 1"},
+	                                  {"Type":"Not Restarting","DisplayMessage":"Policy allows no restarts"}]},
+	     "b":{"Failed":true,"Events":[{"Type":"Driver Failure"}]},
+	     "n":{"Failed":true,"Events":[{"Type":"Received","DisplayMessage":"Task received by client"},
+	                                  {"Type":"Killed","DisplayMessage":"Task successfully killed"}]}}},
+	  {"ID":"a3","ClientStatus":"lost","DesiredStatus":"stop","ClientDescription":"Client lost"}
+	]`
+	s, c := newStub(t, 200, body)
+	got, err := c.Allocations(context.Background(), "hook/dispatch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.path != "/v1/job/hook/dispatch-1/allocations" || s.query["all"][0] != "true" || s.query["namespace"][0] != "default" {
+		t.Errorf("request = %s %v", s.path, s.query)
+	}
+	want := []Alloc{
+		{ID: "a1", ClientStatus: "complete", DesiredStatus: "run"},
+		{ID: "a2", ClientStatus: "failed", DesiredStatus: "run", Failure: "Failed tasks; task b: Driver Failure; task n: Task successfully killed; task t: Exit Code: 1"},
+		{ID: "a3", ClientStatus: "lost", DesiredStatus: "stop", Failure: "Client lost"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d allocs, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("alloc %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	_, c = newStub(t, 404, "job not found")
+	if _, err := c.Allocations(context.Background(), "x"); !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("404: err = %v, want ErrJobNotFound", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.Allocations(context.Background(), "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
+func TestStopJob(t *testing.T) {
+	s, c := newStub(t, 200, `{"EvalID":"e1"}`)
+	if err := c.StopJob(context.Background(), "hook/dispatch-1"); err != nil {
+		t.Fatal(err)
+	}
+	if s.method != http.MethodDelete || s.path != "/v1/job/hook/dispatch-1" {
+		t.Errorf("request = %s %s", s.method, s.path)
+	}
+	if got := s.query["purge"]; len(got) != 1 || got[0] != "false" {
+		t.Errorf("purge = %v, want false", got)
+	}
+
+	// A job that is already gone is fine.
+	_, c = newStub(t, 404, "job not found")
+	if err := c.StopJob(context.Background(), "x"); err != nil {
+		t.Errorf("404: err = %v, want nil", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if err := c.StopJob(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "stop job x") {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
 func TestParseHCL(t *testing.T) {
 	s, c := newStub(t, 200, `{"ID":"web"}`)
 	job, err := c.ParseHCL(context.Background(), `job "web" {}`, `tag = "1"`)
