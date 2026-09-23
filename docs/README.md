@@ -10,6 +10,7 @@ New here? Start with the [project README](../README.md).
 ## Index
 
 **Understanding nops**
+- [vocabulary.md](vocabulary.md): the terms used in code, docs and PRs.
 - [philosophy.md](philosophy.md): principles and invariants, with the reasoning.
 - [architecture.md](architecture.md): components, loops, apply and downtime.
 - [state-machine.md](state-machine.md): states, transitions, schema, recovery.
@@ -37,5 +38,6 @@ env vars), `acceptance/` (manual checklists for the real cluster).
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | State, transition, schema, recovery | `state-machine.md` |
 | Flag or env var | `configuration.md` |
+| New concept, or a renamed term | `vocabulary.md` |
 | Design decision | `design/decisions.md` (and the relevant document) |
 | Invariant | `philosophy.md` **and** the list in CLAUDE.md |

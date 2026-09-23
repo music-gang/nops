@@ -81,19 +81,19 @@ without hardcoding a node ID.
 ## Dispatch idempotency
 
 nops dispatches with idempotency token `<deployment_id>:<phase>`. Verified on
-Nomad 2.0.3: the same token returns the same child job without a new
-evaluation, even after the child has finished. The token lives as long as the
-child; for recovery see
+Nomad 2.0.3: the same token returns the same dispatched job without a new
+evaluation, even after the dispatched job has finished. The token lives as long as the
+dispatched job; for recovery see
 [state machine](state-machine.md#recovery-after-a-crash).
 
-nops saves the run as `running` **before** it sends the dispatch, and the child
-ID right after. A run found `running` without a child ID may or may not have
-reached Nomad, so nops looks the child up by its idempotency token (Nomad
-records it on the child job) and carries on with it, timeout included. If there
+nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
+ID right after. A run found `running` without a dispatched job ID may or may not have
+reached Nomad, so nops looks the dispatched job up by its idempotency token (Nomad
+records it on the dispatched job) and carries on with it, timeout included. If there
 is none, the run is `failed` ("outcome unknown") instead of being dispatched
-again: the child may have run and been garbage-collected, the token no longer
+again: the dispatched job may have run and been garbage-collected, the token no longer
 deduplicates at that point, and the hook would run a second time. The same
-happens when the child of a saved ID disappears before nops saw its outcome.
+happens when the dispatched job of a saved ID disappears before nops saw its outcome.
 
 ## Examples
 

@@ -131,7 +131,7 @@ go vet -tags integration ./...
 
 - Go ≥ 1.22. Format with `gofmt`/`goimports`. Lint: `go vet` + `staticcheck`.
 - Package names are short, singular, without underscores. No `util`/`common`
-  packages.
+  packages. Identifiers use the terms in [vocabulary](vocabulary.md).
 - `context.Context` is always the first argument of any function that does I/O.
 - Errors: wrap with `fmt.Errorf("dispatch hook %s: %w", id, err)`. Sentinels or
   types only when the caller needs to tell them apart (e.g. `ErrCASConflict`,

@@ -14,6 +14,8 @@ This file holds only the **working rules**. What the system is and why lives in
 - **Every code change has tests.** What needs which kind: `docs/development.md`.
 - **Every change updates the docs**, in the same commit. The "if you change X,
   update Y" map is in `docs/README.md`.
+- **Use the terms in `docs/vocabulary.md`** in code, docs, commits and PRs; a
+  new concept gets a row there.
 - **Design decisions are written down** in `docs/design/decisions.md` when they
   are taken, not afterwards.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it aligned
