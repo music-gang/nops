@@ -1,0 +1,63 @@
+# Meta keys reference
+
+The canonical list of the meta keys nops reads from a job's HCL. The source of
+truth is [`internal/meta`](../internal/meta/meta.go): this page and that
+package must be updated together.
+
+nops uses **flat meta keys with the `nops_` prefix** in the job's `meta {}`
+block. A structured block (`nops { ... }`) is not possible: verified on Nomad
+2.0.3, `/v1/jobs/parse` answers `Unsupported block type`.
+
+Keys are read **from the HCL in the repo** and nops never writes them.
+
+## All keys
+
+| Meta key | Values | Default | Meaning |
+|---|---|---|---|
+| `nops_managed` | `"true"` / `"false"` | not managed | Opt-in for the job. Without it, nops ignores the job. |
+| `nops_policy` | `auto` / `approval` / `none` | `none` | See [policies](policies.md). |
+| `nops_pre_hook` | ID of a hook job | — | Runs after approval, before apply. If it fails, the live job is left untouched. See [hooks](hooks.md). |
+| `nops_pre_hook_timeout` | Go duration (`90s`, `10m`) | `5m` | On expiry: the dispatch is stopped, the deployment is `failed`. Must be > 0. |
+| `nops_post_hook` | ID of a hook job | — | Runs once the new version is healthy. |
+| `nops_post_hook_timeout` | Go duration | `5m` | Same as above. |
+| `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and syncable by nops. |
+
+Values are **case-sensitive** strings (`"True"` is not valid).
+
+```hcl
+job "api" {
+  meta {
+    nops_managed          = "true"
+    nops_policy           = "approval"
+    nops_pre_hook         = "api-migrate"
+    nops_pre_hook_timeout = "10m"
+    nops_post_hook        = "api-smoke"
+  }
+  # ...
+}
+```
+
+## Validation
+
+- An **unknown key** under `nops_` (for example a typo like `nops_polcy`): a
+  **WARN** log. It does not change behaviour.
+- An **invalid value** for a recognised key: an **ERROR** log and **policy
+  `none` for the whole job**: no deployment until the HCL is fixed.
+- `nops_policy` without `nops_managed = "true"`, or a timeout without its
+  hook: WARN, the key is ignored.
+- A hook that is declared but missing from the repo makes the deployment
+  **fail**, rather than proceeding without the hook.
+
+## Syntax and parsing
+
+**HCL2 variables.** Verified on Nomad 2.0.3: `/v1/jobs/parse` accepts the
+contents of a var-file in the `Variables` field; with no value and no default
+it answers `Unset variable`. Rule: if a `<job>.vars.hcl` exists next to
+`<job>.hcl`, nops passes it as `Variables`; otherwise every variable must have
+a default. A job that cannot be parsed creates no deployment and is logged at
+ERROR. Hooks do not need variables: they receive everything through dispatch
+meta.
+
+**Meta keys containing dots.** HCL does not allow mixing the block form with
+the object form: a job that also carries keys such as `diun.enable` must use
+`meta = { "nops_managed" = "true" ... }` for the whole block.
