@@ -64,7 +64,8 @@ message naming the key.
   a key.
 - **Timeout.** It is handled by nops, not by the job. It counts from the moment
   the run was first recorded (`started_at`), so a nops restart does not give
-  the hook more time. On expiry nops stops the dispatched job (without purging
+  the hook more time. The store keeps whole seconds, so a sub-second part of
+  the timeout is rounded up (`1500ms` → `2s`), never down. On expiry nops stops the dispatched job (without purging
   it, so it stays visible in Nomad) and moves the hook to `timed_out`. If the
   hook has a timeout of its own (for example `image_pull_timeout`), keep it ≥
   `nops_*_hook_timeout`. A hook that finishes in the same poll in which the
@@ -83,10 +84,16 @@ nops dispatches with idempotency token `<deployment_id>:<phase>`. Verified on
 Nomad 2.0.3: the same token returns the same child job without a new
 evaluation, even after the child has finished. The token lives as long as the
 child; for recovery see
-[state machine](state-machine.md#recovery-after-a-crash). If the child is
-garbage-collected or purged before nops saw its outcome, the run is `failed`
-("outcome unknown") instead of being dispatched again: the token no longer
-deduplicates at that point and the hook would run a second time.
+[state machine](state-machine.md#recovery-after-a-crash).
+
+nops saves the run as `running` **before** it sends the dispatch, and the child
+ID right after. A run found `running` without a child ID may or may not have
+reached Nomad, so nops looks the child up by its idempotency token (Nomad
+records it on the child job) and carries on with it, timeout included. If there
+is none, the run is `failed` ("outcome unknown") instead of being dispatched
+again: the child may have run and been garbage-collected, the token no longer
+deduplicates at that point, and the hook would run a second time. The same
+happens when the child of a saved ID disappears before nops saw its outcome.
 
 ## Examples
 

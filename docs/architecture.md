@@ -12,7 +12,7 @@ approval [dashboard](dashboard.md).
 | `cmd/nops` | Entrypoint: wiring of config, store, engine, web. |
 | `internal/config` | Flags and env vars (`NOPS_*`), validation. |
 | `internal/gitwatch` | In-memory clone, polling, webhook trigger. |
-| `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch, allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
+| `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched child by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
 | `internal/meta` | Parsing and validation of the `nops_*` meta keys: the [source of truth](meta-keys.md) for the HCL syntax. |
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
 | `internal/engine` | State machine, reconciler, recovery on restart. |

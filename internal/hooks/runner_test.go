@@ -49,7 +49,7 @@ type fakeNomad struct {
 	stopped    []string
 	calls      int // every call, of any method
 
-	jobErr, dispatchErr, allocsErr, stopErr error
+	jobErr, dispatchErr, allocsErr, stopErr, findErr error
 }
 
 type dispatchCall struct {
@@ -91,6 +91,26 @@ func (f *fakeNomad) Dispatch(_ context.Context, parent string, meta map[string]s
 	f.tokens[token] = id
 	f.jobs[id] = &api.Job{ID: &id, Status: ptr("pending")}
 	return &nomadx.DispatchResult{JobID: id}, nil
+}
+
+func (f *fakeNomad) FindDispatched(_ context.Context, _ string, token string) (string, error) {
+	f.calls++
+	if f.findErr != nil {
+		return "", f.findErr
+	}
+	return f.tokens[token], nil
+}
+
+// gc removes a child the way Nomad's garbage collector does: the job is gone
+// and its idempotency token no longer deduplicates.
+func (f *fakeNomad) gc(childID string) {
+	delete(f.jobs, childID)
+	delete(f.allocs, childID)
+	for tok, id := range f.tokens {
+		if id == childID {
+			delete(f.tokens, tok)
+		}
+	}
 }
 
 func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
@@ -402,29 +422,119 @@ func TestRunResumesWithoutDispatching(t *testing.T) {
 	}
 }
 
-// Crash between the dispatch and saving the child ID: the row is still
-// "dispatching", the token makes the second dispatch return the same child.
-func TestRunResumesFromDispatchingRow(t *testing.T) {
-	h := newHarness(t)
-	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+// markDispatchAttempted leaves the store as a crash right after Nomad accepted
+// the dispatch would: the run is running, the child ID was never saved.
+func (h *harness) markDispatchAttempted() *store.HookRun {
+	h.t.Helper()
 	ctx := context.Background()
-
 	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", "hook", time.Minute)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
-	first, _ := h.nomad.Dispatch(ctx, "hook", map[string]string{"nops_deployment_id": h.depID}, run.IdempotencyToken)
+	if err := h.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookRunning}); err != nil {
+		h.t.Fatal(err)
+	}
+	return run
+}
+
+// Crash after the dispatch was accepted but before the child ID was saved: the
+// token finds the child, which is adopted, and no second dispatch is sent.
+func TestRunAdoptsChildAfterCrashBeforeSavingItsID(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	run := h.markDispatchAttempted()
+	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
 	h.nomad.finish(first.JobID, "complete", "")
+	h.nomad.dispatches = nil
 
 	res := mustRun(t, h.runner, h.request("hook", time.Minute))
 	if res.State != store.HookSucceeded || res.DispatchedJobID != first.JobID {
-		t.Fatalf("result = %+v, want the child of the first dispatch %s", res, first.JobID)
+		t.Fatalf("result = %+v, want success on the first child %s", res, first.JobID)
 	}
-	if len(h.nomad.dispatches) != 2 || h.nomad.dispatches[1].Token != run.IdempotencyToken {
-		t.Errorf("dispatches = %+v", h.nomad.dispatches)
+	if len(h.nomad.dispatches) != 0 {
+		t.Errorf("dispatches after the crash = %+v, want none", h.nomad.dispatches)
 	}
-	if len(h.nomad.tokens) != 1 {
-		t.Errorf("children created = %d, want 1", len(h.nomad.tokens))
+	if run := h.hookRun(); run.DispatchedJobID != first.JobID {
+		t.Errorf("stored child ID = %q", run.DispatchedJobID)
+	}
+}
+
+// The dispatch was sent, the child has since been garbage-collected: nobody
+// knows whether the hook ran, so it is failed, never dispatched again.
+func TestRunFailsWhenDispatchedChildIsGone(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	run := h.markDispatchAttempted()
+	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
+	h.nomad.gc(first.JobID)
+	h.nomad.dispatches = nil
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(h.nomad.dispatches) != 0 {
+		t.Errorf("a hook that may have run was dispatched again: %+v", h.nomad.dispatches)
+	}
+	if run := h.hookRun(); run.State != store.HookFailed {
+		t.Errorf("stored run = %+v", run)
+	}
+}
+
+// Dispatch was accepted, saving the child ID failed, and the retry comes after
+// the deadline: the child is found and stopped, not left running.
+func TestRunStopsAdoptedChildPastDeadline(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	run := h.markDispatchAttempted()
+	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
+	h.nomad.allocs[first.JobID] = []nomadx.Alloc{{ID: "a1", ClientStatus: "running", DesiredStatus: "run"}}
+	h.clk.advance(5 * time.Minute)
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookTimedOut || res.DispatchedJobID != first.JobID {
+		t.Fatalf("result = %+v", res)
+	}
+	if !reflect.DeepEqual(h.nomad.stopped, []string{first.JobID}) {
+		t.Errorf("stopped = %v, want the child", h.nomad.stopped)
+	}
+}
+
+// A dispatch that returns an error may or may not have reached Nomad. The run
+// is already marked, so the retry looks the child up instead of dispatching blind.
+func TestRunAfterDispatchErrorDoesNotDispatchBlind(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	boom := errors.New("connection reset")
+	h.nomad.dispatchErr = boom
+
+	if _, err := h.runner.Run(context.Background(), h.request("hook", time.Minute)); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the dispatch error", err)
+	}
+	h.nomad.dispatchErr = nil
+	h.nomad.dispatches = nil
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(h.nomad.dispatches) != 0 {
+		t.Errorf("dispatched blind after an ambiguous error: %+v", h.nomad.dispatches)
+	}
+}
+
+func TestRunRecoveryErrorIsRetryable(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.markDispatchAttempted()
+	boom := errors.New("nomad down")
+	h.nomad.findErr = boom
+
+	if _, err := h.runner.Run(context.Background(), h.request("hook", time.Minute)); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the lookup error", err)
+	}
+	if run := h.hookRun(); run.State != store.HookRunning {
+		t.Errorf("stored state = %s, want running (nothing decided)", run.State)
 	}
 }
 
@@ -532,7 +642,7 @@ func TestRunInfrastructureErrors(t *testing.T) {
 		wantState store.HookState
 	}{
 		{"reading the hook job", func(h *harness) { h.nomad.jobErr = boom }, store.HookDispatching},
-		{"dispatch", func(h *harness) { h.nomad.dispatchErr = boom }, store.HookDispatching},
+		{"dispatch", func(h *harness) { h.nomad.dispatchErr = boom }, store.HookRunning},
 		{"reading the child", func(h *harness) {
 			h.onPoll = nil
 			h.nomad.jobErr = nil
@@ -560,17 +670,20 @@ func TestRunInfrastructureErrors(t *testing.T) {
 	}
 }
 
-// flakyStore fails UpdateHookRun for a given target state, once.
+// flakyStore fails the failAt-th UpdateHookRun that targets failState (1-based), once.
 type flakyStore struct {
 	Store
 	failState store.HookState
-	failed    bool
+	failAt    int
+	seen      int
 }
 
 func (f *flakyStore) UpdateHookRun(ctx context.Context, id string, u store.HookUpdate) error {
-	if u.State == f.failState && !f.failed {
-		f.failed = true
-		return errors.New("disk full")
+	if u.State == f.failState {
+		f.seen++
+		if f.seen == f.failAt {
+			return errors.New("disk full")
+		}
 	}
 	return f.Store.UpdateHookRun(ctx, id, u)
 }
@@ -583,7 +696,7 @@ func TestRunTimeoutSurvivesFailedSave(t *testing.T) {
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	h.nomad.allocs["hook/dispatch-1"] = []nomadx.Alloc{{ID: "a1", ClientStatus: "running", DesiredStatus: "run"}}
 
-	flaky := &flakyStore{Store: h.store, failState: store.HookTimedOut}
+	flaky := &flakyStore{Store: h.store, failState: store.HookTimedOut, failAt: 1}
 	r := New(h.nomad, flaky, nil, testPoll, WithClock(h.clk.now), WithWait(func(_ context.Context, d time.Duration) error {
 		h.clk.advance(d)
 		return nil
@@ -605,10 +718,12 @@ func TestRunTimeoutSurvivesFailedSave(t *testing.T) {
 	}
 }
 
-func TestRunSaveErrorAfterDispatchKeepsRowResumable(t *testing.T) {
+// The first running update is the marker written before the dispatch. If it
+// fails nothing was sent, so the row stays a plain dispatching one.
+func TestRunMarkerSaveErrorSendsNothing(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
-	flaky := &flakyStore{Store: h.store, failState: store.HookRunning}
+	flaky := &flakyStore{Store: h.store, failState: store.HookRunning, failAt: 1}
 	r := New(h.nomad, flaky, nil, testPoll, WithClock(h.clk.now), WithWait(func(_ context.Context, d time.Duration) error {
 		h.clk.advance(d)
 		h.nomad.finish("hook/dispatch-1", "complete", "")
@@ -618,15 +733,42 @@ func TestRunSaveErrorAfterDispatchKeepsRowResumable(t *testing.T) {
 	if _, err := r.Run(context.Background(), h.request("hook", time.Minute)); err == nil {
 		t.Fatal("want the store error")
 	}
-	if run := h.hookRun(); run.State != store.HookDispatching || run.DispatchedJobID != "" {
+	if len(h.nomad.dispatches) != 0 {
+		t.Fatalf("dispatched although the run could not be saved first: %+v", h.nomad.dispatches)
+	}
+	if run := h.hookRun(); run.State != store.HookDispatching {
 		t.Errorf("stored run = %+v, want an untouched dispatching row", run)
+	}
+	res, err := r.Run(context.Background(), h.request("hook", time.Minute))
+	if err != nil || res.State != store.HookSucceeded {
+		t.Fatalf("resume: %+v, %v", res, err)
+	}
+}
+
+// The second running update saves the child ID. If it fails the child exists in
+// Nomad; the retry finds it by token instead of dispatching again.
+func TestRunChildIDSaveErrorIsRecovered(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	flaky := &flakyStore{Store: h.store, failState: store.HookRunning, failAt: 2}
+	r := New(h.nomad, flaky, nil, testPoll, WithClock(h.clk.now), WithWait(func(_ context.Context, d time.Duration) error {
+		h.clk.advance(d)
+		h.nomad.finish("hook/dispatch-1", "complete", "")
+		return nil
+	}))
+
+	if _, err := r.Run(context.Background(), h.request("hook", time.Minute)); err == nil {
+		t.Fatal("want the store error")
+	}
+	if run := h.hookRun(); run.State != store.HookRunning || run.DispatchedJobID != "" {
+		t.Errorf("stored run = %+v, want running without a child ID", run)
 	}
 	res, err := r.Run(context.Background(), h.request("hook", time.Minute))
 	if err != nil || res.State != store.HookSucceeded || res.DispatchedJobID != "hook/dispatch-1" {
 		t.Fatalf("resume: %+v, %v", res, err)
 	}
-	if len(h.nomad.tokens) != 1 {
-		t.Errorf("children = %d, the token must dedupe the second dispatch", len(h.nomad.tokens))
+	if len(h.nomad.dispatches) != 1 {
+		t.Errorf("dispatches = %d, want the original one only", len(h.nomad.dispatches))
 	}
 }
 
@@ -661,12 +803,32 @@ func TestRunNoTarget(t *testing.T) {
 	}
 }
 
+// The store keeps whole seconds: a sub-second part rounds up, never down, so
+// the hook is not timed out earlier than asked.
+func TestRunRoundsTimeoutUp(t *testing.T) {
+	for _, tc := range []struct{ in, want time.Duration }{
+		{500 * time.Millisecond, time.Second},
+		{1500 * time.Millisecond, 2 * time.Second},
+		{2 * time.Second, 2 * time.Second},
+		{90 * time.Second, 90 * time.Second},
+	} {
+		h := newHarness(t)
+		h.addHook("hook", []string{"nops_deployment_id"}, nil)
+		h.onPoll = func(int) { h.nomad.finish("hook/dispatch-1", "complete", "") }
+		mustRun(t, h.runner, h.request("hook", tc.in))
+		if got := h.hookRun().Timeout; got != tc.want {
+			t.Errorf("timeout %s stored as %s, want %s", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestRunInvalidRequest(t *testing.T) {
 	h := newHarness(t)
 	for name, mutate := range map[string]func(*Request){
-		"no hook job":   func(r *Request) { r.HookJobID = "" },
-		"short timeout": func(r *Request) { r.Timeout = 500 * time.Millisecond },
-		"bad phase":     func(r *Request) { r.Phase = "during" },
+		"no hook job":  func(r *Request) { r.HookJobID = "" },
+		"zero timeout": func(r *Request) { r.Timeout = 0 },
+		"negative":     func(r *Request) { r.Timeout = -time.Second },
+		"bad phase":    func(r *Request) { r.Phase = "during" },
 	} {
 		req := h.request("hook", time.Minute)
 		mutate(&req)

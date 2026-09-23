@@ -235,6 +235,65 @@ func TestAllocations(t *testing.T) {
 	}
 }
 
+func TestFindDispatched(t *testing.T) {
+	var listPrefix string
+	var read []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs":
+			listPrefix = r.URL.Query().Get("prefix")
+			io.WriteString(w, `[{"ID":"hook/dispatch-1","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-2","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-3","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-4","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-9","ParentID":"other"}]`)
+		case "/v1/job/hook/dispatch-1":
+			read = append(read, "1")
+			io.WriteString(w, `{"ID":"hook/dispatch-1","DispatchIdempotencyToken":"d1:pre"}`)
+		case "/v1/job/hook/dispatch-2":
+			read = append(read, "2")
+			w.WriteHeader(404) // garbage-collected between the list and the read
+		case "/v1/job/hook/dispatch-3":
+			read = append(read, "3")
+			io.WriteString(w, `{"ID":"hook/dispatch-3"}`) // not dispatched with a token
+		case "/v1/job/hook/dispatch-4":
+			read = append(read, "4")
+			io.WriteString(w, `{"ID":"hook/dispatch-4","DispatchIdempotencyToken":"d2:pre"}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cfg := api.DefaultConfig()
+	cfg.Address = srv.URL
+	c, err := New(cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	got, err := c.FindDispatched(ctx, "hook", "d2:pre")
+	if err != nil || got != "hook/dispatch-4" {
+		t.Fatalf("FindDispatched = %q, %v, want hook/dispatch-4", got, err)
+	}
+	if listPrefix != "hook/dispatch-" {
+		t.Errorf("list prefix = %q", listPrefix)
+	}
+	if strings.Join(read, "") != "1234" {
+		t.Errorf("children read = %v: the child of another parent must not be read", read)
+	}
+
+	if got, err := c.FindDispatched(ctx, "hook", "nobody:pre"); err != nil || got != "" {
+		t.Errorf("unknown token: %q, %v, want empty", got, err)
+	}
+
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.FindDispatched(ctx, "hook", "x"); err == nil || !strings.Contains(err.Error(), "list children of job hook") {
+		t.Errorf("list failure: err = %v", err)
+	}
+}
+
 func TestStopJob(t *testing.T) {
 	s, c := newStub(t, 200, `{"EvalID":"e1"}`)
 	if err := c.StopJob(context.Background(), "hook/dispatch-1"); err != nil {

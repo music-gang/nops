@@ -243,19 +243,39 @@ func TestHookRunTimesOutAndStopsTheChild(t *testing.T) {
 	}
 }
 
-// A crash after the dispatch but before the child ID was saved: the row is
-// still "dispatching" and the token gives back the same child.
-func TestHookRunResumesAfterCrashBetweenDispatchAndSave(t *testing.T) {
-	e := newHookEnv(t, "true", true)
+// markDispatchAttempted leaves the store as a crash right after the dispatch
+// was accepted would: the run is running and the child ID was never saved.
+func (e *hookEnv) markDispatchAttempted(t *testing.T) *store.HookRun {
+	t.Helper()
 	ctx := context.Background()
-
 	run, _, err := e.store.EnsureHookRun(ctx, e.depID, "pre", e.hookID, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := e.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookRunning}); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+// A crash after Nomad accepted the dispatch but before the child ID was saved:
+// the run finds the child by its idempotency token (which Nomad records on the
+// child job) and adopts it instead of dispatching again.
+func TestHookRunAdoptsChildAfterCrashBeforeSavingItsID(t *testing.T) {
+	e := newHookEnv(t, "true", true)
+	ctx := context.Background()
+	run := e.markDispatchAttempted(t)
 	first, err := e.nomad.Dispatch(ctx, e.hookID, map[string]string{"nops_deployment_id": e.depID}, run.IdempotencyToken)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	found, err := e.nomad.FindDispatched(ctx, e.hookID, run.IdempotencyToken)
+	if err != nil || found != first.JobID {
+		t.Fatalf("FindDispatched = %q, %v, want %s", found, err, first.JobID)
+	}
+	if other, err := e.nomad.FindDispatched(ctx, e.hookID, "someone-else:pre"); err != nil || other != "" {
+		t.Errorf("FindDispatched with another token = %q, %v, want empty", other, err)
 	}
 
 	res := e.run(t, time.Minute)
@@ -264,6 +284,22 @@ func TestHookRunResumesAfterCrashBetweenDispatchAndSave(t *testing.T) {
 	}
 	if kids := e.children(t); len(kids) != 1 {
 		t.Errorf("children = %v, want exactly one", kids)
+	}
+}
+
+// The run is marked as dispatched but Nomad has no child with its token (never
+// created, or garbage-collected): the hook may have run, so it is failed and
+// nothing is dispatched.
+func TestHookRunFailsWhenNoChildMatchesAMarkedRun(t *testing.T) {
+	e := newHookEnv(t, "true", true)
+	e.markDispatchAttempted(t)
+
+	res := e.run(t, time.Minute)
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") {
+		t.Fatalf("result = %+v", res)
+	}
+	if kids := e.children(t); len(kids) != 0 {
+		t.Errorf("a marked run was dispatched again: %v", kids)
 	}
 }
 

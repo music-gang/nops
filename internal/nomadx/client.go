@@ -165,8 +165,8 @@ type Alloc struct {
 	// DesiredStatus is what the server wants: run, stop or evict. A batch
 	// allocation that completed on its own keeps "run".
 	DesiredStatus string
-	// Failure explains a failed allocation (the client description plus the last
-	// event of each failed task). Empty when nothing failed.
+	// Failure explains a failed allocation (the client description plus, for each
+	// failed task, the event that says why). Empty when nothing failed.
 	Failure string
 }
 
@@ -230,6 +230,36 @@ func failureEvent(events []*api.TaskEvent) *api.TaskEvent {
 		}
 	}
 	return events[len(events)-1]
+}
+
+// FindDispatched returns the ID of the child of parentID that was dispatched
+// with idempotencyToken, or "" if there is none (never dispatched, or already
+// garbage-collected). It is how a resumed run finds a child whose ID was not
+// saved. It lists the children (dead ones included) and reads each one, as the
+// token is only on the full job.
+func (c *Client) FindDispatched(ctx context.Context, parentID, idempotencyToken string) (string, error) {
+	q := c.query(ctx)
+	q.Prefix = parentID + "/dispatch-"
+	stubs, _, err := c.jobs.List(q)
+	if err != nil {
+		return "", fmt.Errorf("list children of job %s: %w", parentID, err)
+	}
+	for _, s := range stubs {
+		if s.ParentID != parentID {
+			continue
+		}
+		child, err := c.Job(ctx, s.ID)
+		if errors.Is(err, ErrJobNotFound) {
+			continue // garbage-collected between the list and the read
+		}
+		if err != nil {
+			return "", err
+		}
+		if child.DispatchIdempotencyToken != nil && *child.DispatchIdempotencyToken == idempotencyToken {
+			return s.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // StopJob deregisters a job without purging it, so it stays visible in Nomad
