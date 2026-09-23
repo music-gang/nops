@@ -1,0 +1,33 @@
+name: vulncheck
+
+# Not a required check: a newly published advisory must not block unrelated PRs.
+# It runs on every PR and push for visibility, and weekly to catch new advisories.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: vulncheck-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Pinned version: bump it by hand (Dependabot does not track `go run` targets).
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

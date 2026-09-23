@@ -24,10 +24,13 @@ This file holds only the **working rules**. What the system is and why lives in
   established package (`hashicorp/nomad/api`, `go-git`, `modernc.org/sqlite`,
   `oklog/ulid`).
 - **Language:** code, comments, docs, examples and commit messages are in English.
-- **Git:** no commits, pushes or merges without an explicit request. Small
-  commits in Angular style (`type(scope): subject`, see
-  `docs/development.md#commit-messages`), with plain messages: what changes
-  and why, no superlatives.
+- **Git:** `main` is protected: never push to it. Work on a branch named
+  `type/short-description` (e.g. `feat/hooks-package`) and open a PR whose
+  **title is an Angular-style message** (`type(scope): subject`): PRs are
+  squash-merged and the title becomes the commit on `main`. No commits, pushes
+  or PRs without an explicit request, and **never merge**: the human merges.
+  Messages are plain (what changes and why, no superlatives). Details in
+  `docs/development.md#workflow-and-ci`.
 
 ## Invariants (non-negotiable)
 

@@ -1,0 +1,39 @@
+name: PR title
+
+# main is squash-merge only, so the PR title becomes the commit message on main.
+# Keep it in Angular style: type(scope): subject.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          # The subject starts lowercase and has no trailing period.
+          subjectPattern: ^[a-z0-9].*[^.]$
+          subjectPatternError: |
+            The subject "{subject}" in the PR title must start with a lowercase
+            letter or digit and must not end with a period.
