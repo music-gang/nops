@@ -3,9 +3,9 @@ The PR title becomes the commit message on main (squash merge), so write it in
 Angular style: type(scope): subject, e.g. "feat(hooks): dispatch pre-hooks".
 -->
 
-## What and why
+## Summary
 
-<!-- What changes, and why. Plain language. -->
+<!-- What changes and why, in plain language. After the squash this is the body of the commit on main. -->
 
 ## Checklist
 
