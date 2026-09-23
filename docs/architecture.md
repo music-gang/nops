@@ -19,6 +19,7 @@ approval [dashboard](dashboard.md).
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Dashboard (`net/http` + `html/template`) and git webhook. |
 | `internal/notify` | Notifications via a generic webhook (JSON POST). |
+| `internal/redact` | Removes secret values from the plan diff before it is saved or shown ([rules](dashboard.md#secret-redaction)). A pure function, called by `engine` at detection. |
 
 ## Execution model: active, not lazy
 

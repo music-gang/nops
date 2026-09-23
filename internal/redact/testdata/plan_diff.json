@@ -1,0 +1,515 @@
+{
+ "Fields": [
+  {
+   "Annotations": null,
+   "Name": "Meta[api_token]",
+   "New": "new-meta-token",
+   "Old": "old-meta-token",
+   "Type": "Edited"
+  },
+  {
+   "Annotations": null,
+   "Name": "Meta[owner]",
+   "New": "new-owner",
+   "Old": "old-owner",
+   "Type": "Edited"
+  }
+ ],
+ "ID": "probe",
+ "Objects": null,
+ "TaskGroups": [
+  {
+   "Fields": null,
+   "Name": "g",
+   "Objects": [
+    {
+     "Fields": [
+      {
+       "Annotations": null,
+       "Name": "Address",
+       "New": "",
+       "Old": "",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "AddressMode",
+       "New": "auto",
+       "Old": "auto",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "Cluster",
+       "New": "default",
+       "Old": "default",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "EnableTagOverride",
+       "New": "false",
+       "Old": "false",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "Kind",
+       "New": "",
+       "Old": "",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "Name",
+       "New": "probe",
+       "Old": "probe",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "Namespace",
+       "New": "default",
+       "Old": "default",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "OnUpdate",
+       "New": "require_healthy",
+       "Old": "require_healthy",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "PortLabel",
+       "New": "http",
+       "Old": "http",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "Provider",
+       "New": "nomad",
+       "Old": "nomad",
+       "Type": "None"
+      },
+      {
+       "Annotations": null,
+       "Name": "TaskName",
+       "New": "",
+       "Old": "",
+       "Type": "None"
+      }
+     ],
+     "Name": "Service",
+     "Objects": [
+      {
+       "Fields": [
+        {
+         "Annotations": null,
+         "Name": "AddressMode",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Body",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Command",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Expose",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "FailuresBeforeCritical",
+         "New": "0",
+         "Old": "0",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "FailuresBeforeWarning",
+         "New": "0",
+         "Old": "0",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "GRPCService",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "GRPCUseTLS",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "InitialStatus",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Interval",
+         "New": "10000000000",
+         "Old": "10000000000",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Method",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Name",
+         "New": "service: \"probe\" check",
+         "Old": "service: \"probe\" check",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Notes",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "OnUpdate",
+         "New": "require_healthy",
+         "Old": "require_healthy",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Path",
+         "New": "/health",
+         "Old": "/health",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "PortLabel",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Protocol",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "SuccessBeforePassing",
+         "New": "0",
+         "Old": "0",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "TLSServerName",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "TLSSkipVerify",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "TaskName",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Timeout",
+         "New": "2000000000",
+         "Old": "2000000000",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Type",
+         "New": "http",
+         "Old": "http",
+         "Type": "None"
+        }
+       ],
+       "Name": "Check",
+       "Objects": [
+        {
+         "Fields": [
+          {
+           "Annotations": null,
+           "Name": "Authorization[0]",
+           "New": "Bearer new-check-header",
+           "Old": "Bearer old-check-header",
+           "Type": "Edited"
+          }
+         ],
+         "Name": "Header",
+         "Objects": null,
+         "Type": "Edited"
+        }
+       ],
+       "Type": "Edited"
+      }
+     ],
+     "Type": "Edited"
+    }
+   ],
+   "Tasks": [
+    {
+     "Annotations": [
+      "forces create/destroy update"
+     ],
+     "Fields": [
+      {
+       "Annotations": null,
+       "Name": "Env[DB_PASSWORD]",
+       "New": "new-env-secret",
+       "Old": "old-env-secret",
+       "Type": "Edited"
+      },
+      {
+       "Annotations": null,
+       "Name": "Env[PLAIN]",
+       "New": "new-env-plain",
+       "Old": "old-env-plain",
+       "Type": "Edited"
+      }
+     ],
+     "Name": "t",
+     "Objects": [
+      {
+       "Fields": [
+        {
+         "Annotations": null,
+         "Name": "args[0]",
+         "New": "--db-password=new-arg",
+         "Old": "--db-password=old-arg",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "auth[0][password]",
+         "New": "new-docker-password",
+         "Old": "old-docker-password",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "auth[0][username]",
+         "New": "new-user",
+         "Old": "old-user",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "image",
+         "New": "busybox:new",
+         "Old": "busybox:old",
+         "Type": "Edited"
+        }
+       ],
+       "Name": "Config",
+       "Objects": null,
+       "Type": "Edited"
+      },
+      {
+       "Fields": [
+        {
+         "Annotations": null,
+         "Name": "Chown",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "GetterHeaders[X-Api-Key]",
+         "New": "new-artifact-header",
+         "Old": "old-artifact-header",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "GetterInsecure",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "GetterMode",
+         "New": "any",
+         "Old": "any",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "GetterOptions[ref]",
+         "New": "new-getter-opt",
+         "Old": "old-getter-opt",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "GetterSource",
+         "New": "https://example.com/new.tar.gz",
+         "Old": "https://example.com/old.tar.gz",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "RelativeDest",
+         "New": "local/",
+         "Old": "local/",
+         "Type": "None"
+        }
+       ],
+       "Name": "Artifact",
+       "Objects": null,
+       "Type": "Edited"
+      },
+      {
+       "Fields": [
+        {
+         "Annotations": null,
+         "Name": "ChangeMode",
+         "New": "restart",
+         "Old": "restart",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "ChangeSignal",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "DestPath",
+         "New": "local/x.env",
+         "Old": "local/x.env",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "EmbeddedTmpl",
+         "New": "PASS=new-template-body",
+         "Old": "PASS=old-template-body",
+         "Type": "Edited"
+        },
+        {
+         "Annotations": null,
+         "Name": "Envvars",
+         "New": "true",
+         "Old": "true",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "ErrMissingKey",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "LeftDelim",
+         "New": "{{",
+         "Old": "{{",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Once",
+         "New": "false",
+         "Old": "false",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Perms",
+         "New": "0644",
+         "Old": "0644",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "RightDelim",
+         "New": "}}",
+         "Old": "}}",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "SourcePath",
+         "New": "",
+         "Old": "",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "Splay",
+         "New": "5000000000",
+         "Old": "5000000000",
+         "Type": "None"
+        },
+        {
+         "Annotations": null,
+         "Name": "VaultGrace",
+         "New": "0",
+         "Old": "0",
+         "Type": "None"
+        }
+       ],
+       "Name": "Template",
+       "Objects": null,
+       "Type": "Edited"
+      }
+     ],
+     "Type": "Edited"
+    }
+   ],
+   "Type": "Edited",
+   "Updates": {}
+  }
+ ],
+ "Type": "Edited"
+}
