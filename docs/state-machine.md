@@ -72,11 +72,11 @@ At startup, for every non-terminal deployment:
 
 - `pre_hook`/`post_hook`: run the hook again (`hooks.Runner.Run` is
   idempotent). A run that is already terminal returns its stored result. If
-  `dispatched_job_id` is known, go back to waiting for it. If the run is
+  `dispatched_job_id` is known, go back to waiting for the dispatched job. If the run is
   `dispatching`, nothing was sent yet and it is dispatched. If it is `running`
-  without a child ID, the dispatch may have been sent: look the child up by its
+  without a dispatched job ID, the dispatch may have been sent: look the dispatched job up by its
   idempotency token and adopt it; if there is none, the run is `failed` (outcome
-  unknown), never dispatched again. A child that no longer exists is `failed`
+  unknown), never dispatched again. A dispatched job that no longer exists is `failed`
   too. The timeout is counted from `started_at`, not from the restart.
 - `applying`: re-read the live job. If `JobModifyIndex == cas_index`, repeat
   the CAS register. If the index has changed and the plan of our spec is empty,
@@ -85,9 +85,9 @@ At startup, for every non-terminal deployment:
   response is not reliable (see the decision log).
 
 The idempotency token is scoped to the parent job and lives as long as the
-child: if Nomad garbage-collects the child, a new dispatch becomes possible.
+dispatched job: if Nomad garbage-collects the dispatched job, a new dispatch becomes possible.
 For this reason recovery always prefers the `dispatched_job_id` saved in
-`hook_runs`, and a run whose child has vanished is `failed` rather than
+`hook_runs`, and a run whose dispatched job has vanished is `failed` rather than
 dispatched again. Hook run states: `dispatching` (row created, nothing sent to
-Nomad), `running` (saved before the dispatch is sent; the child ID follows), then
+Nomad), `running` (saved before the dispatch is sent; the dispatched job ID follows), then
 `succeeded`, `failed` or `timed_out`.
