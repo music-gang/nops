@@ -30,9 +30,38 @@ This file holds only the **working rules**. What the system is and why lives in
   `type/short-description` (e.g. `feat/hooks-package`) and open a PR whose
   **title is an Angular-style message** (`type(scope): subject`): PRs are
   squash-merged and the title becomes the commit on `main`. No commits, pushes
-  or PRs without an explicit request, and **never merge**: the human merges.
-  Messages are plain (what changes and why, no superlatives). Details in
+  or PRs without an explicit request (a task handed to a cloud session is that
+  request), and **never merge**: the human merges. Messages are plain (what
+  changes and why, no superlatives). Details in
   `docs/development.md#workflow-and-ci`.
+
+## Picking up work
+
+What is done, in flight and left is in [`docs/roadmap.md`](docs/roadmap.md).
+The same steps apply wherever the session runs.
+
+1. Take the task you were given, or the first `todo` whose dependencies are
+   `done` and that has no remote branch.
+2. Check what is in flight: `git ls-remote --heads origin` (and `gh pr list` if
+   available). Never start a task that already has a branch.
+3. Branch from an up-to-date `main`: `type/<task-id>` (e.g. `feat/config`).
+4. `Ready: plan first` means do not code: open a **draft PR** with the plan and
+   the open questions, then stop.
+5. Do the task with its tests and docs, the decision-log rows, and set it to
+   `done` in the roadmap in the same PR. Update the *Notes* of the tasks that
+   follow if you learned something they need.
+6. Run the checks below. If `nomad` is not installed, CI runs the integration
+   tests: wait for green checks (`gh pr checks`) and fix what is red.
+7. **Cloud:** commit (unsigned, Angular message, `Co-Authored-By` trailer),
+   push and open the PR. GitHub signs the squash commit on `main`.
+   **Local:** prepare the branch, stage the files and write the message to a
+   file; the maintainer commits with his GPG key.
+8. The PR description is the commit body: what changes and why, no comments,
+   headings or checklists (see `docs/development.md#workflow-and-ci`).
+9. If a decision is the maintainer's to take, write the question in the PR
+   description and stop. Do not guess.
+10. Nothing worth keeping lives only in private memory: decisions go to the
+    decision log, task context to the roadmap *Notes*.
 
 ## Invariants (non-negotiable)
 

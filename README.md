@@ -12,10 +12,9 @@ keeps its own state in SQLite, shows pending changes in a PR-style dashboard,
 and can run **pre/post deployment hooks** (regular Nomad jobs that nops
 dispatches for you) around each deployment.
 
-> **Status: early development.** The design is settled and documented; so far
-> only the meta-key parser (`internal/meta`), the SQLite store
-> (`internal/store`) and the Nomad client wrapper (`internal/nomadx`) are
-> implemented. It is not usable yet.
+> **Status: early development.** The design is settled and documented and the
+> building blocks are being implemented one by one; it is not usable yet. What
+> is done and what is left is in the [roadmap](docs/roadmap.md).
 
 Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
 but written from scratch and extended with persistent state, approvals and hooks.

@@ -93,5 +93,9 @@ Some words exist in both worlds and mean different things. Say which one.
 | Term | Meaning |
 |---|---|
 | **PR** | Pull request. Its **title** is the commit that lands on `main`, in Angular style `type(scope): subject`. |
+| **roadmap** | [`roadmap.md`](roadmap.md): the tasks left, with dependencies, what to read and when each is done. |
+| **task** | One block of the roadmap. Its ID is the suffix of the branch that works on it. |
+| **in flight** | A task with a remote branch (or an open PR). Derived from git, never written in the roadmap. |
+| **ready / plan first** | Whether a task can be done unattended, or needs the plan and its open questions reviewed in a draft PR first. |
 | **decision log** | [`design/decisions.md`](design/decisions.md): one row per design decision, added in the PR that takes it. |
 | **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
