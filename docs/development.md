@@ -56,6 +56,48 @@ NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration ./tests/int
 with an older Go and fail with "export data version"; `go run ...@latest`
 avoids the problem.
 
+## Workflow and CI
+
+`main` is protected by a repository ruleset: a pull request is required, the
+checks below must pass on an up-to-date branch, history must be linear, and
+force pushes and deletion are blocked. No approvals are required (there is a
+single maintainer): CI is the gate.
+
+Flow:
+
+1. Branch from `main`: `type/short-description` (e.g. `feat/hooks-package`).
+2. Commit as you like: commits inside the branch are squashed away.
+3. Open a PR **titled in Angular style** (see [Commit messages](#commit-messages)).
+4. When CI is green, **squash and merge**. The branch is deleted automatically.
+
+Merges are squash-only, so `main` is a straight line with one commit per PR:
+the PR title is the commit subject and the PR description is the body. If the
+branch falls behind `main`, use "Update branch" (or `git rebase main`).
+
+| Check | Required | What it runs |
+|---|---|---|
+| `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
+| `lint` | yes | `staticcheck` (pinned version) |
+| `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev`, runs `go test -tags integration ./tests/integration/...` |
+| `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject without trailing period |
+| `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
+
+CodeQL (default setup), secret scanning with push protection, and Dependabot
+(Go modules and GitHub Actions, weekly, titled `build(deps): ...` and
+`ci(deps): ...`) are enabled on the repository.
+
+Supply-chain rules: every GitHub Action is pinned to a full commit SHA (the
+repository enforces it), and the workflow token is read-only. Dependabot
+proposes the SHA bumps. The versions of `staticcheck` and `govulncheck` are
+pinned in the workflows and bumped by hand.
+
+To run locally what CI runs, use the commands in [Commands](#commands), plus:
+
+```sh
+test -z "$(gofmt -l .)" && go mod tidy && git diff --exit-code go.mod go.sum
+go vet -tags integration ./...
+```
+
 ## Commit messages
 
 [Angular style](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md)
@@ -79,8 +121,10 @@ avoids the problem.
   language, no superlatives.
 - **Breaking changes** (state machine, schema, HCL meta syntax): add a
   `BREAKING CHANGE:` footer, or `!` after the scope.
-- One logical change per commit. Code and the docs describing it go in the
-  **same** commit (see the rules in CLAUDE.md).
+- One logical change per PR. Code and the docs describing it go in the
+  **same** PR (see the rules in CLAUDE.md). Since PRs are squash-merged, the
+  format above applies to the **PR title** (the commit on `main`); commits
+  inside the branch are free-form.
 
 ## Go conventions
 

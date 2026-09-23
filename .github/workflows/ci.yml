@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+      - run: go build ./...
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
+      - run: go test -race -cover ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Pinned version: bump it by hand (Dependabot does not track `go run` targets).
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags integration ./...
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NOMAD_VERSION: "2.0.3"
+      NOMAD_SHA256: 8455d5691de4cb451e9443282f1c0171570b480737fc6386992638c52a4795e4
+      NOPS_TEST_NOMAD_ADDR: http://127.0.0.1:4646
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install Nomad
+        run: |
+          zip="nomad_${NOMAD_VERSION}_linux_amd64.zip"
+          curl -sSfLO "https://releases.hashicorp.com/nomad/${NOMAD_VERSION}/${zip}"
+          echo "${NOMAD_SHA256}  ${zip}" | sha256sum -c -
+          unzip -q "${zip}" nomad
+          sudo install -m 0755 nomad /usr/local/bin/nomad
+          nomad version
+      - name: Start Nomad dev agent
+        run: |
+          nomad agent -dev -bind=127.0.0.1 > nomad.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf "${NOPS_TEST_NOMAD_ADDR}/v1/nodes" | grep -q '"Status":"ready"'; then
+              echo "Nomad is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Nomad did not become ready in time"
+          cat nomad.log
+          exit 1
+      - name: Integration tests
+        run: go test -tags integration -race -count=1 -v ./tests/integration/...
+      - name: Nomad log
+        if: failure()
+        run: tail -n 200 nomad.log

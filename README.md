@@ -1,5 +1,8 @@
 # nops
 
+[![CI](https://github.com/music-gang/nops/actions/workflows/ci.yml/badge.svg)](https://github.com/music-gang/nops/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/music-gang/nops)](LICENSE)
+
 A semi-automatic GitOps controller for [HashiCorp Nomad](https://www.nomadproject.io/).
 
 nops watches a git repo of Nomad job definitions (HCL), compares them with the
@@ -101,5 +104,10 @@ go test -race -cover ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 ```
 
-See [docs/development.md](docs/development.md) for the testing strategy and
-conventions, and [CLAUDE.md](CLAUDE.md) for the working rules.
+See [docs/development.md](docs/development.md) for the testing strategy, the
+PR workflow and conventions, [CONTRIBUTING.md](CONTRIBUTING.md) for the short
+version, and [CLAUDE.md](CLAUDE.md) for the working rules.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Music Gang.
