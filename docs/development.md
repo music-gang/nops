@@ -72,7 +72,11 @@ Flow:
 
 Merges are squash-only, so `main` is a straight line with one commit per PR:
 the PR title is the commit subject (GitHub appends ` (#N)` with the PR number)
-and the PR description is the body. If the
+and the PR description is the body, copied **verbatim** (repository setting
+`squash_merge_commit_message = PR_BODY`). So the description is written as a
+commit body, and there is no PR template: HTML comments, headings and
+checklists would all land on `main`. The checklist is the list in
+[When a piece of work is "done"](#when-a-piece-of-work-is-done). If the
 branch falls behind `main`, use "Update branch" (or `git rebase main`).
 
 | Check | Required | What it runs |

@@ -12,7 +12,10 @@ Thanks for your interest. The full guide is in
    `go test -race ./...` pass (commands in `docs/development.md`).
 5. Title the PR in [Angular style](docs/development.md#commit-messages)
    (`type(scope): subject`). PRs are squash-merged, so the title becomes the
-   commit message on `main`.
+   commit subject on `main`. The PR description becomes the commit body, so
+   write it as one: what changes and why, in plain language. There is no PR
+   template on purpose: anything in the description, including comments and
+   checklists, ends up in the history.
 
 By contributing you agree that your contribution is licensed under the
 [Apache License 2.0](LICENSE).
