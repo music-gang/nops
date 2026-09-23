@@ -3,7 +3,7 @@ name: PR title
 # main is squash-merge only, so the PR title becomes the commit message on main.
 # Keep it in Angular style: type(scope): subject.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
 permissions:
@@ -32,8 +32,9 @@ jobs:
             chore
             revert
           requireScope: false
-          # The subject starts lowercase and has no trailing period.
-          subjectPattern: ^[a-z0-9].*[^.]$
+          # The subject starts lowercase, has no trailing period and is <= 72 chars.
+          subjectPattern: ^(?=.{1,72}$)[a-z0-9](?:.*[^.])?$
           subjectPatternError: |
             The subject "{subject}" in the PR title must start with a lowercase
-            letter or digit and must not end with a period.
+            letter or digit, must not end with a period, and must be at most 72
+            characters long.
