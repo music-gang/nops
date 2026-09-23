@@ -66,9 +66,17 @@ single maintainer): CI is the gate.
 Flow:
 
 1. Branch from `main`: `type/short-description` (e.g. `feat/hooks-package`).
+   For a task in the [roadmap](roadmap.md) the description is the task ID
+   (`feat/config`): that is how the roadmap knows the task is in flight.
 2. Commit as you like: commits inside the branch are squashed away.
 3. Open a PR **titled in Angular style** (see [Commit messages](#commit-messages)).
 4. When CI is green, **squash and merge**. The branch is deleted automatically.
+
+Commits inside a branch do not need to be signed, whoever makes them: the
+squash commit on `main` is created and signed by GitHub, and the ruleset does
+not require signed commits. Locally the maintainer commits with his GPG key;
+in a cloud session Claude commits unsigned and opens the PR
+(see [CLAUDE.md](../CLAUDE.md#picking-up-work)).
 
 Merges are squash-only, so `main` is a straight line with one commit per PR:
 the PR title is the commit subject (GitHub appends ` (#N)` with the PR number)
