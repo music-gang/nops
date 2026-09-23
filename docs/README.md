@@ -40,6 +40,7 @@ checklists for the real cluster).
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | State, transition, schema, recovery | `state-machine.md` |
 | Flag or env var | `internal/config` **and** `configuration.md` |
+| Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
 | New concept, or a renamed term | `vocabulary.md` |
 | A task is finished, added or reshaped | `roadmap.md` |
 | Design decision | `design/decisions.md` (and the relevant document) |

@@ -56,6 +56,8 @@ Some words exist in both worlds and mean different things. Say which one.
 | **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
 | **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
 | **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
+| **notification** | The message nops sends when a deployment becomes `pending_approval` or `failed`. Not delivered is a WARN, never an error. See [notifications](error-handling.md#notifications). |
+| **notification adapter** | One way to deliver a notification: `webhook` (generic JSON), `discord`, `slack`, `ntfy`, `gotify`. Each has its own options and is on when its URL is set. |
 
 ## Hooks
 

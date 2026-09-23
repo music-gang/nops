@@ -45,8 +45,25 @@ type Config struct {
 	ListenAddr string
 	AuthHeader string
 
-	NotifyURL     string // empty means notifications are disabled
-	NotifyTimeout time.Duration
+	// Notification adapters: each one is on when its URL is set. URLs that
+	// carry a token and every token are read from files by Load.
+	NotifyWebhookURLFile   string
+	NotifyWebhookURL       string
+	NotifyWebhookTokenFile string
+	NotifyWebhookToken     string
+	NotifyDiscordURLFile   string
+	NotifyDiscordURL       string
+	NotifySlackURLFile     string
+	NotifySlackURL         string
+	NotifyNtfyURL          string
+	NotifyNtfyTokenFile    string
+	NotifyNtfyToken        string
+	NotifyGotifyURL        string
+	NotifyGotifyTokenFile  string
+	NotifyGotifyToken      string
+	NotifyTimeout          time.Duration
+
+	PublicURL string // external URL of the dashboard, without trailing slash; may be empty
 
 	GitPollInterval  time.Duration
 	DriftInterval    time.Duration
@@ -121,16 +138,50 @@ var options = []option{
 			return nil
 		}},
 
-	{name: "notify-url", usage: "URL that receives notifications as a JSON POST (empty: disabled)",
+	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
-			if v == "" {
-				return nil
-			}
-			c.NotifyURL, err = httpURL(v)
+			c.NotifyWebhookURLFile = v
+			c.NotifyWebhookURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-webhook-token-file", usage: "file holding a token sent to the webhook as Authorization: Bearer",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyWebhookTokenFile = v
+			c.NotifyWebhookToken, err = secretFile(v)
+			return
+		}},
+	{name: "notify-discord-url-file", usage: "file holding the Discord webhook URL (empty: off)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyDiscordURLFile = v
+			c.NotifyDiscordURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-slack-url-file", usage: "file holding the Slack incoming webhook URL (empty: off)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifySlackURLFile = v
+			c.NotifySlackURL, err = urlFile(v)
+			return
+		}},
+	{name: "notify-ntfy-url", usage: "ntfy topic URL, e.g. https://ntfy.example.com/nops (empty: off)",
+		set: func(c *Config, v string) (err error) { c.NotifyNtfyURL, err = optionalURL(v); return }},
+	{name: "notify-ntfy-token-file", usage: "file holding the ntfy access token",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyNtfyTokenFile = v
+			c.NotifyNtfyToken, err = secretFile(v)
+			return
+		}},
+	{name: "notify-gotify-url", usage: "Gotify server URL; messages go to <url>/message (empty: off)",
+		set: func(c *Config, v string) (err error) { c.NotifyGotifyURL, err = optionalURL(v); return }},
+	{name: "notify-gotify-token-file", usage: "file holding the Gotify application token (required with -notify-gotify-url)",
+		set: func(c *Config, v string) (err error) {
+			c.NotifyGotifyTokenFile = v
+			c.NotifyGotifyToken, err = secretFile(v)
 			return
 		}},
 	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
 		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
+	{name: "public-url", usage: "external URL of the dashboard, used for links in notifications (empty: no links)",
+		set: func(c *Config, v string) (err error) { c.PublicURL, err = optionalURL(v); return }},
 
 	{name: "git-poll-interval", def: "1m", usage: "how often the repository is fetched",
 		set: func(c *Config, v string) (err error) { c.GitPollInterval, err = positiveDuration(v); return }},
@@ -193,6 +244,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 			errs = append(errs, fmt.Errorf("%s: %w", source, err))
 		}
 	}
+	errs = append(errs, resolveSecretValues(c, getenv)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -200,16 +252,88 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	return c, nil
 }
 
+// secretValue lets a secret be set with a plain, env-only variable when no
+// file is given: a file (from a flag or its NOPS_<NAME>_FILE variable) always
+// wins over the literal value in envVar. There is no flag for the literal
+// form, so a secret can never reach the command line: only an env var is
+// this permissive, since it never shows in `ps` or `/proc/<pid>/cmdline`
+// (see docs/configuration.md#secrets-without-a-file).
+type secretValue struct {
+	envVar string // always the _FILE option's variable with _FILE dropped
+	isURL  bool   // Discord/Slack/webhook URLs are validated, but never echoed
+	get    func(*Config) string
+	set    func(*Config, string)
+}
+
+var secretValues = []secretValue{
+	{envVar: "NOPS_GIT_TOKEN",
+		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
+	{envVar: "NOPS_NOMAD_TOKEN",
+		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
+	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
+		get: func(c *Config) string { return c.NotifyWebhookURL }, set: func(c *Config, v string) { c.NotifyWebhookURL = v }},
+	{envVar: "NOPS_NOTIFY_WEBHOOK_TOKEN",
+		get: func(c *Config) string { return c.NotifyWebhookToken }, set: func(c *Config, v string) { c.NotifyWebhookToken = v }},
+	{envVar: "NOPS_NOTIFY_DISCORD_URL", isURL: true,
+		get: func(c *Config) string { return c.NotifyDiscordURL }, set: func(c *Config, v string) { c.NotifyDiscordURL = v }},
+	{envVar: "NOPS_NOTIFY_SLACK_URL", isURL: true,
+		get: func(c *Config) string { return c.NotifySlackURL }, set: func(c *Config, v string) { c.NotifySlackURL = v }},
+	{envVar: "NOPS_NOTIFY_NTFY_TOKEN",
+		get: func(c *Config) string { return c.NotifyNtfyToken }, set: func(c *Config, v string) { c.NotifyNtfyToken = v }},
+	{envVar: "NOPS_NOTIFY_GOTIFY_TOKEN",
+		get: func(c *Config) string { return c.NotifyGotifyToken }, set: func(c *Config, v string) { c.NotifyGotifyToken = v }},
+}
+
+// resolveSecretValues fills every secret still empty after the flag/env-file
+// pass from its plain env var, in place.
+func resolveSecretValues(c *Config, getenv func(string) string) []error {
+	var errs []error
+	for _, sv := range secretValues {
+		if sv.get(c) != "" {
+			continue // a file already provided it
+		}
+		raw := getenv(sv.envVar)
+		if raw == "" {
+			continue // not set: the secret stays off
+		}
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			errs = append(errs, fmt.Errorf("%s: is empty", sv.envVar))
+			continue
+		}
+		if sv.isURL {
+			if _, err := httpURL(v); err != nil {
+				errs = append(errs, fmt.Errorf("%s: does not hold an http:// or https:// URL with a host", sv.envVar))
+				continue
+			}
+		}
+		sv.set(c, v)
+	}
+	return errs
+}
+
 // check validates the rules that involve more than one option.
 func (c *Config) check() []error {
 	var errs []error
 	if c.GitToken != "" {
 		if c.GitURL != "" && !strings.HasPrefix(strings.ToLower(c.GitURL), "https://") {
-			errs = append(errs, fmt.Errorf("-git-token-file needs an https:// -git-url, got %q", c.GitURL))
+			errs = append(errs, fmt.Errorf("a git token needs an https:// -git-url, got %q", c.GitURL))
 		}
 		if c.GitUsername == "" {
-			errs = append(errs, errors.New("-git-token-file needs a non-empty -git-username"))
+			errs = append(errs, errors.New("a git token needs a non-empty -git-username"))
 		}
+	}
+	for _, t := range []struct{ token, url, name, urlOpt string }{
+		{c.NotifyWebhookToken, c.NotifyWebhookURL, "webhook", "-notify-webhook-url-file"},
+		{c.NotifyNtfyToken, c.NotifyNtfyURL, "ntfy", "-notify-ntfy-url"},
+		{c.NotifyGotifyToken, c.NotifyGotifyURL, "gotify", "-notify-gotify-url"},
+	} {
+		if t.token != "" && t.url == "" {
+			errs = append(errs, fmt.Errorf("a %s token is set without a %s URL (%s)", t.name, t.name, t.urlOpt))
+		}
+	}
+	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
+		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
@@ -274,6 +398,29 @@ func httpURL(v string) (string, error) {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("%q is not an http:// or https:// URL with a host", v)
+	}
+	return v, nil
+}
+
+// optionalURL accepts an empty value or an http(s) URL with a host, and drops
+// a trailing slash so paths can be appended.
+func optionalURL(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	u, err := httpURL(v)
+	return strings.TrimRight(u, "/"), err
+}
+
+// urlFile reads a URL that carries a secret (a Discord or Slack webhook
+// holds its token) from a file. Errors name the file, never the URL.
+func urlFile(path string) (string, error) {
+	v, err := secretFile(path)
+	if err != nil || v == "" {
+		return "", err
+	}
+	if _, err := httpURL(v); err != nil {
+		return "", fmt.Errorf("%s does not hold an http:// or https:// URL with a host", path)
 	}
 	return v, nil
 }
