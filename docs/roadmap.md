@@ -32,13 +32,13 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `hooks` | Hook runner: dispatch, wait, timeout, stop, recovery of a run | #3, `internal/hooks` |
 | `vocabulary` | [Vocabulary](vocabulary.md) of the terms used everywhere | #4 |
 | `pr-template` | No PR template: the description is the commit body | #5, #6 |
-| `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | `internal/config` |
+| `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | #8, `internal/config` |
+| `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | `internal/redact` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`redact`](#redact) | none | yes |
 | [`notify`](#notify) | `config` | yes |
 | [`gitwatch`](#gitwatch) | `config` | plan first |
 | [`engine-detection`](#engine-detection) | `gitwatch`, `redact`, `notify` | plan first |
@@ -47,24 +47,6 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### redact
-
-Diff redaction, before anything is saved or shown.
-
-- **Read first:** [dashboard.md](dashboard.md#secret-redaction), the patterns
-  table in [philosophy.md](philosophy.md#patterns-reused-from-nomad-gitops).
-- **Scope:** a pure function from the plan's `JobDiff` to the redacted JSON that
-  goes into `plan_diff`. Redacts `Env[...]`, templates and keys containing
-  password, token or secret. Suggested home: a small `internal/redact` package
-  (add it to the layout in CLAUDE.md and to [architecture.md](architecture.md)).
-- **Done when:** table-driven tests show that no secret value reaches the output
-  for every pattern above, and that non-secret fields are untouched.
-- **Notes:** open question for `engine-detection`: `deployments.job_spec` keeps
-  the full spec to register, which can contain the same secrets, and it is not
-  redacted. Either accept it (the database is local, and the spec is needed to
-  apply) or re-read the spec from git at apply time and check `spec_hash`.
-  Decide it in the `engine-detection` plan and write it in the decision log.
 
 ### notify
 
@@ -118,11 +100,18 @@ Compare the repo with Nomad and create the deployments.
   job does not exist; redacted diff; spec hash). Supersede, revalidate pending
   deployments on every cycle, sync the hook jobs (register or update with plan +
   CAS, whatever the policy), notify on `pending_approval`. Not in scope: apply.
-- **Ready: plan first.** Questions for the plan: the `job_spec` question in
-  [`redact`](#redact); where the drift of a job under policy `none` is kept, as
-  the schema has no table for observations (compute it on demand in the
-  dashboard, or keep it in memory); a hook declared but missing from the repo
-  is `failed`, never skipped.
+- **Ready: plan first.** Questions for the plan: `deployments.job_spec` keeps
+  the full spec to register, which can contain the same secrets as the diff,
+  and it is not redacted: either accept it (the database is local, and the
+  spec is needed to apply) or re-read the spec from git at apply time and
+  check `spec_hash`, then write the choice in the decision log; where the
+  drift of a job under policy `none` is kept, as the schema has no table for
+  observations (compute it on demand in the dashboard, or keep it in memory);
+  a hook declared but missing from the repo is `failed`, never skipped.
+- **Notes from `redact`:** `redact.Diff(plan.Diff)` returns the JSON for
+  `Deployment.PlanDiff` (as a string); it never modifies the plan, so the same
+  `JobDiff` can still drive the decision. An error from it is a bug, not a
+  Nomad failure: fail the cycle loudly, never save the unredacted diff.
 
 ### engine-apply
 

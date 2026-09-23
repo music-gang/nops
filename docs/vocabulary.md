@@ -33,7 +33,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **policy** | `auto`, `approval` or `none`: who gives the go-ahead. It says nothing about *how* the apply is done. |
 | **drift** | A difference between the target spec and the live job. Under policy `none` it is only shown. |
 | **plan** | Nomad's dry-run of a register (`Jobs.Plan`), with the diff. |
-| **diff** | The plan's `JobDiff`. Once redacted, it is the **redacted diff** saved in SQLite and shown in the dashboard. |
+| **diff** | The plan's `JobDiff`. Once redacted, it is the **redacted diff** saved in SQLite and shown in the dashboard ([rules](dashboard.md#secret-redaction)). |
 
 ## Deployment lifecycle
 

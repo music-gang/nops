@@ -67,7 +67,7 @@ these patterns.
 | Diff via `Jobs.Plan(job, diff=true)` | The same `JobDiff` drives the decision and the dashboard. |
 | CAS register with `JobModifyIndex` | See invariant 2. |
 | Detection and apply decoupled; the newest commit supersedes the old one | The queue is persistent (SQLite). |
-| Secret redaction in the diff (`Env[...]`, templates, *password/token/secret* keys) | Applied **before** the diff is saved to the DB or rendered in HTML. |
+| Secret redaction in the diff (`Env[...]`, templates, *password/token/secret* keys) | Applied **before** the diff is saved to the DB or rendered in HTML. nops also covers headers, URL credentials and more names (*auth*, *credential*, *privatekey*, *apikey*): see [dashboard](dashboard.md#secret-redaction). |
 | In-memory git clone (go-git) + poll + webhook with a coalescing trigger (buffer-1 channel) | Read-only. |
 | `PreserveCounts`, and Count ignored for groups with a scaling policy | Don't fight the autoscaler. |
 
