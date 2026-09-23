@@ -112,6 +112,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"nomad-tls-skip-verify":     "true",
 		"git-url":                   repo,
 		"git-branch":                "prod",
+		"git-path":                  "jobs/apps",
 		"git-username":              "oauth2",
 		"git-token-file":            gitTok,
 		"db-path":                   "/var/lib/nops/nops.db",
@@ -148,6 +149,7 @@ func TestLoadEveryOption(t *testing.T) {
 		NomadTLSSkipVerify:     true,
 		GitURL:                 repo,
 		GitBranch:              "prod",
+		GitPath:                "jobs/apps",
 		GitUsername:            "oauth2",
 		GitTokenFile:           gitTok,
 		GitToken:               "git-secret",
@@ -229,6 +231,9 @@ func TestLoadInvalid(t *testing.T) {
 		{"nomad-tls-skip-verify", "maybe", "invalid syntax"},
 		{"git-url", "", "required"},
 		{"git-branch", "", "required"},
+		{"git-path", "/etc", "must be a relative path"},
+		{"git-path", "..", "must be a relative path"},
+		{"git-path", "../jobs", "must be a relative path"},
 		{"git-token-file", missing, "no such file"},
 		{"git-token-file", empty, "is empty"},
 		{"db-path", "", "required"},
@@ -573,6 +578,27 @@ func TestSecretValuesAreDocumented(t *testing.T) {
 	for _, sv := range secretValues {
 		if !strings.Contains(doc, sv.envVar) {
 			t.Errorf("docs/configuration.md does not mention %s", sv.envVar)
+		}
+	}
+}
+
+func TestGitPath(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", ""},
+		{".", ""},
+		{"jobs", "jobs"},
+		{"jobs/apps", "jobs/apps"},
+		{"jobs/./apps/", "jobs/apps"},
+		{"jobs/apps/", "jobs/apps"},
+	}
+	for _, tt := range tests {
+		got, err := gitPath(tt.in)
+		if err != nil {
+			t.Errorf("gitPath(%q) error: %v", tt.in, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("gitPath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

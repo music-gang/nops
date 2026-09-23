@@ -11,6 +11,7 @@
 | `internal/hooks` | Unit tests with an in-memory fake Nomad, a **real SQLite** store and an injected clock (success, failure, timeout, resume, redispatch with token, Nomad/SQLite errors) + integration with `raw_exec` hooks. |
 | `internal/redact` | Unit: no secret must reach the DB or the HTML, over hand-built diffs and a fixture from a real plan (`testdata/plan_diff.json`) + integration: the same rules on a live plan. |
 | `internal/notify` | `httptest` receivers: the request of every adapter, several adapters at once, and non-2xx, timeout, unreachable and cancelled (a WARN each, no error, no URL in the log). |
+| `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers, header auth, CSRF and 403. No coverage target. |
 | Real interaction with Nomad | Integration. |
 

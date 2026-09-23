@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ type Config struct {
 
 	GitURL       string
 	GitBranch    string
+	GitPath      string // subdirectory holding the job files; "" is the root
 	GitUsername  string
 	GitTokenFile string
 	GitToken     string // content of GitTokenFile, read by Load
@@ -110,6 +112,8 @@ var options = []option{
 		set: func(c *Config, v string) (err error) { c.GitURL, err = required(v); return }},
 	{name: "git-branch", def: "main", usage: "branch to read",
 		set: func(c *Config, v string) (err error) { c.GitBranch, err = required(v); return }},
+	{name: "git-path", usage: "subdirectory of the repository holding the job files (empty: root)",
+		set: func(c *Config, v string) (err error) { c.GitPath, err = gitPath(v); return }},
 	{name: "git-username", def: "git", usage: "username sent with the git token",
 		set: func(c *Config, v string) error { c.GitUsername = v; return nil }},
 	{name: "git-token-file", usage: "file holding the git HTTPS token (empty: public repository)",
@@ -378,6 +382,22 @@ func required(v string) (string, error) {
 		return "", errors.New("required")
 	}
 	return v, nil
+}
+
+// gitPath validates -git-path: a relative path inside the repository
+// (gitwatch joins it to the tree it reads), or empty for the root.
+func gitPath(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	clean := path.Clean(v)
+	if clean == "." {
+		return "", nil
+	}
+	if strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("%q must be a relative path inside the repository", v)
+	}
+	return clean, nil
 }
 
 func positiveDuration(v string) (time.Duration, error) {
