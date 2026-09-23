@@ -189,6 +189,134 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	}
 }
 
+func TestAllocations(t *testing.T) {
+	const body = `[
+	  {"ID":"a1","ClientStatus":"complete","DesiredStatus":"run"},
+	  {"ID":"a2","ClientStatus":"failed","DesiredStatus":"run","ClientDescription":"Failed tasks",
+	   "TaskStates":{
+	     "z":{"Failed":false,"Events":[{"Type":"Terminated","DisplayMessage":"ignored"}]},
+	     "t":{"Failed":true,"Events":[{"Type":"Started","DisplayMessage":"Task started"},
+	                                  {"Type":"Terminated","DisplayMessage":"Exit Code: 1"},
+	                                  {"Type":"Not Restarting","DisplayMessage":"Policy allows no restarts"}]},
+	     "b":{"Failed":true,"Events":[{"Type":"Driver Failure"}]},
+	     "n":{"Failed":true,"Events":[{"Type":"Received","DisplayMessage":"Task received by client"},
+	                                  {"Type":"Killed","DisplayMessage":"Task successfully killed"}]}}},
+	  {"ID":"a3","ClientStatus":"lost","DesiredStatus":"stop","ClientDescription":"Client lost"}
+	]`
+	s, c := newStub(t, 200, body)
+	got, err := c.Allocations(context.Background(), "hook/dispatch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.path != "/v1/job/hook/dispatch-1/allocations" || s.query["all"][0] != "true" || s.query["namespace"][0] != "default" {
+		t.Errorf("request = %s %v", s.path, s.query)
+	}
+	want := []Alloc{
+		{ID: "a1", ClientStatus: "complete", DesiredStatus: "run"},
+		{ID: "a2", ClientStatus: "failed", DesiredStatus: "run", Failure: "Failed tasks; task b: Driver Failure; task n: Task successfully killed; task t: Exit Code: 1"},
+		{ID: "a3", ClientStatus: "lost", DesiredStatus: "stop", Failure: "Client lost"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d allocs, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("alloc %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	_, c = newStub(t, 404, "job not found")
+	if _, err := c.Allocations(context.Background(), "x"); !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("404: err = %v, want ErrJobNotFound", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.Allocations(context.Background(), "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
+func TestFindDispatched(t *testing.T) {
+	var listPrefix string
+	var read []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs":
+			listPrefix = r.URL.Query().Get("prefix")
+			io.WriteString(w, `[{"ID":"hook/dispatch-1","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-2","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-3","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-4","ParentID":"hook"},
+			                    {"ID":"hook/dispatch-9","ParentID":"other"}]`)
+		case "/v1/job/hook/dispatch-1":
+			read = append(read, "1")
+			io.WriteString(w, `{"ID":"hook/dispatch-1","DispatchIdempotencyToken":"d1:pre"}`)
+		case "/v1/job/hook/dispatch-2":
+			read = append(read, "2")
+			w.WriteHeader(404) // garbage-collected between the list and the read
+		case "/v1/job/hook/dispatch-3":
+			read = append(read, "3")
+			io.WriteString(w, `{"ID":"hook/dispatch-3"}`) // not dispatched with a token
+		case "/v1/job/hook/dispatch-4":
+			read = append(read, "4")
+			io.WriteString(w, `{"ID":"hook/dispatch-4","DispatchIdempotencyToken":"d2:pre"}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cfg := api.DefaultConfig()
+	cfg.Address = srv.URL
+	c, err := New(cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	got, err := c.FindDispatched(ctx, "hook", "d2:pre")
+	if err != nil || got != "hook/dispatch-4" {
+		t.Fatalf("FindDispatched = %q, %v, want hook/dispatch-4", got, err)
+	}
+	if listPrefix != "hook/dispatch-" {
+		t.Errorf("list prefix = %q", listPrefix)
+	}
+	if strings.Join(read, "") != "1234" {
+		t.Errorf("children read = %v: the child of another parent must not be read", read)
+	}
+
+	if got, err := c.FindDispatched(ctx, "hook", "nobody:pre"); err != nil || got != "" {
+		t.Errorf("unknown token: %q, %v, want empty", got, err)
+	}
+
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.FindDispatched(ctx, "hook", "x"); err == nil || !strings.Contains(err.Error(), "list children of job hook") {
+		t.Errorf("list failure: err = %v", err)
+	}
+}
+
+func TestStopJob(t *testing.T) {
+	s, c := newStub(t, 200, `{"EvalID":"e1"}`)
+	if err := c.StopJob(context.Background(), "hook/dispatch-1"); err != nil {
+		t.Fatal(err)
+	}
+	if s.method != http.MethodDelete || s.path != "/v1/job/hook/dispatch-1" {
+		t.Errorf("request = %s %s", s.method, s.path)
+	}
+	if got := s.query["purge"]; len(got) != 1 || got[0] != "false" {
+		t.Errorf("purge = %v, want false", got)
+	}
+
+	// A job that is already gone is fine.
+	_, c = newStub(t, 404, "job not found")
+	if err := c.StopJob(context.Background(), "x"); err != nil {
+		t.Errorf("404: err = %v, want nil", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if err := c.StopJob(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "stop job x") {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
 func TestParseHCL(t *testing.T) {
 	s, c := newStub(t, 200, `{"ID":"web"}`)
 	job, err := c.ParseHCL(context.Background(), `job "web" {}`, `tag = "1"`)

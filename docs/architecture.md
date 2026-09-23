@@ -12,11 +12,11 @@ approval [dashboard](dashboard.md).
 | `cmd/nops` | Entrypoint: wiring of config, store, engine, web. |
 | `internal/config` | Flags and env vars (`NOPS_*`), validation. |
 | `internal/gitwatch` | In-memory clone, polling, webhook trigger. |
-| `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
+| `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched child by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
 | `internal/meta` | Parsing and validation of the `nops_*` meta keys: the [source of truth](meta-keys.md) for the HCL syntax. |
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
 | `internal/engine` | State machine, reconciler, recovery on restart. |
-| `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs. |
+| `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Dashboard (`net/http` + `html/template`) and git webhook. |
 | `internal/notify` | Notifications via a generic webhook (JSON POST). |
 
@@ -50,6 +50,6 @@ configurable.
 ## What nops does not do
 
 - It does not write to Git, and does not write meta into the live job.
-- It does not roll back automatically and does not deregister (for now).
+- It does not roll back automatically and does not deregister jobs (for now). The only thing it stops is a hook job that timed out.
 - It does not resolve nodes for hooks: placement is decided by the scheduler
   (see [hooks](hooks.md#placement)).

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/nomad/api"
@@ -154,6 +155,124 @@ func (c *Client) Dispatch(ctx context.Context, parentID string, meta map[string]
 		return nil, fmt.Errorf("dispatch job %s: %w", parentID, err)
 	}
 	return &DispatchResult{JobID: resp.DispatchedJobID, EvalID: resp.EvalID}, nil
+}
+
+// Alloc is the part of an allocation that hook outcome detection needs.
+type Alloc struct {
+	ID string
+	// ClientStatus is pending, running, complete, failed or lost.
+	ClientStatus string
+	// DesiredStatus is what the server wants: run, stop or evict. A batch
+	// allocation that completed on its own keeps "run".
+	DesiredStatus string
+	// Failure explains a failed allocation (the client description plus, for each
+	// failed task, the event that says why). Empty when nothing failed.
+	Failure string
+}
+
+// Allocations lists every allocation of a job, including finished ones.
+func (c *Client) Allocations(ctx context.Context, jobID string) ([]Alloc, error) {
+	stubs, _, err := c.jobs.Allocations(jobID, true, c.query(ctx))
+	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("allocations of job %s: %w", jobID, ErrJobNotFound)
+		}
+		return nil, fmt.Errorf("list allocations of job %s: %w", jobID, err)
+	}
+	out := make([]Alloc, 0, len(stubs))
+	for _, s := range stubs {
+		out = append(out, Alloc{
+			ID:            s.ID,
+			ClientStatus:  s.ClientStatus,
+			DesiredStatus: s.DesiredStatus,
+			Failure:       failure(s),
+		})
+	}
+	return out, nil
+}
+
+// failure builds a human-readable reason for a failed allocation.
+func failure(s *api.AllocationListStub) string {
+	var parts []string
+	if s.ClientStatus == "failed" || s.ClientStatus == "lost" {
+		if s.ClientDescription != "" {
+			parts = append(parts, s.ClientDescription)
+		}
+	}
+	names := make([]string, 0, len(s.TaskStates))
+	for name := range s.TaskStates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ts := s.TaskStates[name]
+		if ts == nil || !ts.Failed || len(ts.Events) == 0 {
+			continue
+		}
+		ev := failureEvent(ts.Events)
+		msg := ev.DisplayMessage
+		if msg == "" {
+			msg = ev.Type
+		}
+		parts = append(parts, fmt.Sprintf("task %s: %s", name, msg))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// failureEvent picks the event that says why a task failed. The last event is
+// usually "Not Restarting: Policy allows no restarts", which hides the cause,
+// so the last cause-type event wins and the last event is the fallback.
+func failureEvent(events []*api.TaskEvent) *api.TaskEvent {
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Type {
+		case api.TaskTerminated, api.TaskDriverFailure, api.TaskSetupFailure, api.TaskFailedValidation:
+			return events[i]
+		}
+	}
+	return events[len(events)-1]
+}
+
+// FindDispatched returns the ID of the child of parentID that was dispatched
+// with idempotencyToken, or "" if there is none (never dispatched, or already
+// garbage-collected). It is how a resumed run finds a child whose ID was not
+// saved. It lists the children (dead ones included) and reads each one, as the
+// token is only on the full job.
+func (c *Client) FindDispatched(ctx context.Context, parentID, idempotencyToken string) (string, error) {
+	q := c.query(ctx)
+	q.Prefix = parentID + "/dispatch-"
+	stubs, _, err := c.jobs.List(q)
+	if err != nil {
+		return "", fmt.Errorf("list children of job %s: %w", parentID, err)
+	}
+	for _, s := range stubs {
+		if s.ParentID != parentID {
+			continue
+		}
+		child, err := c.Job(ctx, s.ID)
+		if errors.Is(err, ErrJobNotFound) {
+			continue // garbage-collected between the list and the read
+		}
+		if err != nil {
+			return "", err
+		}
+		if child.DispatchIdempotencyToken != nil && *child.DispatchIdempotencyToken == idempotencyToken {
+			return s.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// StopJob deregisters a job without purging it, so it stays visible in Nomad
+// for debugging. A job that does not exist is not an error: stopping is
+// idempotent.
+func (c *Client) StopJob(ctx context.Context, id string) error {
+	if _, _, err := c.jobs.Deregister(id, false, c.write(ctx)); err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("stop job %s: %w", id, err)
+	}
+	return nil
 }
 
 func isCASConflict(err error) bool {
