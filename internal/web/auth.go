@@ -304,8 +304,21 @@ func (a *Auth) allowed(u user) bool {
 }
 
 // safeNext keeps the redirect after a login on this site: a path, never a URL.
+//
+// Browsers drop tabs and newlines from a URL before parsing it, and read a
+// backslash as a slash, so "/<TAB>/evil.example.com" and "/\evil.example.com"
+// would both leave the site as "//evil.example.com". Every control character
+// and every backslash is therefore refused, not only the ones at the start.
 func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+		return "/"
+	}
+	for _, r := range next {
+		if r < ' ' || r == 0x7f || r == '\\' {
+			return "/"
+		}
+	}
+	if u, err := url.Parse(next); err != nil || u.Scheme != "" || u.Host != "" {
 		return "/"
 	}
 	return next

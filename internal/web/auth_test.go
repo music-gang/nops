@@ -702,10 +702,30 @@ func TestSafeNext(t *testing.T) {
 		"https://evil.example.com": "/",
 		"evil":                     "/",
 		"/a\r\nSet-Cookie: x=y":    "/",
+		// Browsers drop tabs and newlines from a URL before parsing it, so
+		// "/<TAB>/evil" would be read as "//evil": any control character is out.
+		"/\t/evil.example.com":   "/",
+		"/\t\t/evil.example.com": "/",
+		"/page\tx":               "/",
+		"/\x00/evil.example.com": "/",
+		"/\x7f/evil.example.com": "/",
+		"/\\":                    "/",
+		// A percent-encoded tab is just a path character: browsers do not
+		// decode it before navigating.
+		"/a%09b": "/a%09b",
 	} {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A next that would leave the site is not followed after the OIDC callback.
+func TestCallbackIgnoresAnOffSiteNext(t *testing.T) {
+	a := newApp(t)
+	rec := a.callback("/\t/evil.example.com", alice())
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Errorf("callback: status %d, Location %q, want a redirect to /", rec.Code, rec.Header().Get("Location"))
 	}
 }
 

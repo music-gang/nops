@@ -84,6 +84,12 @@ options for each are in [configuration](configuration.md#dashboard):
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
 the [git webhook](#git-webhook) (its own secret) and `/healthz`.
 
+After a login, either backend sends the browser back to the page it asked for
+(`?next=`), but only if it is a path on the dashboard itself: anything with a
+scheme or host, a `//` or `/\` start, a backslash or a control character
+(a tab, a newline: browsers drop them before parsing a URL, so `/<TAB>/host`
+would be read as `//host`) sends it to `/` instead.
+
 ## OpenID Connect (`-auth-mode=oidc`)
 
 ### The flow
