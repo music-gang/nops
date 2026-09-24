@@ -99,7 +99,13 @@ Store rules:
 
 ## Recovery after a crash
 
-At startup, for every non-terminal deployment:
+Recovery is the first cycle of the engine loop (`Engine.RunApply`): it runs
+right at startup, before the interval ticker, on every non-terminal deployment.
+There is no separate recovery function: each step resumes from what is in the
+store, so calling it again is the recovery. The cycle does not block the
+startup, since a hook step waits for its hook to end, which can take minutes.
+`detected` and `pending_approval` need nothing special: `detected` is routed as
+usual, `pending_approval` still waits for a human. For the rest:
 
 - `pre_hook`/`post_hook`: run the hook again (`hooks.Runner.Run` is
   idempotent). A run that is already terminal returns its stored result. If
@@ -114,6 +120,11 @@ At startup, for every non-terminal deployment:
   the apply had already happened and we move on. Otherwise `failed` (conflict).
   To record `applied_index`, re-read the live job: the index in the register
   response is not reliable (see the decision log).
+- `applying` with `applied_index` set: wait for health as before, the timeout
+  counted from the `→ applying` event. If the live job's index is no longer
+  `applied_index` and no Nomad deployment tracks it, the job was modified
+  outside nops (for instance while it was down): the deployment is `failed`
+  rather than judged on someone else's allocations.
 
 The idempotency token is scoped to the parent job and lives as long as the
 dispatched job: if Nomad garbage-collects the dispatched job, a new dispatch becomes possible.

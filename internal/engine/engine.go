@@ -1,9 +1,9 @@
 // Package engine detects drift between the git repository and the Nomad
 // cluster, creates deployments accordingly (see
 // docs/design/engine-detection.md), and drives them from approval to
-// completed (see docs/design/engine-apply.md). Recovery after a restart is a
-// later task: every step here is already written to resume from persisted
-// state alone.
+// completed (see docs/design/engine-apply.md). Recovery after a restart is the
+// first RunApply cycle: every step resumes from persisted state alone, so it
+// picks up whatever a crash left in flight.
 package engine
 
 import (

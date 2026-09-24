@@ -4,8 +4,8 @@ This is the second half of `internal/engine`: moving a deployment from
 `detected` (policy `auto`) or from an approved `pending_approval` through
 `pre_hook` → `applying` → `post_hook` to `completed`, and every failure path.
 Detection ([design](engine-detection.md)) never touches these states; this is
-where they are advanced. `engine-recovery` (next task) reuses the same
-resume-safe steps at startup.
+where they are advanced. Recovery after a restart reuses the same
+resume-safe steps (decision 8).
 
 ## Scope
 
@@ -165,7 +165,10 @@ expanded here.
    (including no deployment at all, for a `batch` job or an `update` stanza
    that produces none) falls back to the allocations of the applied job
    version: `nomadx.Alloc` gains `JobVersion`, matched against the live job's
-   own `Version` re-read after the register, and health follows the same
+   own `Version` re-read after the register (and only while the live job's
+   index is still `applied_index`: otherwise it was modified outside nops, its
+   allocations are not ours, and the deployment is `failed`, see decision 8),
+   and health follows the same
    `failed`/`lost` → failed, `running`/`complete` → healthy, anything else →
    still waiting logic already used for hook outcomes (`hooks.md`). This
    avoids requiring an `EvalID` at all on the path where the register already
@@ -215,16 +218,22 @@ expanded here.
    scope here: nothing above prevents adding one later, and doing so would be
    a thin wrapper over the same "create a deployment" path detection already
    has.
-8. **`engine-recovery`'s scope narrows.** Every apply step above is
+8. **Recovery is `RunApply`'s first cycle.** Every apply step above is
    resume-safe on its own — the goroutine loop just calls the same
    per-deployment step function again after a restart, and `ListActive`
-   already returns every non-terminal deployment. `engine-recovery` narrows
-   to: (a) calling this same step function once for every active deployment
-   at startup before `RunApply`'s ticker starts, so a crash is noticed
-   immediately rather than after up to one `EngineInterval`, and (b) the
-   crash-window table tests already called out in the roadmap (a crash
-   between `Dispatch` and the saved dispatched job ID — already handled by
-   `hooks.Runner` itself; a CAS conflict discovered only after restart).
+   already returns every non-terminal deployment. `RunApply` already runs one
+   cycle before its ticker starts, so a crash is noticed immediately rather
+   than after up to one `EngineInterval`: `engine-recovery` added no startup
+   function, exported nothing and needed no locking (`startApply` keeps two
+   overlapping callers off the same deployment). The cycle stays asynchronous,
+   one goroutine per deployment: a hook step blocks until its hook ends, and a
+   blocking startup pass would delay the dashboard and detection. What the task
+   added is the crash-window tests (`recovery_test.go`) and one fix they
+   exposed: the allocations fallback of decision 3 read the live job's
+   allocations even when the live job had been modified outside nops after our
+   register (for instance while nops was down), so someone else's healthy
+   version could complete our deployment. The fallback now requires the live
+   index to still be `applied_index`, and fails the deployment otherwise.
 
 ## Tests
 
@@ -237,7 +246,16 @@ Nomad deployment failed, apply timeout, the detection race in
 `BlockedBy`/`BlockedReason` from decisions 6 and 7 (a job whose latest
 deployment failed after applying stays blocked across a live-index change,
 and unblocks on a new `spec_hash`), plus the goroutine loop never starting the
-same deployment twice. `tests/integration`: one full cycle against a real
+same deployment twice. `recovery_test.go` restarts the engine (a fresh
+`Engine` over the same store and fake Nomad) and checks where the first
+`RunApply` cycle takes a deployment left in every state a crash can leave: a
+table for `detected`, `pre_hook`, `applying` (before the register, after it
+before `applied_index`, a conflict found only after the restart, a CAS conflict
+on the resumed register, healthy or timed out or modified outside nops while
+down) and `post_hook`; `pending_approval` and other namespaces left alone; and
+a real `hooks.Runner` over a fake hook Nomad for a crash between `Dispatch` and
+the saved dispatched job ID (the child is adopted, or the hook fails, and is
+never dispatched again). `tests/integration`: one full cycle against a real
 `nomad agent -dev` for a job with no hooks (register → healthy →
 `completed`) and one with both hooks, plus whichever health path from
 decision 3 is not already covered by an existing `nomadx`/`hooks` integration

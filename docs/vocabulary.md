@@ -54,7 +54,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **CAS** | Compare-and-set on the job's modify index. |
 | **cas index** | The live `JobModifyIndex` captured at detection (`cas_index`). `0` means "the job must not exist". |
 | **applied index** | The live `JobModifyIndex` re-read after the apply (`applied_index`), never the one in the register response. |
-| **recovery** | Resuming non-terminal deployments after a restart. Every step is written to be **resumable**: calling it again continues where it stopped. |
+| **recovery** | Resuming non-terminal deployments after a restart: it is the first cycle of the engine loop, not a separate pass. Every step is written to be **resumable**: calling it again continues where it stopped. |
 | **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
 | **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
 | **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
@@ -86,7 +86,7 @@ Some words exist in both worlds and mean different things. Say which one.
 |---|---|
 | **store** | `internal/store`: SQLite, the only place state lives. |
 | **nomadx** | `internal/nomadx`: the Nomad client wrapper, CAS-only register, sentinel errors. |
-| **engine** | `internal/engine`: the state machine that moves deployments forward. Its three loops are **detection**, the **engine loop** (advancing non-terminal deployments) and **recovery**. |
+| **engine** | `internal/engine`: the state machine that moves deployments forward. Its two loops are **detection** and the **engine loop** (advancing non-terminal deployments); **recovery** is the engine loop's first cycle. |
 | **runner** | `hooks.Runner`: runs one hook run to a terminal state. Blocking and idempotent. |
 | **sentinel error** | An exported `Err...` value the caller tests with `errors.Is` (`ErrCASConflict`, `ErrJobNotFound`, `ErrActiveDeployment`). |
 | **fake / stub** | *Fake*: an in-memory stand-in with behaviour (the fake Nomad in `hooks` tests). *Stub*: an `httptest` server that returns canned answers (`nomadx` tests). |

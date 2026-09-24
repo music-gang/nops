@@ -15,7 +15,7 @@ approval [dashboard](dashboard.md).
 | `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched job by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
 | `internal/meta` | Parsing and validation of the `nops_*` meta keys: the [source of truth](meta-keys.md) for the HCL syntax. |
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
-| `internal/engine` | State machine, reconciler, recovery on restart. Detection ([design](design/engine-detection.md)) parses, plans, and creates, supersedes or revalidates deployments; apply and recovery are separate, later tasks. |
+| `internal/engine` | State machine, reconciler, recovery on restart. Detection ([design](design/engine-detection.md)) parses, plans, and creates, supersedes or revalidates deployments; apply ([design](design/engine-apply.md)) advances them, and its first cycle is recovery. |
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Dashboard (`net/http` + `html/template`) and git webhook. |
 | `internal/notify` | [Notifications](error-handling.md#notifications) on `pending_approval` and `failed`, through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |
@@ -31,7 +31,8 @@ the dashboard. There are three loops, all with configurable intervals:
    of `pending_approval` ones.
 2. **Engine.** Picks up non-terminal deployments and advances them: hook
    dispatch and waiting, apply, waiting for healthy, timeouts.
-3. **Recovery** at startup: resumes whatever was left half-way (see
+3. **Recovery** at startup: the engine's first cycle, which resumes whatever
+   was left half-way (see
    [state machine](state-machine.md#recovery-after-a-crash)).
 
 The only state that waits for an external event is `pending_approval`, by
