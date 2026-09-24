@@ -11,11 +11,13 @@ Thanks for your interest. The full guide is in
 4. Make sure `go build ./...`, `go vet ./...`, staticcheck and
    `go test -race ./...` pass (commands in `docs/development.md`).
 5. Title the PR in [Angular style](docs/development.md#commit-messages)
-   (`type(scope): subject`). PRs are squash-merged, so the title becomes the
-   commit subject on `main`. The PR description becomes the commit body, so
-   write it as one: what changes and why, in plain language. There is no PR
-   template on purpose: anything in the description, including comments and
-   checklists, ends up in the history.
+   (`type(scope): subject`) and write each commit of the branch in the same
+   style. PRs are squash-merged: the title becomes the commit subject on
+   `main` and the body comes from the branch's commits, which the maintainer
+   checks by hand when merging. The PR description is a separate text for the
+   reviewer (`## What changes`, `## Why`, and a `## Notes` if there is a
+   question) and does not reach `main`; the PR template has those headings.
+   Details in [docs/development.md](docs/development.md#workflow-and-ci).
 
 By contributing you agree that your contribution is licensed under the
 [Apache License 2.0](LICENSE).
