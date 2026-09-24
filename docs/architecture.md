@@ -9,7 +9,7 @@ approval [dashboard](dashboard.md).
 
 | Package | Role |
 |---|---|
-| `cmd/nops` | Entrypoint: wiring of config, store, engine, web. |
+| `cmd/nops` | Entrypoint: wiring of config, store, engine, web. Starts the git watcher, detection and apply loops in their own goroutines and the dashboard's `http.Server`, all off one `context.Context` cancelled on `SIGINT`/`SIGTERM`, and waits for them to unwind before exiting. |
 | `internal/config` | Flags and env vars (`NOPS_*`), validation. |
 | `internal/gitwatch` | In-memory clone, polling, webhook trigger ([design](design/gitwatch.md)). Read-only: nops never writes to git. |
 | `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched job by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
