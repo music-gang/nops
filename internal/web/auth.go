@@ -1,14 +1,12 @@
 // Package web serves the dashboard and the git webhook. This file is the
-// login: OpenID Connect against the provider set in the configuration, a
-// signed session cookie, and the middleware that puts the logged-in user, the
-// actor of a decision, in the request context. The rules are in
-// docs/dashboard.md#authentication.
+// OpenID Connect login backend; session.go holds what every login backend
+// shares (the cookie, Require, logout), auth_basic.go the local-users
+// backend. The rules are in docs/dashboard.md#authentication.
 package web
 
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -20,20 +18,13 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/gorilla/securecookie"
 	"golang.org/x/oauth2"
 )
 
 const (
-	sessionCookie = "nops_session"
-	loginCookie   = "nops_login"
-
-	sessionTTL = 12 * time.Hour
-	loginTTL   = 10 * time.Minute
-
-	loginPath    = "/auth/login"
+	loginTTL     = 10 * time.Minute
+	loginCookie  = "nops_login"
 	callbackPath = "/auth/callback"
-	logoutPath   = "/auth/logout"
 )
 
 // AuthOptions configures NewAuth.
@@ -50,25 +41,22 @@ type AuthOptions struct {
 	Log        *slog.Logger
 }
 
-// Auth is the login of the dashboard. It never contacts the provider before
-// the first login: an unreachable provider must not stop the engine, so
-// discovery is tried at every login until it works.
+// Auth is the OIDC login of the dashboard. It never contacts the provider
+// before the first login: an unreachable provider must not stop the engine,
+// so discovery is tried at every login until it works. It implements
+// Authenticator; *session gives it Require and Require's Register share
+// (logout) for free.
 type Auth struct {
-	opts    AuthOptions
-	client  *http.Client
-	log     *slog.Logger
-	cookie  *securecookie.SecureCookie
-	secure  bool // cookies are Secure: the public URL is https
-	xorigin *http.CrossOriginProtection
-	now     func() time.Time
+	*session
+	opts   AuthOptions
+	client *http.Client
 
 	mu       sync.Mutex
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
 }
 
-// NewAuth creates the login. The key that signs and encrypts the cookies is
-// random and lives only in this process: a restart logs everybody out.
+// NewAuth creates the OIDC login.
 func NewAuth(o AuthOptions) (*Auth, error) {
 	if o.Issuer == "" || o.ClientID == "" || o.ClientSecret == "" {
 		return nil, errors.New("web: the OIDC issuer, client ID and client secret are required")
@@ -80,69 +68,23 @@ func NewAuth(o AuthOptions) (*Auth, error) {
 	if err != nil || redirect.Host == "" {
 		return nil, fmt.Errorf("web: invalid redirect URL %q", o.RedirectURL)
 	}
-	hash, block := make([]byte, 32), make([]byte, 32)
-	if _, err := rand.Read(hash); err != nil {
-		return nil, fmt.Errorf("web: session key: %w", err)
+	sess, err := newSession(redirect.Scheme == "https", o.Log)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := rand.Read(block); err != nil {
-		return nil, fmt.Errorf("web: session key: %w", err)
-	}
-	sc := securecookie.New(hash, block)
-	sc.SetSerializer(securecookie.JSONEncoder{})
-	sc.MaxAge(0) // the expiry is checked by Auth, with its own clock
-
-	a := &Auth{
-		opts:    o,
-		client:  o.HTTPClient,
-		log:     o.Log,
-		cookie:  sc,
-		secure:  redirect.Scheme == "https",
-		xorigin: http.NewCrossOriginProtection(),
-		now:     time.Now,
-	}
+	a := &Auth{session: sess, opts: o, client: o.HTTPClient}
 	if a.client == nil {
 		a.client = &http.Client{Timeout: 10 * time.Second}
-	}
-	if a.log == nil {
-		a.log = slog.Default()
 	}
 	return a, nil
 }
 
-// Register adds the login routes to mux.
+// Register adds the OIDC login routes to mux, on top of the shared ones
+// (POST /auth/logout).
 func (a *Auth) Register(mux *http.ServeMux) {
+	a.session.Register(mux)
 	mux.HandleFunc("GET "+loginPath, a.login)
 	mux.HandleFunc("GET "+callbackPath, a.callback)
-	mux.Handle("POST "+logoutPath, a.xorigin.Handler(http.HandlerFunc(a.logout)))
-}
-
-type userKey struct{}
-
-// UserFrom returns the logged-in user set by Require: the actor to record
-// with a decision.
-func UserFrom(ctx context.Context) (string, bool) {
-	u, ok := ctx.Value(userKey{}).(string)
-	return u, ok && u != ""
-}
-
-// Require lets a request through only with a valid session, and puts the user
-// in its context. Without one, a GET is sent to the login and anything else
-// gets 401. A request that changes state and comes from another origin is
-// refused before anything else (http.CrossOriginProtection, with the
-// SameSite=Lax cookie): there is no CSRF token to carry through the pages.
-func (a *Auth) Require(next http.Handler) http.Handler {
-	return a.xorigin.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := a.session(r)
-		if !ok {
-			if r.Method == http.MethodGet || r.Method == http.MethodHead {
-				http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
-				return
-			}
-			http.Error(w, "login required", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
-	}))
 }
 
 // loginState is what survives the round trip to the provider.
@@ -152,11 +94,6 @@ type loginState struct {
 	Verifier string `json:"v"`
 	Next     string `json:"x"`
 	Expires  int64  `json:"e"`
-}
-
-type sessionData struct {
-	User    string `json:"u"`
-	Expires int64  `json:"e"`
 }
 
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
@@ -245,31 +182,12 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess := sessionData{User: who.actor(), Expires: a.now().Add(sessionTTL).Unix()}
-	if !a.setCookie(w, sessionCookie, "/", sess, sessionTTL) {
+	if !a.start(w, who.actor()) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	a.log.InfoContext(ctx, "login", "user", sess.User)
+	a.log.InfoContext(ctx, "login", "user", who.actor())
 	http.Redirect(w, r, st.Next, http.StatusFound)
-}
-
-func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
-	a.clearCookie(w, sessionCookie, "/")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-// session reads the user of a valid, unexpired session cookie.
-func (a *Auth) session(r *http.Request) (string, bool) {
-	var s sessionData
-	if err := a.cookie.Decode(sessionCookie, cookieValue(r, sessionCookie), &s); err != nil {
-		return "", false
-	}
-	if s.User == "" || a.now().Unix() > s.Expires {
-		return "", false
-	}
-	return s.User, true
 }
 
 // discover returns the OAuth2 configuration and the verifier, contacting the
@@ -385,34 +303,6 @@ func (a *Auth) allowed(u user) bool {
 	return false
 }
 
-func (a *Auth) setCookie(w http.ResponseWriter, name, path string, v any, ttl time.Duration) bool {
-	enc, err := a.cookie.Encode(name, v)
-	if err != nil {
-		a.log.Error("encode cookie", "cookie", name, "error", err)
-		return false
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: enc, Path: path, MaxAge: int(ttl.Seconds()),
-		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode,
-	})
-	return true
-}
-
-func (a *Auth) clearCookie(w http.ResponseWriter, name, path string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: "", Path: path, MaxAge: -1,
-		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func cookieValue(r *http.Request, name string) string {
-	c, err := r.Cookie(name)
-	if err != nil {
-		return ""
-	}
-	return c.Value
-}
-
 // safeNext keeps the redirect after a login on this site: a path, never a URL.
 func safeNext(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") {
@@ -428,9 +318,3 @@ func randomToken() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
-
-func equal(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-func noStore(w http.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }

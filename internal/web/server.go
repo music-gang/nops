@@ -1,7 +1,8 @@
-// Package web serves the dashboard and the git webhook. Authentication
-// (OpenID Connect, sessions, the actor) is auth.go; this file wires the
-// pages, the diff renderer and the webhook behind it. The pages are
-// documented in docs/dashboard.md.
+// Package web serves the dashboard and the git webhook. Authentication is
+// session.go (shared session/cookie/actor mechanics), auth.go (OpenID
+// Connect) and auth_basic.go (local users); this file wires the pages, the
+// diff renderer and the webhook behind whichever Authenticator it is given.
+// The pages are documented in docs/dashboard.md.
 package web
 
 import (
@@ -48,9 +49,25 @@ type Engine interface {
 	Observations() []engine.Observation
 }
 
+// Authenticator is what the dashboard needs from a login backend: NewAuth
+// (OpenID Connect) and NewBasicAuth (local users) both implement it, and
+// -auth-mode picks exactly one (docs/dashboard.md#authentication).
+type Authenticator interface {
+	// Register adds the backend's /auth/* routes to mux.
+	Register(mux *http.ServeMux)
+	// Require lets a request through only with a valid session, and puts
+	// the actor in its context (UserFrom).
+	Require(next http.Handler) http.Handler
+}
+
+var (
+	_ Authenticator = (*Auth)(nil)
+	_ Authenticator = (*BasicAuth)(nil)
+)
+
 // Options configures New.
 type Options struct {
-	Auth   *Auth
+	Auth   Authenticator
 	Store  Store
 	Engine Engine
 
@@ -67,7 +84,7 @@ type Options struct {
 
 // server holds the dependencies every handler needs.
 type server struct {
-	auth    *Auth
+	auth    Authenticator
 	store   Store
 	engine  Engine
 	trigger func()
@@ -122,6 +139,8 @@ func parseTemplates() (*template.Template, error) {
 
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
+
+	s.auth.Register(mux) // GET/POST /auth/*, whichever backend this is
 
 	mux.HandleFunc("GET /healthz", s.healthz)
 	if len(s.secret) > 0 {

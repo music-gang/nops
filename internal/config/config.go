@@ -46,6 +46,12 @@ type Config struct {
 	DBPath     string
 	ListenAddr string
 
+	// AuthMode picks the dashboard's login backend, "oidc" or "basic"
+	// (docs/dashboard.md#authentication): mutually exclusive, so only the
+	// fields of the chosen one are used, and check() requires the other's
+	// to be unset.
+	AuthMode string
+
 	// OIDC login of the dashboard (docs/dashboard.md#authentication). The
 	// client secret is read from a file by Load, or from its plain env var.
 	OIDCIssuerURL        string // exactly as the provider announces it: a trailing slash matters
@@ -54,6 +60,10 @@ type Config struct {
 	OIDCClientSecret     string
 	OIDCAllowedUsers     []string // preferred_username or email; at least one of users and groups is set
 	OIDCAllowedGroups    []string // values of the groups claim
+
+	// UsersFile is the local-users login's "username:bcrypt-hash" file
+	// (docs/dashboard.md#local-users), used only with AuthMode "basic".
+	UsersFile string
 
 	// WebhookSecret authenticates the git forge's push webhook
 	// (docs/dashboard.md#git-webhook): its HMAC for GitHub and Gitea, its
@@ -147,17 +157,31 @@ var options = []option{
 			c.ListenAddr = v
 			return nil
 		}},
-	{name: "oidc-issuer-url", usage: "issuer URL of the OIDC provider, exactly as it announces it (required)",
+	{name: "auth-mode", usage: "how the dashboard logs people in: oidc or basic (required)",
+		set: func(c *Config, v string) error {
+			switch v {
+			case "":
+				return errors.New("required")
+			case "oidc", "basic":
+				c.AuthMode = v
+				return nil
+			default:
+				return fmt.Errorf("must be %q or %q, not %q", "oidc", "basic", v)
+			}
+		}},
+	{name: "oidc-issuer-url", usage: "issuer URL of the OIDC provider, exactly as it announces it (required with -auth-mode=oidc)",
 		set: func(c *Config, v string) (err error) {
 			if v == "" {
-				return errors.New("required")
+				return nil
 			}
+			// Not optionalURL: unlike other URLs, a trailing slash here is
+			// significant (Authentik's issuer has one) and must be kept.
 			c.OIDCIssuerURL, err = httpURL(v)
 			return
 		}},
-	{name: "oidc-client-id", usage: "OIDC client ID of nops (required)",
-		set: func(c *Config, v string) (err error) { c.OIDCClientID, err = required(v); return }},
-	{name: "oidc-client-secret-file", usage: "file holding the OIDC client secret (required)",
+	{name: "oidc-client-id", usage: "OIDC client ID of nops (required with -auth-mode=oidc)",
+		set: func(c *Config, v string) error { c.OIDCClientID = v; return nil }},
+	{name: "oidc-client-secret-file", usage: "file holding the OIDC client secret (required with -auth-mode=oidc)",
 		set: func(c *Config, v string) (err error) {
 			c.OIDCClientSecretFile = v
 			c.OIDCClientSecret, err = secretFile(v)
@@ -167,6 +191,8 @@ var options = []option{
 		set: func(c *Config, v string) error { c.OIDCAllowedUsers = csvList(v); return nil }},
 	{name: "oidc-allowed-groups", usage: "comma-separated groups (claim \"groups\") allowed to log in (with or without -oidc-allowed-users)",
 		set: func(c *Config, v string) error { c.OIDCAllowedGroups = csvList(v); return nil }},
+	{name: "users-file", usage: "file holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
+		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
 
 	{name: "webhook-secret-file", usage: "file holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
 		set: func(c *Config, v string) (err error) {
@@ -382,11 +408,32 @@ func (c *Config) check() []error {
 	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
 		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
-	if c.OIDCClientSecret == "" {
-		errs = append(errs, errors.New("the OIDC client secret is required (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
-	}
-	if len(c.OIDCAllowedUsers) == 0 && len(c.OIDCAllowedGroups) == 0 {
-		errs = append(errs, errors.New("nobody is allowed to log in: set -oidc-allowed-users or -oidc-allowed-groups"))
+	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != "" ||
+		len(c.OIDCAllowedUsers) > 0 || len(c.OIDCAllowedGroups) > 0
+	switch c.AuthMode {
+	case "oidc":
+		if c.OIDCIssuerURL == "" {
+			errs = append(errs, errors.New("-oidc-issuer-url is required with -auth-mode=oidc"))
+		}
+		if c.OIDCClientID == "" {
+			errs = append(errs, errors.New("-oidc-client-id is required with -auth-mode=oidc"))
+		}
+		if c.OIDCClientSecret == "" {
+			errs = append(errs, errors.New("the OIDC client secret is required with -auth-mode=oidc (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
+		}
+		if len(c.OIDCAllowedUsers) == 0 && len(c.OIDCAllowedGroups) == 0 {
+			errs = append(errs, errors.New("nobody is allowed to log in: set -oidc-allowed-users or -oidc-allowed-groups"))
+		}
+		if c.UsersFile != "" {
+			errs = append(errs, errors.New("-users-file is only used with -auth-mode=basic"))
+		}
+	case "basic":
+		if c.UsersFile == "" {
+			errs = append(errs, errors.New("-users-file is required with -auth-mode=basic"))
+		}
+		if oidcSet {
+			errs = append(errs, errors.New("the -oidc-* options are only used with -auth-mode=oidc"))
+		}
 	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))

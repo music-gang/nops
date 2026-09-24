@@ -754,6 +754,66 @@ tr.diff-edited .diff-cell {
   margin: 0;
 }
 
+/* -- local-users login page --------------------------------------------------- */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 320px;
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-base);
+}
+
+.login-card__title {
+  text-align: center;
+  margin: 0;
+}
+
+.login-card__error {
+  color: var(--state-failed-fg);
+  background: var(--state-failed-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin: 0;
+  font-size: 14px;
+}
+
+.login-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.login-card__field input {
+  font: inherit;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.login-card__field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* -- responsive --------------------------------------------------------------- */
 
 @media (max-width: 860px) {

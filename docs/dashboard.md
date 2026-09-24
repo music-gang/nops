@@ -64,20 +64,27 @@ text, so it reads as "a secret changed here" at a glance.
 
 ## Authentication
 
-nops logs people in itself with **OpenID Connect**, against the provider you
-already run (Authentik, Authelia, Keycloak, …). It manages no users or
-passwords. The options are in [configuration](configuration.md#dashboard).
+nops logs people in itself, never a header set by a reverse proxy
+(`Remote-User`): nops cannot tell who set that header — anything that can
+reach its port without going through the proxy (another allocation, the LAN,
+the tailnet) could approve a deployment by sending it, and a mistake in the
+network setup would fail silently. `-auth-mode` picks which of two backends
+verifies identity itself instead, so this stays true either way; the two are
+mutually exclusive (nops refuses to start if both are configured) and the
+options for each are in [configuration](configuration.md#dashboard):
 
-Why not a header set by a reverse proxy (`Remote-User`)? nops cannot tell who
-set it: anything that can reach its port without going through the proxy (
-another allocation, the LAN, the tailnet) could approve a deployment by
-sending the header, and a mistake in the network setup would fail silently.
-With OIDC the identity is a signed token that nops verifies. A reverse proxy
-in front for TLS is still fine; it just is not part of the trust.
+- **`oidc`**: against the OpenID Connect provider you already run
+  (Authentik, Authelia, Keycloak, …). nops manages no users or passwords of
+  its own.
+- **`basic`**: local users, an operator-maintained file of usernames and
+  bcrypt password hashes. No provider to run — the choice for a small,
+  private cluster (or a single machine) with no IdP already in place.
 
 **Every page needs a login**, reads included: the diff of a deployment says
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
 the [git webhook](#git-webhook) (its own secret) and `/healthz`.
+
+## OpenID Connect (`-auth-mode=oidc`)
 
 ### The flow
 
@@ -113,14 +120,6 @@ else the `sub`. It ends up in `decided_by` and in `events.actor`, and it is
 the only thing the pages take from the session: approve and reject call
 `Engine.Approve`/`Reject` with it.
 
-### Writes and CSRF
-
-A request that changes state (`POST`) is refused with 403 when the browser says
-it comes from another origin (`Sec-Fetch-Site`, or `Origin` against `Host`:
-Go's `http.CrossOriginProtection`), on top of the `SameSite=Lax` cookie. There
-is no CSRF token to carry through the pages. Requests with neither header (a
-`curl`) are allowed, and still need the session cookie.
-
 ### An unreachable provider
 
 nops does not contact the provider at startup, so an outage at the provider
@@ -142,6 +141,48 @@ Create an OIDC client (confidential, authorization code) at the provider:
 - **Issuer:** the value in the provider's discovery document
   (`<issuer>/.well-known/openid-configuration`), trailing slash included:
   Authentik's is like `https://auth.example.com/application/o/nops/`.
+
+## Local users (`-auth-mode=basic`)
+
+No provider, no claims: `-users-file` holds one `username:bcrypt-hash` line
+per user (blank lines and `#` comments ignored), read once at startup — a
+bad path, a malformed line or a hash that does not parse as bcrypt is a
+startup error naming the line. Generate a line the same way you would for
+an `nginx`/Apache basic-auth file:
+
+```sh
+htpasswd -nB alice
+```
+
+(`-n` prints instead of writing a file, `-B` picks bcrypt; without
+`apache2-utils` installed, any bcrypt one-liner in your language of choice
+works too — nops only needs a standard bcrypt hash.) Paste the `user:hash`
+line it prints into the file nops reads.
+
+- **The flow:** `GET /auth/login` shows a plain username/password form,
+  `POST /auth/login` checks it. An unknown username still runs a bcrypt
+  compare (against a fixed dummy hash), so a wrong username and a wrong
+  password look and take the same time to reject — the response is the same
+  generic "Invalid username or password", and a WARN is logged either way.
+- **The actor** is the username as is: no claims to map, unlike OIDC.
+- **Changing a password or removing a user** means editing the file and
+  restarting nops (a running session is not revoked early, same as OIDC's
+  allowlist).
+- **Known limitation:** there is no lockout or rate limiting on repeated
+  failed logins. Acceptable for the personal, self-hosted use this mode
+  targets; put nops behind a reverse proxy that rate-limits if the dashboard
+  is reachable from anywhere less trusted than that.
+
+## Writes and CSRF
+
+A request that changes state (`POST`) is refused with 403 when the browser says
+it comes from another origin (`Sec-Fetch-Site`, or `Origin` against `Host`:
+Go's `http.CrossOriginProtection`), on top of the `SameSite=Lax` cookie, for
+both login backends alike — this includes `POST /auth/login` itself,
+against session-fixation-style login CSRF, not only the dashboard's own
+writes. There is no CSRF token to carry through the pages. Requests with
+neither header (a `curl`) are allowed, and still need the session cookie
+where one is required.
 
 ## Git webhook
 

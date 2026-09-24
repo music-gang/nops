@@ -23,6 +23,7 @@ const repo = "https://git.example.com/ops/jobs.git"
 // environment, unless the test sets (or blanks) the variable itself.
 var authEnv = map[string]string{
 	"NOPS_PUBLIC_URL":         "https://nops.example.com",
+	"NOPS_AUTH_MODE":          "oidc",
 	"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/application/o/nops/",
 	"NOPS_OIDC_CLIENT_ID":     "nops",
 	"NOPS_OIDC_CLIENT_SECRET": "client-secret",
@@ -65,6 +66,7 @@ func TestLoadDefaults(t *testing.T) {
 		GitUsername:      "git",
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
+		AuthMode:         "oidc",
 		OIDCIssuerURL:    "https://idp.example.com/application/o/nops/",
 		OIDCClientID:     "nops",
 		OIDCClientSecret: "client-secret",
@@ -115,6 +117,11 @@ func TestLoadPrecedence(t *testing.T) {
 
 // TestLoadEveryOption sets every option once through its flag and once through
 // its variable, so a typo in a set function or in the env name shows up.
+// TestLoadEveryOption sets every option once through its flag and once
+// through its variable, so a typo in a set function or in the env name
+// shows up. -auth-mode and -users-file are mutually exclusive with the
+// -oidc-* options (check()), so it runs once per auth mode: each variant
+// covers every option in the table, only the auth-specific ones differ.
 func TestLoadEveryOption(t *testing.T) {
 	ca := writeFile(t, "ca.pem", "ca")
 	cert := writeFile(t, "cert.pem", "cert")
@@ -129,7 +136,10 @@ func TestLoadEveryOption(t *testing.T) {
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
-	values := map[string]string{
+	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
+
+	// Every option shared by both auth modes.
+	common := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
 		"nomad-namespace":           "apps",
 		"nomad-token-file":          nomadTok,
@@ -144,11 +154,6 @@ func TestLoadEveryOption(t *testing.T) {
 		"git-token-file":            gitTok,
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
-		"oidc-issuer-url":           "https://auth.example.com/application/o/nops/",
-		"oidc-client-id":            "nops-dashboard",
-		"oidc-client-secret-file":   oidcSecret,
-		"oidc-allowed-users":        "alice, bob@example.com,,",
-		"oidc-allowed-groups":       "nops-approvers",
 		"webhook-secret-file":       webhookSecret,
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
@@ -167,10 +172,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"apply-timeout":             "1h",
 		"log-level":                 "debug",
 	}
-	if len(values) != len(options) {
-		t.Fatalf("test covers %d options, the table has %d", len(values), len(options))
-	}
-	want := &Config{
+	commonWant := Config{
 		NomadAddr:              "https://nomad.example.com:4646",
 		NomadNamespace:         "apps",
 		NomadTokenFile:         nomadTok,
@@ -187,12 +189,6 @@ func TestLoadEveryOption(t *testing.T) {
 		GitToken:               "git-secret",
 		DBPath:                 "/var/lib/nops/nops.db",
 		ListenAddr:             "127.0.0.1:9000",
-		OIDCIssuerURL:          "https://auth.example.com/application/o/nops/",
-		OIDCClientID:           "nops-dashboard",
-		OIDCClientSecretFile:   oidcSecret,
-		OIDCClientSecret:       "oidc-client-secret",
-		OIDCAllowedUsers:       []string{"alice", "bob@example.com"},
-		OIDCAllowedGroups:      []string{"nops-approvers"},
 		WebhookSecretFile:      webhookSecret,
 		WebhookSecret:          "webhook-shared-secret",
 		NotifyWebhookURLFile:   webhookURL,
@@ -219,27 +215,95 @@ func TestLoadEveryOption(t *testing.T) {
 		LogLevel:               slog.LevelDebug,
 	}
 
-	var args []string
-	env := map[string]string{}
-	for _, o := range options {
-		v, ok := values[o.name]
-		if !ok {
-			t.Fatalf("no test value for option %s", o.name)
-		}
-		args = append(args, "-"+o.name+"="+v)
-		env[o.env()] = v
+	oidcWant := commonWant
+	oidcWant.AuthMode = "oidc"
+	oidcWant.OIDCIssuerURL = "https://auth.example.com/application/o/nops/"
+	oidcWant.OIDCClientID = "nops-dashboard"
+	oidcWant.OIDCClientSecretFile = oidcSecret
+	oidcWant.OIDCClientSecret = "oidc-client-secret"
+	oidcWant.OIDCAllowedUsers = []string{"alice", "bob@example.com"}
+	oidcWant.OIDCAllowedGroups = []string{"nops-approvers"}
+
+	basicWant := commonWant
+	basicWant.AuthMode = "basic"
+	basicWant.UsersFile = usersFile
+
+	variants := []struct {
+		name   string
+		values map[string]string // auth-specific overlay on top of common
+		want   Config
+	}{
+		{
+			name: "oidc",
+			values: map[string]string{
+				"auth-mode":               "oidc",
+				"oidc-issuer-url":         "https://auth.example.com/application/o/nops/",
+				"oidc-client-id":          "nops-dashboard",
+				"oidc-client-secret-file": oidcSecret,
+				"oidc-allowed-users":      "alice, bob@example.com,,",
+				"oidc-allowed-groups":     "nops-approvers",
+				"users-file":              "",
+			},
+			want: oidcWant,
+		},
+		{
+			name: "basic",
+			values: map[string]string{
+				"auth-mode":               "basic",
+				"oidc-issuer-url":         "",
+				"oidc-client-id":          "",
+				"oidc-client-secret-file": "",
+				"oidc-allowed-users":      "",
+				"oidc-allowed-groups":     "",
+				"users-file":              usersFile,
+			},
+			want: basicWant,
+		},
 	}
-	for name, run := range map[string]func() (*Config, error){
-		"flags": func() (*Config, error) { return Load(args, envOf(nil), io.Discard) },
-		"env":   func() (*Config, error) { return Load(nil, envOf(env), io.Discard) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			c, err := run()
-			if err != nil {
-				t.Fatal(err)
+
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			values := make(map[string]string, len(common)+len(variant.values))
+			for k, v := range common {
+				values[k] = v
 			}
-			if !reflect.DeepEqual(c, want) {
-				t.Errorf("\n got %+v\nwant %+v", c, want)
+			for k, v := range variant.values {
+				values[k] = v
+			}
+			if len(values) != len(options) {
+				t.Fatalf("test covers %d options, the table has %d", len(values), len(options))
+			}
+			want := variant.want
+
+			var args []string
+			env := map[string]string{}
+			for _, o := range options {
+				v, ok := values[o.name]
+				if !ok {
+					t.Fatalf("no test value for option %s", o.name)
+				}
+				args = append(args, "-"+o.name+"="+v)
+				env[o.env()] = v
+			}
+			// rawEnvOf, not envOf: every option is set explicitly above
+			// (that is the point of this test), and envOf's fallback to
+			// the shared authEnv fixture would leak its
+			// NOPS_OIDC_CLIENT_SECRET (an env-only value with no flag,
+			// resolveSecretValues) into the basic variant, where every
+			// OIDC field must actually end up empty.
+			for name, run := range map[string]func() (*Config, error){
+				"flags": func() (*Config, error) { return Load(args, rawEnvOf(nil), io.Discard) },
+				"env":   func() (*Config, error) { return Load(nil, rawEnvOf(env), io.Discard) },
+			} {
+				t.Run(name, func(t *testing.T) {
+					c, err := run()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(c, &want) {
+						t.Errorf("\n got %+v\nwant %+v", c, &want)
+					}
+				})
 			}
 		})
 	}
@@ -278,9 +342,7 @@ func TestLoadInvalid(t *testing.T) {
 		{"db-path", "", "required"},
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
-		{"oidc-issuer-url", "", "required"},
 		{"oidc-issuer-url", "idp.example.com", "not an http"},
-		{"oidc-client-id", "", "required"},
 		{"oidc-client-secret-file", missing, "no such file"},
 		{"oidc-client-secret-file", empty, "is empty"},
 		{"notify-webhook-url-file", missing, "no such file"},
@@ -399,6 +461,7 @@ func TestLoadOIDCRequired(t *testing.T) {
 	full := map[string]string{
 		"NOPS_GIT_URL":            repo,
 		"NOPS_PUBLIC_URL":         "https://nops.example.com",
+		"NOPS_AUTH_MODE":          "oidc",
 		"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/",
 		"NOPS_OIDC_CLIENT_ID":     "nops",
 		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
@@ -413,9 +476,9 @@ func TestLoadOIDCRequired(t *testing.T) {
 		drop string
 		want string
 	}{
-		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url / NOPS_OIDC_ISSUER_URL: required"},
-		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id / NOPS_OIDC_CLIENT_ID: required"},
-		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required"},
+		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url is required with -auth-mode=oidc"},
+		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id is required with -auth-mode=oidc"},
+		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required with -auth-mode=oidc"},
 		{"public url", "NOPS_PUBLIC_URL", "-public-url / NOPS_PUBLIC_URL: required"},
 		{"allowlist", "NOPS_OIDC_ALLOWED_USERS", "nobody is allowed to log in"},
 	}
@@ -457,6 +520,58 @@ func TestLoadOIDCRequired(t *testing.T) {
 	}
 	if c.OIDCIssuerURL != "https://idp.example.com/" {
 		t.Errorf("issuer = %q, want it untouched", c.OIDCIssuerURL)
+	}
+}
+
+// TestLoadAuthMode covers -auth-mode itself: required, one of exactly two
+// values, and the two backends' options are mutually exclusive.
+func TestLoadAuthMode(t *testing.T) {
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	base := map[string]string{"NOPS_GIT_URL": repo, "NOPS_PUBLIC_URL": "https://nops.example.com"}
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"missing", map[string]string{}, "-auth-mode / NOPS_AUTH_MODE: required"},
+		{"invalid value", map[string]string{"NOPS_AUTH_MODE": "header"}, `must be "oidc" or "basic"`},
+		{"basic without users-file", map[string]string{"NOPS_AUTH_MODE": "basic"}, "-users-file is required with -auth-mode=basic"},
+		{"oidc without its options", map[string]string{"NOPS_AUTH_MODE": "oidc"}, "-oidc-issuer-url is required with -auth-mode=oidc"},
+		{"basic with an OIDC option set", map[string]string{
+			"NOPS_AUTH_MODE": "basic", "NOPS_USERS_FILE": usersFile, "NOPS_OIDC_CLIENT_ID": "nops",
+		}, "the -oidc-* options are only used with -auth-mode=oidc"},
+		{"oidc with users-file set", map[string]string{
+			"NOPS_AUTH_MODE": "oidc", "NOPS_USERS_FILE": usersFile,
+			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
+			"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+		}, "-users-file is only used with -auth-mode=basic"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{}
+			for k, v := range base {
+				env[k] = v
+			}
+			for k, v := range tt.env {
+				env[k] = v
+			}
+			_, err := Load(nil, rawEnvOf(env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+
+	// A minimal, valid basic configuration works.
+	env := map[string]string{}
+	for k, v := range base {
+		env[k] = v
+	}
+	env["NOPS_AUTH_MODE"] = "basic"
+	env["NOPS_USERS_FILE"] = usersFile
+	if _, err := Load(nil, rawEnvOf(env), io.Discard); err != nil {
+		t.Errorf("minimal basic configuration: %v", err)
 	}
 }
 
