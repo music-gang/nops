@@ -116,9 +116,15 @@ Flow:
    commit**, not an amend or a force-push: the branch's history is free to
    show the work as it went.
 3. Open a PR **titled in Angular style** once there is something to review.
-4. When CI is green, the maintainer **squashes and merges** by hand, writing
-   the final commit from the branch's commits and the PR description. The
-   branch is deleted automatically.
+4. When CI is green, the maintainer **squashes and merges** by hand, and the
+   commit that lands on `main` comes from the branch's commits, never from the
+   PR description:
+   - a branch with **one commit** is a plain merge: its message goes in as it
+     is;
+   - a branch with **several**: the maintainer cleans them up and keeps the
+     first, or rewrites the message so that it says what happened.
+
+   The branch is deleted automatically.
 
 Commits inside a branch do not need to be signed, whoever makes them: the
 squash commit on `main` is created and signed by GitHub, and the ruleset does
@@ -137,8 +143,9 @@ review round) goes: each one plain and honest in its own
 headings), rather than a single commit rewritten every time to look like
 `main`'s final shape.
 
-The **PR description** is a separate field, for whoever reviews it on GitHub,
-and is free to use real structure:
+The **PR description** is a separate field, for whoever reviews it on GitHub.
+It never reaches `main`, so it is free to use real structure. The PR template
+(`.github/pull_request_template.md`) has these headings:
 
 ```markdown
 ## What changes
@@ -152,12 +159,13 @@ and is free to use real structure:
 
 An optional `## Notes` section holds a question that is the maintainer's to
 decide (see [CLAUDE.md](../CLAUDE.md#picking-up-work)), or something the next
-task needs to know. There is still no PR template file: a template's HTML
-comments and an unfilled checklist item are exactly the kind of boilerplate
-that once leaked into a commit body (`a933a4c`, `8052989`, back when the
-squash setting copied the PR description verbatim), so every section here is
-written by hand and filled in, never left as a placeholder. The "done"
-checklist stays in
+task needs to know. The template is only the three headings, with no comment
+and no checklist, and every section is filled in by hand, never left as a
+placeholder (see the decision log, 2026-09-24: an earlier template leaked its
+HTML comments and an unfilled checklist into commit bodies, `a933a4c` and
+`8052989`, back when the squash setting copied the PR description verbatim).
+The template applies to a PR opened from the GitHub web page; `gh pr create
+--body-file` replaces it. The "done" checklist stays in
 [When a piece of work is "done"](#when-a-piece-of-work-is-done), not in the
 PR body. If the branch falls behind `main`, use "Update branch" (or
 `git rebase main`).

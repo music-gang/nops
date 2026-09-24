@@ -1,6 +1,6 @@
 name: PR title
 
-# main is squash-merge only, so the PR title becomes the commit message on main.
+# main is squash-merge only, so the PR title becomes the commit subject on main.
 # Keep it in Angular style: type(scope): subject.
 on:
   pull_request_target:

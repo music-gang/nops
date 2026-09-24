@@ -69,10 +69,10 @@ The same steps apply wherever the session runs.
 8. A PR can carry several commits: the maintainer squashes and writes the
    final message that lands on `main` by hand at merge time, so a commit
    here only needs to be a clear, honest step, not `main`'s final shape. The
-   **PR description** is separate, for reviewers: `## What changes` and
-   `## Why`, each a short bullet list (see
-   `docs/development.md#workflow-and-ci`). No HTML comments, no boilerplate,
-   no unchecked checklist item.
+   **PR description** is separate, for reviewers, and never reaches `main`:
+   `## What changes` and `## Why`, each a short bullet list, the headings of
+   the PR template (see `docs/development.md#workflow-and-ci`). No HTML
+   comments, no boilerplate, no unchecked checklist item.
 9. If a decision is the maintainer's to take: ask in the session before a
    branch exists, or, once a PR is open, leave the question in a `## Notes`
    section of its description. Do not guess.
