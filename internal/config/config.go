@@ -55,6 +55,12 @@ type Config struct {
 	OIDCAllowedUsers     []string // preferred_username or email; at least one of users and groups is set
 	OIDCAllowedGroups    []string // values of the groups claim
 
+	// WebhookSecret authenticates the git forge's push webhook
+	// (docs/dashboard.md#git-webhook): its HMAC for GitHub and Gitea, its
+	// literal value for GitLab's token header. Empty disables the endpoint.
+	WebhookSecretFile string
+	WebhookSecret     string
+
 	// Notification adapters: each one is on when its URL is set. URLs that
 	// carry a token and every token are read from files by Load.
 	NotifyWebhookURLFile   string
@@ -161,6 +167,13 @@ var options = []option{
 		set: func(c *Config, v string) error { c.OIDCAllowedUsers = csvList(v); return nil }},
 	{name: "oidc-allowed-groups", usage: "comma-separated groups (claim \"groups\") allowed to log in (with or without -oidc-allowed-users)",
 		set: func(c *Config, v string) error { c.OIDCAllowedGroups = csvList(v); return nil }},
+
+	{name: "webhook-secret-file", usage: "file holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
+		set: func(c *Config, v string) (err error) {
+			c.WebhookSecretFile = v
+			c.WebhookSecret, err = secretFile(v)
+			return
+		}},
 
 	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
@@ -302,6 +315,8 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
 	{envVar: "NOPS_NOMAD_TOKEN",
 		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
+	{envVar: "NOPS_WEBHOOK_SECRET",
+		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
 		get: func(c *Config) string { return c.NotifyWebhookURL }, set: func(c *Config, v string) { c.NotifyWebhookURL = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_TOKEN",

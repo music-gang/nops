@@ -55,6 +55,7 @@ option is listed here).
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
+| `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 | `NOPS_NOTIFY_WEBHOOK_URL_FILE` (`-notify-webhook-url-file`) | `NOPS_NOTIFY_WEBHOOK_URL` |
 | `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` (`-notify-webhook-token-file`) | `NOPS_NOTIFY_WEBHOOK_TOKEN` |
 | `NOPS_NOTIFY_DISCORD_URL_FILE` (`-notify-discord-url-file`) | `NOPS_NOTIFY_DISCORD_URL` |
@@ -93,6 +94,7 @@ supported. Which files under `-git-path` are read as jobs is described in
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
+| `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](dashboard.md#git-webhook). |
 | `-public-url` | `NOPS_PUBLIC_URL` | none, **required** | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (nops sits behind a proxy and cannot know it). The OIDC redirect URL is `<public-url>/auth/callback`, and notifications link to `<public-url>/deployments/<id>`. |
 | `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL of the OIDC provider, exactly as it announces it in its discovery document: a trailing slash matters (Authentik's has one), nops does not add or drop it. |
 | `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of nops at the provider. |

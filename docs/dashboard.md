@@ -1,14 +1,66 @@
 # Dashboard
 
-> To be completed once `internal/web` exists. What follows are the decisions
-> already taken.
-
-A web dashboard (`net/http` + `html/template`, no JS framework) with:
+A web dashboard (`net/http` + `html/template`, no JS framework) served by
+[`internal/web`](../internal/web), with:
 
 - a list of **pending deployments**, PR-style: the plan diff (with secrets
   redacted) and approve/reject buttons;
 - a **history** of past deployments, with who approved and when (from
-  `decided_by`, `decided_at` and `events`).
+  `decided_by`, `decided_at` and `events`);
+- the **drift** of every managed job, `none` policy included, since those
+  never get a deployment;
+- one **page per deployment**, with the diff, the decision, the hook runs and
+  the event timeline;
+- the **git webhook** that triggers an out-of-turn fetch.
+
+## Pages
+
+Every page below needs a login (see [authentication](#authentication)); the
+header shows the current tab, the actor and a logout button.
+
+| Page | Shows |
+|---|---|
+| `GET /` | Deployments in state `pending_approval` (a count up top: the one thing the page wants you to notice), then every other active deployment (`detected`, `pre_hook`, `applying`, `post_hook`). |
+| `GET /history` | Terminal deployments (`completed`, `failed`, `rejected`, `superseded`), newest first, with who decided and when. |
+| `GET /drift` | `Engine.Observations()`: one row per managed job, including `none` policy, with its drift, its meta validation issues and, when a retry rule is suppressing a new deployment, `BlockedBy`/`BlockedReason`. |
+| `GET /deployments/{id}` | The plan diff, the decision rail (state, commit, spec hash, Approve/Reject when `pending_approval`), the hook runs and the event timeline. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
+| `GET /deployments/{id}/status` | An [htmx](https://htmx.org) fragment: the decision rail without the diff, polled by the deployment page every 3s while the deployment is non-terminal, so an approval or a hook finishing elsewhere shows up without a reload. It stops polling itself once the deployment is terminal. |
+| `POST /deployments/{id}/approve` | Calls `Engine.Approve(ctx, id, spec_hash, actor)` with the actor from the session and the `spec_hash` shown on the page. A `spec_hash` that no longer matches (`ErrStaleApproval`) re-renders the page with a 409 and a notice to review the new diff, rather than approving the wrong spec. |
+| `POST /deployments/{id}/reject` | Calls `Engine.Reject(ctx, id, actor)`. |
+| `GET /healthz` | `200 ok`, no session needed: what an orchestrator or a load balancer probes. |
+
+The dashboard never calls `Store.Transition` for a decision or picks the next
+state itself: approve and reject always go through the engine (invariant 3).
+Both handlers work from a small interface over `*store.Store` and
+`*engine.Engine` (`web.Store`, `web.Engine`), so tests use fakes instead of a
+real database or Nomad client.
+
+## Look and technology
+
+No JS framework, no build step: `html/template` renders every page (all
+templates parsed once at startup, so a broken one fails loud rather than on
+the first request), plain CSS carries the design, and
+[htmx](https://htmx.org) is the only script, vendored under `/static` rather
+than loaded from a CDN. Every action works as a plain form post without it;
+htmx adds `hx-boost` (page navigation without a full reload) and the status
+polling above. The CSP is `script-src 'self'; style-src 'self'` — there is no
+inline script or style to allow.
+
+The visual design reads
+[Airbnb's](https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/airbnb/DESIGN.md)
+(white/ink canvas, soft rounded corners, one accent used sparingly, a single
+loud typographic moment) with nops's own accent (a deep teal, not Airbnb's
+pink-red, which would read as "danger" next to the failed/reject states), a
+dark mode Airbnb itself does not have, and Inter/JetBrains Mono in place of
+Airbnb Cereal. See the [decision log](design/decisions.md) (2026-09-24).
+Deployment states map to one of five colors used consistently across every
+page: pending (amber), running — `pre_hook`/`applying`/`post_hook` — (blue),
+completed (green), failed (red), rejected/superseded (muted grey).
+
+The plan diff renders Nomad's `JobDiff` recursively (job → task groups →
+tasks → objects/fields) as nested `<details>`, open only where something
+changed; a redacted value (`<redacted>`) renders as a pill rather than plain
+text, so it reads as "a secret changed here" at a glance.
 
 ## Authentication
 
@@ -25,7 +77,7 @@ in front for TLS is still fine; it just is not part of the trust.
 
 **Every page needs a login**, reads included: the diff of a deployment says
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
-the git webhook (its own secret) and the health check.
+the [git webhook](#git-webhook) (its own secret) and `/healthz`.
 
 ### The flow
 
@@ -90,6 +142,36 @@ Create an OIDC client (confidential, authorization code) at the provider:
 - **Issuer:** the value in the provider's discovery document
   (`<issuer>/.well-known/openid-configuration`), trailing slash included:
   Authentik's is like `https://auth.example.com/application/o/nops/`.
+
+## Git webhook
+
+`POST /webhook/git` asks the git watcher for an out-of-turn poll
+(`Watcher.Trigger()`, non-blocking: it does not wait for the poll to finish)
+so a push shows up sooner than `-git-poll-interval`. It needs no session — it
+is authenticated by a secret shared with the forge instead
+(`-webhook-secret-file`, [configuration](configuration.md#dashboard)) — and
+is disabled (404) when that secret is unset. nops never looks at the payload
+beyond checking its signature: any push is "something changed, go look", so
+there is nothing forge-specific to parse.
+
+Each forge signs differently, and nops checks whichever header is present:
+
+| Forge | Header | How it is checked |
+|---|---|---|
+| GitHub | `X-Hub-Signature-256: sha256=<hex>` | HMAC-SHA256 of the raw body with the secret, compared with `hmac.Equal`. |
+| Gitea | `X-Gitea-Signature: <hex>` | Same construction, no `sha256=` prefix. |
+| GitLab | `X-Gitlab-Token: <secret>` | The header must equal the secret itself, compared in constant time. |
+
+A request matching none of them, or whose signature does not match, gets 401
+and a WARN in the log that never says which check failed (so a probe cannot
+learn which forge nops expects). The body is capped at 1 MiB.
+
+Set up the webhook at the forge: URL `<public-url>/webhook/git`, content
+type `application/json`, secret the same file's content passed to
+`-webhook-secret-file` (or `NOPS_WEBHOOK_SECRET`). Only a push to
+`-git-branch` needs to trigger it, but nops does not filter by branch or ref:
+any authenticated request just triggers a poll, which is a no-op if nothing
+under `-git-path` changed.
 
 ## Secret redaction
 

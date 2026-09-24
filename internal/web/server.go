@@ -1,0 +1,182 @@
+// Package web serves the dashboard and the git webhook. Authentication
+// (OpenID Connect, sessions, the actor) is auth.go; this file wires the
+// pages, the diff renderer and the webhook behind it. The pages are
+// documented in docs/dashboard.md.
+package web
+
+import (
+	"context"
+	"embed"
+	"errors"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/music-gang/nops/internal/engine"
+	"github.com/music-gang/nops/internal/store"
+)
+
+//go:embed static
+var staticFiles embed.FS
+
+//go:embed templates
+var templateFiles embed.FS
+
+// historyLimit is how many past deployments the history page shows. There is
+// no pagination: a self-hosted, personal cluster does not accumulate enough
+// deployments to need one, and adding it now would be overengineering.
+const historyLimit = 200
+
+// Store is what the dashboard reads from SQLite. *store.Store implements it.
+type Store interface {
+	GetDeployment(ctx context.Context, id string) (*store.Deployment, error)
+	ListActive(ctx context.Context) ([]*store.Deployment, error)
+	ListHistory(ctx context.Context, limit int) ([]*store.Deployment, error)
+	Events(ctx context.Context, deploymentID string) ([]store.Event, error)
+	GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error)
+}
+
+// Engine is what the dashboard calls to decide a pending deployment and to
+// read the drift of "none"-policy jobs. *engine.Engine implements it.
+type Engine interface {
+	Approve(ctx context.Context, id, specHash, actor string) error
+	Reject(ctx context.Context, id, actor string) error
+	Observations() []engine.Observation
+}
+
+// Options configures New.
+type Options struct {
+	Auth   *Auth
+	Store  Store
+	Engine Engine
+
+	// Trigger runs the git watcher's non-blocking poll after a webhook
+	// request passes its signature check. Required only when WebhookSecret
+	// is set.
+	Trigger func()
+	// WebhookSecret is compared against the per-forge signature of an
+	// incoming webhook request. Empty disables /webhook/git (a 404).
+	WebhookSecret string
+
+	Log *slog.Logger
+}
+
+// server holds the dependencies every handler needs.
+type server struct {
+	auth    *Auth
+	store   Store
+	engine  Engine
+	trigger func()
+	secret  []byte
+	log     *slog.Logger
+	tmpl    *template.Template
+	static  fs.FS
+	started time.Time
+}
+
+// New builds the dashboard and git webhook handler. It parses every template
+// once, so a broken one fails loud at startup rather than on the first
+// request.
+func New(o Options) (http.Handler, error) {
+	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Log == nil {
+		return nil, errors.New("web: Auth, Store, Engine and Log are required")
+	}
+	if o.WebhookSecret != "" && o.Trigger == nil {
+		return nil, errors.New("web: Trigger is required when WebhookSecret is set")
+	}
+	tmpl, err := parseTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
+	}
+	staticDir, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		return nil, fmt.Errorf("web: static assets: %w", err)
+	}
+	s := &server{
+		auth:    o.Auth,
+		store:   o.Store,
+		engine:  o.Engine,
+		trigger: o.Trigger,
+		secret:  []byte(o.WebhookSecret),
+		log:     o.Log,
+		tmpl:    tmpl,
+		static:  staticDir,
+		started: time.Now(),
+	}
+	return securityHeaders(s.routes()), nil
+}
+
+// parseTemplates parses every template once, shared by New (fail loud at
+// startup) and the render smoke test (server_test.go).
+func parseTemplates() (*template.Template, error) {
+	tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(templateFiles, "templates/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse templates: %w", err)
+	}
+	return tmpl, nil
+}
+
+func (s *server) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", s.healthz)
+	if len(s.secret) > 0 {
+		mux.HandleFunc("POST /webhook/git", s.webhook)
+	}
+
+	static := http.FileServerFS(s.static)
+	mux.Handle("GET /static/", noStoreExempt(http.StripPrefix("/static/", static)))
+
+	mux.Handle("GET /{$}", s.auth.Require(http.HandlerFunc(s.index)))
+	mux.Handle("GET /history", s.auth.Require(http.HandlerFunc(s.history)))
+	mux.Handle("GET /drift", s.auth.Require(http.HandlerFunc(s.drift)))
+	mux.Handle("GET /deployments/{id}", s.auth.Require(http.HandlerFunc(s.deployment)))
+	mux.Handle("GET /deployments/{id}/status", s.auth.Require(http.HandlerFunc(s.deploymentStatus)))
+	mux.Handle("POST /deployments/{id}/approve", s.auth.Require(http.HandlerFunc(s.approve)))
+	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
+
+	return mux
+}
+
+// healthz never requires a session: it is what an orchestrator or a load
+// balancer probes.
+func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "ok")
+}
+
+// noStoreExempt serves static assets with a cacheable header instead of the
+// no-store the rest of the dashboard gets: they hold no secret and are
+// embedded in the binary, so a day-long cache is safe and a new release
+// simply serves new bytes at the same path.
+func noStoreExempt(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders adds the headers every response gets, dashboard and
+// webhook alike. The dashboard has no inline script or style, so the CSP
+// allows only same-origin sources; htmx.config.includeIndicatorStyles is
+// turned off in the page head so it never needs 'unsafe-inline'.
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; " +
+		"form-action 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("X-Frame-Options", "DENY")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			h.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}

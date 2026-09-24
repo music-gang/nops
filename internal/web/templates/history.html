@@ -1,0 +1,30 @@
+{{define "history"}}
+{{template "chrome_head" .}}
+<section>
+  <h1 class="page-title">History</h1>
+  {{if .Deployments}}
+  <table class="table">
+    <thead>
+      <tr><th>Job</th><th>State</th><th>Commit</th><th>Decided by</th><th>Decided at</th></tr>
+    </thead>
+    <tbody>
+      {{range .Deployments}}
+      <tr>
+        <td>
+          <a href="/deployments/{{.ID}}">{{.Namespace}}/{{.JobID}}</a>
+          {{if .Error}}<div class="table-row-error">{{.Error}}</div>{{end}}
+        </td>
+        <td>{{template "state_badge" .State}}</td>
+        <td class="mono">{{shortCommit .CommitSHA}}</td>
+        <td>{{if .DecidedBy}}{{.DecidedBy}}{{else}}<span class="diff-empty">&mdash;</span>{{end}}</td>
+        <td>{{if .DecidedAt}}{{.DecidedAt}}{{else}}<span class="diff-empty">&mdash;</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">No deployment has completed yet.</p>
+  {{end}}
+</section>
+{{template "chrome_foot" .}}
+{{end}}
