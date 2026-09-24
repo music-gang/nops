@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -389,6 +390,34 @@ func TestNoDrift(t *testing.T) {
 	obs := h.engine.Observations()
 	if len(obs) != 1 || obs[0].JobID != "web" || obs[0].Drift {
 		t.Fatalf("observations = %+v", obs)
+	}
+}
+
+func TestObservationCarriesTheDeclaredHooks(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "none", map[string]string{
+		"nops_pre_hook": "web-migrate", "nops_pre_hook_timeout": "10m", "nops_post_hook": "web-smoke",
+	}))
+	h.nomad.setFile("db-v1", managed("db", "none", nil))
+	h.snap.set("c1",
+		gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"},
+		gitwatch.File{Path: "db.nomad.hcl", Content: "db-v1"})
+
+	h.detect()
+
+	obs := h.engine.Observations() // sorted by job ID: db, web
+	if len(obs) != 2 {
+		t.Fatalf("observations = %+v", obs)
+	}
+	db, web := obs[0], obs[1]
+	if db.PreHook != nil || db.PostHook != nil {
+		t.Errorf("db declares no hooks, got pre %+v post %+v", db.PreHook, db.PostHook)
+	}
+	if web.PreHook == nil || web.PreHook.JobID != "web-migrate" || web.PreHook.Timeout != 10*time.Minute {
+		t.Errorf("web pre-hook = %+v, want web-migrate with a 10m timeout", web.PreHook)
+	}
+	if web.PostHook == nil || web.PostHook.JobID != "web-smoke" {
+		t.Errorf("web post-hook = %+v, want web-smoke", web.PostHook)
 	}
 }
 
@@ -787,6 +816,14 @@ func TestBlockedRetry(t *testing.T) {
 			}
 			if (reason == "") != (blockedBy == "") {
 				t.Errorf("reason = %q inconsistent with blockedBy = %q", reason, blockedBy)
+			}
+			// It is shown on one line next to the job's name: it says what
+			// unblocks it and leaves the deployment's ID to the link beside it.
+			if blockedBy != "" && (!strings.Contains(reason, "retry it") || strings.Contains(reason, blockedBy)) {
+				t.Errorf("reason = %q, want one that offers the retry and does not repeat the ID", reason)
+			}
+			if c.latest.State == store.StateRejected && blockedBy != "" && c.latest.AppliedIndex == 0 && !strings.Contains(reason, "rejected") {
+				t.Errorf("reason = %q for a rejected deployment, want it to say so", reason)
 			}
 		})
 	}

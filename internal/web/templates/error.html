@@ -2,9 +2,9 @@
 {{template "chrome_head" .}}
 <section class="error-page">
   <p class="error-page__status">{{.Status}}</p>
-  <h1 class="page-title">{{.Title}}</h1>
+  <h1 class="pagehead__title">{{.Title}}</h1>
   <p>{{.Message}}</p>
-  <p><a href="/">Back to pending deployments</a></p>
+  <p><a href="/">Back to the overview</a></p>
 </section>
 {{template "chrome_foot" .}}
 {{end}}

@@ -1,8 +1,12 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"time"
 
 	"github.com/hashicorp/nomad/api"
 
@@ -11,119 +15,183 @@ import (
 	"github.com/music-gang/nops/internal/store"
 )
 
-// -- GET / : pending deployments, PR-style -------------------------------
+// -- GET /history : every deployment, by day ---------------------------------
 
-type indexData struct {
-	baseData
-	Pending []deploymentCard // pending_approval: needs a human
-	Active  []deploymentCard // detected, pre_hook, applying, post_hook: already moving
+type activityDay struct {
+	Label string
+	Rows  []deploymentCard
 }
 
-func (s *server) index(w http.ResponseWriter, r *http.Request) {
+type activityData struct {
+	baseData
+	Days    []activityDay
+	Filters []filterLink
+	Filter  string // "" for all
+	Total   int
+	Limited bool // older deployments exist that this page does not list
+}
+
+// activityFilters are the choices of the Activity page: "active" is every
+// deployment that has not finished, the rest are the terminal states.
+var activityFilters = []struct{ key, label string }{
+	{"active", "In progress"},
+	{string(store.StateCompleted), "Completed"},
+	{string(store.StateFailed), "Failed"},
+	{string(store.StateRejected), "Rejected"},
+	{string(store.StateSuperseded), "Superseded"},
+}
+
+// activityKey is the filter a deployment belongs to.
+func activityKey(st store.State) string {
+	if st.IsActive() {
+		return "active"
+	}
+	return string(st)
+}
+
+func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	active, err := s.store.ListActive(r.Context())
 	if err != nil {
 		s.serverError(w, r, "list active deployments", err)
 		return
 	}
-	data := indexData{baseData: s.base(r, "pending")}
-	for _, d := range active {
-		card := toCard(d)
-		if d.State == store.StatePendingApproval {
-			data.Pending = append(data.Pending, card)
-		} else {
-			data.Active = append(data.Active, card)
-		}
-	}
-	s.render(w, r, "index", data)
-}
-
-// -- GET /history : past deployments -------------------------------------
-
-type historyData struct {
-	baseData
-	Deployments []deploymentCard
-}
-
-func (s *server) history(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListHistory(r.Context(), historyLimit)
+	past, err := s.store.ListHistory(r.Context(), historyLimit)
 	if err != nil {
 		s.serverError(w, r, "list history", err)
 		return
 	}
-	data := historyData{baseData: s.base(r, "history")}
-	for _, d := range list {
-		data.Deployments = append(data.Deployments, toCard(d))
-	}
-	s.render(w, r, "history", data)
-}
-
-// -- GET /drift : drift of every managed job, "none" policy included ----
-
-type observationView struct {
-	JobID, Namespace, FilePath string
-	Policy                     meta.Policy
-	Drift                      bool
-	Diff                       *api.JobDiff
-	Issues                     []meta.Issue
-	ObservedAt                 string
-	BlockedBy                  string
-	BlockedReason              string
-}
-
-type driftData struct {
-	baseData
-	Observations []observationView
-}
-
-func (s *server) drift(w http.ResponseWriter, r *http.Request) {
-	obs := s.engine.Observations()
-	data := driftData{baseData: s.base(r, "drift")}
-	for _, o := range obs {
-		diff, err := parseDiff(o.PlanDiff)
-		if err != nil {
-			s.serverError(w, r, "parse drift diff", err)
-			return
+	all := append(append([]*store.Deployment{}, active...), past...)
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
 		}
-		data.Observations = append(data.Observations, observationView{
-			JobID:         o.JobID,
-			Namespace:     o.Namespace,
-			FilePath:      o.FilePath,
-			Policy:        o.Policy,
-			Drift:         o.Drift,
-			Diff:          diff,
-			Issues:        o.Issues,
-			ObservedAt:    formatTime(o.ObservedAt),
-			BlockedBy:     o.BlockedBy,
-			BlockedReason: o.BlockedReason,
-		})
+		return all[i].ID > all[j].ID
+	})
+
+	filter := r.URL.Query().Get("state")
+	valid := false
+	for _, f := range activityFilters {
+		valid = valid || f.key == filter
 	}
-	s.render(w, r, "drift", data)
+	if !valid {
+		filter = ""
+	}
+
+	data := activityData{baseData: s.base(r, "history"), Filter: filter, Total: len(all), Limited: len(past) == historyLimit}
+	counts := map[string]int{}
+	today := s.now().UTC().Truncate(24 * time.Hour)
+	for _, d := range all {
+		counts[activityKey(d.State)]++
+		if filter != "" && activityKey(d.State) != filter {
+			continue
+		}
+		label := dayLabel(today, d.CreatedAt)
+		if n := len(data.Days); n == 0 || data.Days[n-1].Label != label {
+			data.Days = append(data.Days, activityDay{Label: label})
+		}
+		day := &data.Days[len(data.Days)-1]
+		day.Rows = append(day.Rows, s.card(d))
+	}
+	data.Filters = append(data.Filters, filterLink{Label: "All", Count: len(all), Active: filter == ""})
+	for _, f := range activityFilters {
+		if counts[f.key] > 0 || f.key == filter {
+			data.Filters = append(data.Filters, filterLink{Key: f.key, Label: f.label, Count: counts[f.key], Active: f.key == filter})
+		}
+	}
+	s.render(w, r, "activity", data)
 }
 
-// -- GET /deployments/{id} : diff, decision, timeline --------------------
+// dayLabel names the UTC day of t as seen from today (UTC midnight).
+func dayLabel(today, t time.Time) string {
+	day := t.UTC().Truncate(24 * time.Hour)
+	switch {
+	case day.Equal(today):
+		return "Today"
+	case day.Equal(today.Add(-24 * time.Hour)):
+		return "Yesterday"
+	default:
+		return day.Format("Mon, 2 Jan 2006")
+	}
+}
+
+// -- GET /drift : moved to /jobs -------------------------------------------
+
+// drift keeps the old address working: the drift of every managed job is the
+// Jobs page now.
+func (s *server) drift(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/jobs", http.StatusMovedPermanently)
+}
+
+// -- GET /deployments/{id} : review, decision, hooks, timeline --------------
 
 type eventView struct {
-	Time       string
-	From, To   store.State
-	Actor, Msg string
+	Time     timeView
+	From, To store.State
+	Actor    string
+	Msg      string
+	Retry    bool // from and to are the same terminal state: a retry was asked
 }
 
 type hookRunView struct {
 	Phase, JobID string
 	State        store.HookState
 	Error        string
-	StartedAt    string
-	FinishedAt   string // "" if not finished
+	StartedAt    timeView
+	FinishedAt   timeView // zero if not finished
+}
+
+// planStep is one thing Approve sets in motion, in order.
+type planStep struct {
+	Kind    string // "pre", "register", "health" or "post"
+	Job     string // the hook's job ID, for "pre" and "post"
+	Timeout string
+	Text    string // for "register"
+}
+
+// blockingView says a deployment is what holds its job's drift back, and how
+// to lift it.
+type blockingView struct {
+	Reason    string
+	RetryPath string
 }
 
 type deploymentDetailData struct {
 	baseData
 	Deployment deploymentCard
+	Blocking   *blockingView // set while this deployment blocks its job
 	Diff       *api.JobDiff
+	Summary    diffSummary
+	Steps      []planStep // what Approve will do; only while it can be approved
 	Events     []eventView
 	HookRuns   []hookRunView
 	CanDecide  bool   // state is pending_approval: show Approve/Reject
 	Notice     string // set after a stale-approval conflict
+	OOB        bool   // the status fragment: the side column swaps out of band
+}
+
+// planSteps reads what approving d will run from the spec nops stored for it:
+// the hooks its meta declares, keys and job IDs only. The spec itself is never
+// rendered.
+func planSteps(d *store.Deployment) ([]planStep, error) {
+	var job api.Job
+	if err := json.Unmarshal([]byte(d.JobSpec), &job); err != nil {
+		return nil, fmt.Errorf("read the spec of deployment %s: %w", d.ID, err)
+	}
+	cfg := meta.Parse(job.Meta)
+
+	var steps []planStep
+	if h := cfg.PreHook; h != nil {
+		steps = append(steps, planStep{Kind: "pre", Job: h.JobID, Timeout: duration(h.Timeout)})
+	}
+	register := "Create the job in Nomad (it is not registered yet)."
+	if d.CASIndex != 0 {
+		register = fmt.Sprintf("Update the job in Nomad, only if it has not changed since (index %d).", d.CASIndex)
+	}
+	steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
+	if h := cfg.PostHook; h != nil {
+		steps = append(steps, planStep{Kind: "post", Job: h.JobID, Timeout: duration(h.Timeout)})
+	}
+	return steps, nil
 }
 
 // deploymentView assembles everything /deployments/{id} and its status
@@ -145,14 +213,27 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	}
 	data := deploymentDetailData{
 		baseData:   s.base(r, ""),
-		Deployment: toCard(d),
+		Deployment: s.card(d),
 		Diff:       diff,
+		Summary:    summarize(diff),
 		CanDecide:  d.State == store.StatePendingApproval,
 		Notice:     notice,
 	}
+	for _, o := range s.engine.Observations() {
+		if o.BlockedBy == d.ID {
+			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: jobPath(o.Namespace, o.JobID) + "/retry"}
+			break
+		}
+	}
+	if data.CanDecide {
+		if data.Steps, err = planSteps(d); err != nil {
+			s.serverError(w, r, "plan steps", err)
+			return deploymentDetailData{}, false
+		}
+	}
 	for _, e := range events {
 		data.Events = append(data.Events, eventView{
-			Time: formatTime(e.Time), From: e.From, To: e.To, Actor: e.Actor, Msg: e.Message,
+			Time: s.when(e.Time), From: e.From, To: e.To, Actor: e.Actor, Msg: e.Message, Retry: e.From == e.To,
 		})
 	}
 	for _, phase := range []string{"pre", "post"} {
@@ -164,11 +245,10 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 			s.serverError(w, r, "get hook run", err)
 			return deploymentDetailData{}, false
 		}
-		hv := hookRunView{Phase: run.Phase, JobID: run.HookJobID, State: run.State, Error: run.Error, StartedAt: formatTime(run.StartedAt)}
-		if !run.FinishedAt.IsZero() {
-			hv.FinishedAt = formatTime(run.FinishedAt)
-		}
-		data.HookRuns = append(data.HookRuns, hv)
+		data.HookRuns = append(data.HookRuns, hookRunView{
+			Phase: run.Phase, JobID: run.HookJobID, State: run.State, Error: run.Error,
+			StartedAt: s.when(run.StartedAt), FinishedAt: s.when(run.FinishedAt),
+		})
 	}
 	return data, true
 }
@@ -182,14 +262,17 @@ func (s *server) deployment(w http.ResponseWriter, r *http.Request) {
 }
 
 // deploymentStatus is the htmx fragment polled by the deployment page while
-// a deployment is non-terminal: the state badge and the events timeline. It
-// stops polling itself once the deployment is terminal (isTerminal in the
-// template drops the hx-trigger/hx-get on the next swap).
+// a deployment is non-terminal: the head (state, decision) and, out of band,
+// the side column (details, hooks, timeline); the diff, which does not
+// change, is not sent again. It stops polling itself once the deployment is
+// terminal (isTerminal in the template drops the hx-trigger/hx-get on the next
+// swap).
 func (s *server) deploymentStatus(w http.ResponseWriter, r *http.Request) {
 	data, ok := s.deploymentView(w, r, r.PathValue("id"), "")
 	if !ok {
 		return
 	}
+	data.OOB = true
 	s.render(w, r, "status_fragment", data)
 }
 

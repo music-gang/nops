@@ -81,6 +81,9 @@ type Observation struct {
 	Drift bool
 	// PlanDiff is the redacted JSON diff, empty when there is no drift.
 	PlanDiff string
+	// PreHook and PostHook are the hooks the job's meta declares, nil if none:
+	// what a deployment of this job would run.
+	PreHook, PostHook *meta.Hook
 	// Issues lists the meta validation problems found on this job, if any.
 	Issues []meta.Issue
 	// ObservedAt is when this cycle computed the observation.

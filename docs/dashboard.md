@@ -1,48 +1,69 @@
 # Dashboard
 
 A web dashboard (`net/http` + `html/template`, no JS framework) served by
-[`internal/web`](../internal/web), with:
+[`internal/web`](../internal/web). It is organized around what an operator
+does with it, not around nops's tables (see the [decision log](design/decisions.md),
+2026-09-24, "redesigned for what an operator does with it"):
 
-- a list of **pending deployments**, PR-style: the plan diff (with secrets
-  redacted) and approve/reject buttons;
-- a **history** of past deployments, with who approved and when (from
-  `decided_by`, `decided_at` and `events`);
-- the **drift** of every managed job, `none` policy included, since those
-  never get a deployment;
-- one **page per deployment**, with the diff, the decision, the hook runs and
-  the event timeline;
-- the **git webhook** that triggers an out-of-turn fetch.
+| The operator asks | Where |
+|---|---|
+| Is anything waiting on me? | **Overview**: what needs attention, what is moving, whether nops itself works |
+| Do I approve this? | **Deployment**: a review page, with what approving will do |
+| Is the cluster what git says? | **Jobs**: every managed job, `none` policy included, with its sync state |
+| What happened to this job? | **Job**: its drift, hooks, meta issues and every deployment it had |
+| What happened, in general? | **Activity**: every deployment, by day |
+
+plus the **git webhook** that triggers an out-of-turn fetch.
 
 ## Pages
 
 Every page below needs a login (see [authentication](#authentication)); the
-header shows the current tab, the actor and a logout button.
+header shows the current tab (Overview, Jobs, Activity), the actor and a
+logout button. Times read relative ("3m ago"), with the absolute UTC time on
+hover; long identifiers (a spec hash, an evaluation ID) read short, with the
+whole value on hover.
 
 | Page | Shows |
 |---|---|
-| `GET /` | Deployments in state `pending_approval` (a count up top: the one thing the page wants you to notice), then every other active deployment (`detected`, `pre_hook`, `applying`, `post_hook`). |
-| `GET /history` | Terminal deployments (`completed`, `failed`, `rejected`, `superseded`), newest first, with who decided and when. |
-| `GET /drift` | `Engine.Observations()`: one row per managed job, including `none` policy, with its drift, its meta validation issues and, when a retry rule is suppressing a new deployment, `BlockedBy`/`BlockedReason`. |
-| `GET /deployments/{id}` | The plan diff, the decision rail (state, commit, spec hash, Approve/Reject when `pending_approval`), the hook runs and the event timeline. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
-| `GET /deployments/{id}/status` | An [htmx](https://htmx.org) fragment: the decision rail without the diff, polled by the deployment page every 3s while the deployment is non-terminal, so an approval or a hook finishing elsewhere shows up without a reload. It stops polling itself once the deployment is terminal. |
-| `POST /deployments/{id}/approve` | Calls `Engine.Approve(ctx, id, spec_hash, actor)` with the actor from the session and the `spec_hash` shown on the page. A `spec_hash` that no longer matches (`ErrStaleApproval`) re-renders the page with a 409 and a notice to review the new diff, rather than approving the wrong spec. |
+| `GET /` **Overview** | A strip with **Git** (the commit nops is on: short SHA, linked when the repository is an `http(s)` URL, subject, author, when it was made, when the repository was last checked, and a *Fetch now* button; the last poll's failure, if the latest poll failed) and **Detection** (when the last cycle ran and how long it took, how many managed jobs it found, and `ok`, `degraded` or `aborted`; jobs skipped because Nomad failed on them, files Nomad could not parse, and the error that stopped a cycle, if any). Then **Needs attention**, most urgent first, one line each with why and where to act: deployments waiting for approval (oldest first, *Review*), blocked jobs (with the reason and a *Retry* button), recent failures nobody retried (7 days), and jobs with a meta error. A job under policy `none` that drifts is **not** listed here: leaving it alone is its policy, and it is on Jobs. Then **In progress**: deployments in `detected`, `pre_hook`, `applying` or `post_hook`. |
+| `GET /jobs` **Jobs** (`/drift` redirects here) | One row per managed job from `Engine.Observations()`: its sync state, policy, last deployment and file. A filter by sync state with counts (`?state=`). |
+| `GET /jobs/{namespace}/{job}` **Job** | The job's sync state, policy, file and hooks (`nops_pre_hook`, `nops_post_hook`), the block and its *Retry* when blocked, the current drift diff with its summary, the meta issues, and its deployments, newest first. A job no longer in the repository still shows its past deployments; one with neither is a 404. |
+| `GET /deployments/{id}` **Deployment** | A header with the job (linked), state, commit (SHA, subject, author), policy and age; the error, if it failed; a notice when it is what blocks its job (with *Retry*); while `pending_approval`, the **Review** panel: what Approve will do, in order (the pre-hook, the register, waiting for health, the post-hook, read from the meta of the spec nops stored: keys and job IDs only), and the Approve and Reject buttons. Then the plan diff with a summary (how many fields are added, edited and removed, and where), open to be reviewed and folded once there is nothing to decide; the hook runs; the timeline; and a Details column. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
+| `GET /deployments/{id}/status` | An [htmx](https://htmx.org) fragment, polled by the deployment page every 3s while the deployment is non-terminal, so an approval or a hook finishing elsewhere shows up without a reload: the head and decision panel replace themselves, and the hooks, timeline and details swap out of band. The diff is not sent again. It stops polling itself once the deployment is terminal. |
+| `GET /history` **Activity** | Every deployment, in progress and finished, newest first, grouped by day (UTC), with who decided; a filter by state with counts. The finished ones are the most recent 200. |
+| `POST /deployments/{id}/approve` | Calls `Engine.Approve(ctx, id, spec_hash, actor)` with the actor from the session and the `spec_hash` shown on the page (always the whole hash, in a hidden field, whatever the page shows short). A `spec_hash` that no longer matches (`ErrStaleApproval`) re-renders the page with a 409 and a notice to review the new diff, rather than approving the wrong spec. |
 | `POST /deployments/{id}/reject` | Calls `Engine.Reject(ctx, id, actor)`. |
-| `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` to `/`; `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for another namespace. |
+| `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` back to the page named by the form's `back` (`overview`, `jobs`, `activity` or `job`; anything else is the Overview); `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for another namespace. |
 | `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` to `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
 | `GET /healthz` | `200 ok`, no session needed: what an orchestrator or a load balancer probes. |
 
-Both writes go through `Auth.Require` like approve and reject, so a
-cross-origin request is refused before anything is called. Their redirect is
-the constant `/`: no form value reaches the `Location` header (see the
-[decision log](design/decisions.md), 2026-09-24). No page has the
-buttons yet: they arrive with the redesigned pages
-([roadmap](roadmap.md#dashboard-ux)).
+### Sync state of a job
+
+Where a managed job stands against git, in one word: the first that applies
+wins, and it is also the order of the filter on Jobs.
+
+| State | When |
+|---|---|
+| **Invalid meta** | one of its `nops_*` keys has an *error* (a warning does not count): nops ignores its policy and hooks |
+| **Blocked** | a failed or rejected deployment holds its drift back (`Observation.BlockedBy`) |
+| **Awaiting approval** | its latest deployment is `pending_approval` |
+| **Deploying** | its latest deployment is `detected`, `pre_hook`, `applying` or `post_hook` |
+| **Drift** | the cluster differs from git and nothing is being done about it (policy `none`, or no deployment yet) |
+| **In sync** | the cluster is what git says |
+
+### Writes and redirects
+
+Both `POST /jobs/.../retry` and `POST /fetch` go through `Auth.Require` like
+approve and reject, so a cross-origin request is refused before anything is
+called. No form value reaches a `Location` header as a path or URL: retry goes
+back to a page chosen **by name** from a fixed list (`back=jobs`), `/fetch`
+always to `/` (see the [decision log](design/decisions.md), 2026-09-24).
 
 The dashboard never calls `Store.Transition` for a decision or picks the next
 state itself: approve and reject always go through the engine (invariant 3).
-Both handlers work from a small interface over `*store.Store` and
-`*engine.Engine` (`web.Store`, `web.Engine`), so tests use fakes instead of a
-real database or Nomad client.
+The handlers work from small interfaces over `*store.Store`, `*engine.Engine`
+and `*gitwatch.Watcher` (`web.Store`, `web.Engine`, `web.Git`), so tests use
+fakes instead of a real database, Nomad client or repository.
 
 ## Look and technology
 
@@ -55,13 +76,13 @@ htmx adds `hx-boost` (page navigation without a full reload) and the status
 polling above. The CSP is `script-src 'self'; style-src 'self'` — there is no
 inline script or style to allow.
 
-The visual design reads
-[Airbnb's](https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/airbnb/DESIGN.md)
-(white/ink canvas, soft rounded corners, one accent used sparingly, a single
-loud typographic moment) with nops's own accent (a deep teal, not Airbnb's
-pink-red, which would read as "danger" next to the failed/reject states), a
-dark mode Airbnb itself does not have, and Inter/JetBrains Mono in place of
-Airbnb Cereal. See the [decision log](design/decisions.md) (2026-09-24).
+The look reads [GitHub's Primer](https://primer.style): its color tokens for
+light and dark (the theme follows the system), a 14px base, 6px corners and
+system font stacks, so nothing is downloaded. It is built for scanning, not
+reading: **one thing per line**, cut with an ellipsis rather than wrapped, with
+the full value on hover. On a narrow screen (768px or less) a row becomes two
+lines on purpose (the state and name, then the detail), secondary columns are
+hidden, and a wide diff scrolls inside its own box, never the page.
 Deployment states map to one of five colors used consistently across every
 page: pending (amber), running — `pre_hook`/`applying`/`post_hook` — (blue),
 completed (green), failed (red), rejected/superseded (muted grey).
@@ -69,7 +90,9 @@ completed (green), failed (red), rejected/superseded (muted grey).
 The plan diff renders Nomad's `JobDiff` recursively (job → task groups →
 tasks → objects/fields) as nested `<details>`, open only where something
 changed; a redacted value (`<redacted>`) renders as a pill rather than plain
-text, so it reads as "a secret changed here" at a glance.
+text, so it reads as "a secret changed here" at a glance. Above it, a summary
+counts the field changes (added, edited, removed) and says in which job, task
+group or task they are; a redacted field counts like any other.
 
 ## Authentication
 

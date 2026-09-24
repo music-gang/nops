@@ -39,6 +39,16 @@ func TestE2EApprovalFlow(t *testing.T) {
 	if got := e.liveIndex(jobID); got != 0 {
 		t.Fatalf("job %s is live (index %d) before anyone approved it", jobID, got)
 	}
+	// What a reviewer sees: it is listed as waiting, and the approval form
+	// carries the whole spec_hash it is valid for (invariant 3), whatever the
+	// page shows short.
+	if status, body := e.dash.get(t, "/"); status != http.StatusOK || !strings.Contains(body, "Needs approval") || !strings.Contains(body, jobID) {
+		t.Errorf("/ with a pending deployment: status %d, lists it as waiting: %v", status, strings.Contains(body, "Needs approval"))
+	}
+	if status, body := e.dash.get(t, "/deployments/"+d1.ID); status != http.StatusOK ||
+		!strings.Contains(body, `name="spec_hash" value="`+d1.SpecHash+`"`) || !strings.Contains(body, "Run the post-hook") {
+		t.Errorf("review page: status %d, full spec_hash in the form and the steps shown: %v", status, strings.Contains(body, d1.SpecHash))
+	}
 	if status := e.dash.approve(t, d1.ID, d1.SpecHash); status != http.StatusSeeOther {
 		t.Fatalf("approve: status %d, want 303", status)
 	}
@@ -74,8 +84,8 @@ func TestE2EApprovalFlow(t *testing.T) {
 	if got := e.liveVersion(jobID); got != "1" {
 		t.Errorf("live version = %q after a reject, want 1", got)
 	}
-	if status, body := e.dash.get(t, "/drift"); status != http.StatusOK || !strings.Contains(body, jobID) {
-		t.Errorf("/drift after a reject: status %d, still lists %s: %v", status, jobID, strings.Contains(body, jobID))
+	if status, body := e.dash.get(t, "/jobs"); status != http.StatusOK || !strings.Contains(body, jobID) {
+		t.Errorf("/jobs after a reject: status %d, still lists %s: %v", status, jobID, strings.Contains(body, jobID))
 	}
 
 	// 3. Supersede: a newer commit replaces the pending deployment before

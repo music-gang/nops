@@ -21,7 +21,7 @@ New here? Start with the [project README](../README.md).
 - [policies.md](policies.md): `auto`, `approval`, `none`.
 - [hooks.md](hooks.md): the hook contract and examples (in [`../examples/`](../examples/)).
 - [configuration.md](configuration.md): flags and environment variables.
-- [dashboard.md](dashboard.md): approval, authentication.
+- [dashboard.md](dashboard.md): the pages, approval, authentication.
 - [error-handling.md](error-handling.md): fail loud, logs, notifications.
 
 **Contributing**

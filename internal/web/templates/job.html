@@ -1,0 +1,87 @@
+{{define "job"}}
+{{template "chrome_head" .}}
+<div class="pagehead">
+  <p class="crumbs"><a href="/jobs">Jobs</a></p>
+  <h1 class="pagehead__title">{{.Title}} {{if .InRepo}}<span class="pill {{.SyncClass}}">{{.SyncLabel}}</span>{{end}}</h1>
+  <p class="pagehead__sub">
+    {{if .InRepo}}
+    <span class="label">{{.Policy}}</span>
+    <span class="mono muted" title="{{.File}}">{{.File}}</span>
+    <span class="muted">&middot; observed {{template "time" .Observed}}</span>
+    {{else}}
+    <span class="muted">Not in the repository any more, or nops could not read it in the last cycle: only its past deployments remain.</span>
+    {{end}}
+  </p>
+</div>
+
+{{if .Blocked}}
+<section class="flash flash--error flash--action">
+  <div>
+    <strong>Blocked.</strong> {{.BlockedReason}}
+    <a href="/deployments/{{.BlockedBy}}">See the deployment.</a>
+  </div>
+  <form method="post" action="{{.RetryPath}}">
+    <input type="hidden" name="back" value="job">
+    <button type="submit" class="btn btn--sm">Retry</button>
+  </form>
+</section>
+{{end}}
+
+<div class="layout">
+  <div class="layout__main">
+    {{if .InRepo}}
+    <section class="box">
+      <header class="box__header"><h2 class="box__title">Drift</h2></header>
+      {{if .Drift}}
+      <div class="box__body">
+        {{template "diff_summary" .Summary}}
+        {{template "diff" .Diff}}
+      </div>
+      {{else}}
+      <p class="empty">In sync with git.</p>
+      {{end}}
+    </section>
+
+    {{if .Issues}}
+    <section class="box">
+      <header class="box__header"><h2 class="box__title">Meta issues</h2><span class="box__count">{{len .Issues}}</span></header>
+      <ul class="rows">
+        {{range .Issues}}
+        <li class="row row--issue">
+          <span class="pill {{if eq (printf "%s" .Severity) "error"}}state-failed{{else}}state-pending{{end}}">{{.Severity}}</span>
+          <span class="row__title mono">{{.Key}}</span>
+          <span class="row__detail" title="{{.Message}}">{{.Message}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+    {{end}}
+
+    <section class="box">
+      <header class="box__header"><h2 class="box__title">Deployments</h2>{{if .Deployments}}<span class="box__count">{{len .Deployments}}</span>{{end}}</header>
+      {{if .Deployments}}
+      {{template "deployment_rows" .Deployments}}
+      {{else}}
+      <p class="empty">This job never had a deployment.</p>
+      {{end}}
+    </section>
+  </div>
+
+  {{if .InRepo}}
+  <aside class="layout__side">
+    <section class="box">
+      <header class="box__header"><h2 class="box__title">Details</h2></header>
+      <dl class="dl">
+        <dt>Policy</dt><dd>{{.Policy}}</dd>
+        <dt>Pre-hook</dt><dd>{{with .PreHook}}<span class="mono" title="{{.JobID}}">{{.JobID}}</span> <span class="muted">{{.Timeout}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>
+        <dt>Post-hook</dt><dd>{{with .PostHook}}<span class="mono" title="{{.JobID}}">{{.JobID}}</span> <span class="muted">{{.Timeout}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>
+        <dt>File</dt><dd class="mono" title="{{.File}}">{{.File}}</dd>
+        <dt>Observed</dt><dd>{{template "time" .Observed}}</dd>
+      </dl>
+    </section>
+  </aside>
+  {{end}}
+</div>
+{{template "chrome_foot" .}}
+{{end}}

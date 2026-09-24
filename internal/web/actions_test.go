@@ -28,17 +28,53 @@ func TestRetry(t *testing.T) {
 	}
 }
 
-// The redirect after a write is a constant: whatever the form carries (a
-// "next", a URL, a path) never reaches the Location header.
-func TestWritesAlwaysRedirectToTheOverview(t *testing.T) {
-	for _, target := range []string{"/jobs/default/web/retry", "/fetch"} {
-		for _, next := range []string{"", "/jobs", "https://evil.test", "//evil.test", "/\\evil.test", "javascript:alert(1)"} {
-			ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-			cookie := mintSession(t, ts.auth, "alice")
-			rec := ts.do("POST", target, formBody(url.Values{"next": {next}, "back": {next}, "url": {next}}), cookie)
-			if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
-				t.Errorf("POST %s with next=%q: status %d, Location %q, want 303 to /", target, next, rec.Code, got)
-			}
+// The page a retry returns to is chosen by name from a fixed list: whatever
+// else the form carries (a URL, a path, a "next") never reaches the Location
+// header.
+func TestRetryReturnsToANamedPage(t *testing.T) {
+	blocked := engine.Observation{JobID: "web", Namespace: "default", BlockedBy: "d1"}
+	for back, want := range map[string]string{
+		"":         "/",
+		"overview": "/",
+		"jobs":     "/jobs",
+		"activity": "/history",
+		"job":      "/jobs/default/web",
+		// not names: never taken as a destination
+		"/jobs":               "/",
+		"https://evil.test":   "/",
+		"//evil.test":         "/",
+		"/\\evil.test":        "/",
+		"javascript:alert(1)": "/",
+		"JOBS":                "/",
+	} {
+		ts := newTestServer(t, &fakeStore{}, &fakeEngine{observations: []engine.Observation{blocked}}, "")
+		cookie := mintSession(t, ts.auth, "alice")
+		rec := ts.do("POST", "/jobs/default/web/retry", formBody(url.Values{"back": {back}, "next": {back}, "url": {back}}), cookie)
+		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != want {
+			t.Errorf("back=%q: status %d, Location %q, want 303 to %q", back, rec.Code, got, want)
+		}
+	}
+}
+
+// "job" is the job's page, built from the engine's own copy of its name: a job
+// the engine does not know goes to the Overview rather than to a path made of
+// the request's.
+func TestRetryBackToAJobTheEngineDoesNotKnow(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	cookie := mintSession(t, ts.auth, "alice")
+	rec := ts.do("POST", "/jobs/default/..%2F..%2Fevil/retry", formBody(url.Values{"back": {"job"}}), cookie)
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
+		t.Errorf("status %d, Location %q, want 303 to /", rec.Code, got)
+	}
+}
+
+func TestFetchNowAlwaysGoesToTheOverview(t *testing.T) {
+	for _, v := range []string{"", "/jobs", "https://evil.test", "//evil.test"} {
+		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+		cookie := mintSession(t, ts.auth, "alice")
+		rec := ts.do("POST", "/fetch", formBody(url.Values{"back": {v}, "next": {v}}), cookie)
+		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
+			t.Errorf("form value %q: status %d, Location %q, want 303 to /", v, rec.Code, got)
 		}
 	}
 }
@@ -129,7 +165,7 @@ func TestFetchNowRefusesCrossOrigin(t *testing.T) {
 // Without a Trigger there is nothing to call: the route is not served.
 func TestFetchNowNotServedWithoutTrigger(t *testing.T) {
 	a := newTestAuth(t)
-	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}

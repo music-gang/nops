@@ -268,7 +268,8 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 
 	obs = Observation{
 		JobID: jobID, Namespace: e.namespace, FilePath: mf.path,
-		Policy: mf.cfg.Policy, Issues: mf.cfg.Issues, ObservedAt: e.now(),
+		Policy: mf.cfg.Policy, PreHook: mf.cfg.PreHook, PostHook: mf.cfg.PostHook,
+		Issues: mf.cfg.Issues, ObservedAt: e.now(),
 	}
 	if drift {
 		obs.Drift, obs.PlanDiff = true, string(redacted)
@@ -390,10 +391,14 @@ func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (bloc
 		return "", ""
 	}
 	if latest.AppliedIndex != 0 {
-		return latest.ID, fmt.Sprintf("deployment %s failed after applying this spec; push a new commit or retry it", latest.ID)
+		return latest.ID, "failed after applying this spec; push a new commit or retry it"
 	}
 	if latest.CASIndex == liveIndex {
-		return latest.ID, fmt.Sprintf("deployment %s failed on the same live job; nothing has changed since (push a new commit or retry it)", latest.ID)
+		what := "failed"
+		if latest.State == store.StateRejected {
+			what = "was rejected"
+		}
+		return latest.ID, what + " on the same live job; push a new commit or retry it"
 	}
 	return "", ""
 }

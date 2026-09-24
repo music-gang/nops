@@ -1,0 +1,30 @@
+{{define "activity"}}
+{{template "chrome_head" .}}
+<div class="pagehead">
+  <h1 class="pagehead__title">Activity</h1>
+  <p class="pagehead__text">Every deployment, newest first.</p>
+</div>
+{{template "filters" .Filters}}
+{{if .Days}}
+{{range .Days}}
+<section class="box">
+  <header class="box__header"><h2 class="box__title">{{.Label}}</h2><span class="box__count">{{len .Rows}}</span></header>
+  <ul class="rows">
+    {{range .Rows}}
+    <li class="row row--activity">
+      {{template "state_badge" .State}}
+      <a class="row__title" href="{{.Path}}" title="{{.Title}}">{{.Title}}</a>
+      <span class="row__detail" title="{{if .Error}}{{.Error}}{{else}}{{.CommitSubj}}{{end}}">{{if .Error}}<span class="text-failed">{{.Error}}</span>{{else if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="mono muted">{{.CommitShort}}</span>{{end}}</span>
+      <span class="row__meta hide-sm">{{if .DecidedBy}}{{.DecidedBy}}{{end}}</span>
+      <span class="row__when">{{template "time" .CreatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+{{if .Limited}}<p class="muted note">Only the most recent finished deployments are listed.</p>{{end}}
+{{else}}
+<p class="empty box">{{if .Total}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
+{{end}}
+{{template "chrome_foot" .}}
+{{end}}

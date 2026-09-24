@@ -67,7 +67,8 @@ the dashboard (see [dashboard.md](../dashboard.md#secret-redaction)).
 [policies.md](../policies.md)), but the dashboard still needs to show that
 such a job has drifted, with its redacted diff. The schema has no table for
 this, and it is not given one: `Engine.Observations()` returns the last
-cycle's drift, one `Observation` per managed job (whatever its policy),
+cycle's drift, one `Observation` per managed job (whatever its policy, with
+the hooks its meta declares, so a job with no deployment can still show them),
 rebuilt from scratch on every cycle. A job that leaves the repository (or
 starts failing to parse) simply disappears from the next call: there is
 nothing to expire or garbage-collect. Recomputing it costs nothing extra,

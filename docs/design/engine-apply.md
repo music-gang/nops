@@ -208,10 +208,10 @@ expanded here.
 7. **Blocked drift is visible in the dashboard.** `Observation` (`engine.go`)
    gains `BlockedBy` (the ID of the deployment whose retry rule — either the
    existing one or decision 6 above — currently suppresses a new deployment
-   for this job) and `BlockedReason` (a message naming that deployment and
-   what unblocks it: "the deployment `<id>` failed after applying this spec;
-   push a new commit or retry it" or "... failed on the same live job;
-   nothing has changed since (push a new commit or retry it)"). Detection fills them for free, since it already
+   for this job) and `BlockedReason` (what happened and what unblocks it, without the ID, which
+   the page links from `BlockedBy`: "failed after applying this spec; push a
+   new commit or retry it" or "failed on the same live job; push a new commit
+   or retry it", or "was rejected on the same live job; ..." for a rejection). Detection fills them for free, since it already
    evaluates the retry rule at that point; `web` renders them next to the
    plain drift so a job that is not converging is never silently stuck.
    Retrying without a new commit (an explicit dashboard action) was left out

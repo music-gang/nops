@@ -18,6 +18,9 @@ import (
 // dashboard, against the real binary and a real Nomad: what it must do, and
 // what it must never do (skip the policy).
 
+// blockedText is what the dashboard says of a job held back by a failure.
+const blockedText = "push a new commit or retry it"
+
 // retry is the "Retry" button of a blocked job.
 func (d *dashboard) retry(t *testing.T, jobID string) int {
 	t.Helper()
@@ -61,10 +64,23 @@ func TestE2ERetryAfterAFailedPreHook(t *testing.T) {
 	}
 
 	// Blocked: visible in the dashboard, and no retry loop on its own.
-	e.dash.waitBody(t, "/drift", "Blocked by")
+	e.dash.waitBody(t, "/jobs", blockedText)
 	time.Sleep(time.Second)
 	if got := e.deploymentsOf(jobID); got != 1 {
 		t.Fatalf("%d deployments for %s, want 1 (blocked, no retry loop)", got, jobID)
+	}
+
+	// Where a person finds it: on the Overview with its button, on the job's
+	// page, and on the failed deployment itself.
+	if status, body := e.dash.get(t, "/"); status != http.StatusOK || !strings.Contains(body, "Needs attention") ||
+		!strings.Contains(body, "/jobs/default/"+jobID+"/retry") {
+		t.Errorf("/ for a blocked job: status %d, offers its retry: %v", status, strings.Contains(body, "/retry"))
+	}
+	if status, body := e.dash.get(t, "/jobs/default/"+jobID); status != http.StatusOK || !strings.Contains(body, "Blocked.") {
+		t.Errorf("the job page of a blocked job: status %d, says it is blocked: %v", status, strings.Contains(body, "Blocked."))
+	}
+	if status, body := e.dash.get(t, "/deployments/"+d1.ID); status != http.StatusOK || !strings.Contains(body, "This deployment blocks its job.") {
+		t.Errorf("the failed deployment's page: status %d, says it blocks its job: %v", status, strings.Contains(body, "blocks its job"))
 	}
 
 	// One retry is one more attempt, not a promise: the hook still fails, the
@@ -76,7 +92,7 @@ func TestE2ERetryAfterAFailedPreHook(t *testing.T) {
 	if got := e.deployment(d1.ID); got.RetriedBy != e2eUser || got.RetriedAt.IsZero() {
 		t.Errorf("the first failure is retried by %q at %v, want %q and a time", got.RetriedBy, got.RetriedAt, e2eUser)
 	}
-	e.dash.waitBody(t, "/drift", "Blocked by")
+	e.dash.waitBody(t, "/jobs", blockedText)
 	time.Sleep(time.Second)
 	if got := e.deploymentsOf(jobID); got != 2 {
 		t.Fatalf("%d deployments for %s, want 2 (one retry, one attempt)", got, jobID)
@@ -127,7 +143,7 @@ func TestE2ERetryUnderApprovalStillNeedsApproval(t *testing.T) {
 		t.Fatalf("reject: status %d, want 303", status)
 	}
 	e.waitState(d1.ID, store.StateRejected)
-	e.dash.waitBody(t, "/drift", "Blocked by")
+	e.dash.waitBody(t, "/jobs", blockedText)
 
 	if status := e.dash.retry(t, jobID); status != http.StatusSeeOther {
 		t.Fatalf("retry: status %d, want 303", status)
@@ -136,6 +152,10 @@ func TestE2ERetryUnderApprovalStillNeedsApproval(t *testing.T) {
 	if d2.DecidedBy != "" || d2.SpecHash != d1.SpecHash {
 		t.Errorf("the new deployment is decided by %q with spec %s, want undecided with the rejected spec %s",
 			d2.DecidedBy, d2.SpecHash, d1.SpecHash)
+	}
+	// The old address of the drift page still works.
+	if status, _ := e.dash.get(t, "/drift"); status != http.StatusMovedPermanently {
+		t.Errorf("GET /drift: status %d, want 301 to /jobs", status)
 	}
 	// Give it time to be wrongly applied.
 	time.Sleep(time.Second)

@@ -1,0 +1,37 @@
+{{define "jobs"}}
+{{template "chrome_head" .}}
+<div class="pagehead">
+  <h1 class="pagehead__title">Jobs</h1>
+  <p class="pagehead__text">Every managed job, policy <span class="mono">none</span> included, against git: what nops last observed, rebuilt every detection cycle.</p>
+</div>
+{{template "filters" .Filters}}
+{{if .Rows}}
+<div class="box">
+  <table class="table">
+    <thead>
+      <tr><th class="col-job">Job</th><th class="col-sync">State</th><th class="col-policy hide-sm">Policy</th><th class="col-last hide-sm">Last deployment</th><th class="col-file hide-sm">File</th></tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="cell-ellipsis">
+          <a class="row__title" href="{{.Path}}" title="{{.Title}}">{{.Title}}</a>
+          {{if .BlockedReason}}<div class="cell-sub" title="{{.BlockedReason}}">{{.BlockedReason}}</div>{{end}}
+          {{if .Warnings}}<div class="cell-sub">{{.Warnings}} meta {{if eq .Warnings 1}}warning{{else}}warnings{{end}}</div>{{end}}
+        </td>
+        <td><span class="pill {{.SyncClass}}">{{.SyncLabel}}</span></td>
+        <td class="hide-sm"><span class="label">{{.Policy}}</span></td>
+        <td class="cell-ellipsis hide-sm">
+          {{with .Last}}<a href="{{.Path}}">{{template "state_badge" .State}}</a> <span class="muted">{{template "time" .CreatedAt}}</span>{{else}}<span class="muted">never</span>{{end}}
+        </td>
+        <td class="cell-ellipsis hide-sm mono muted" title="{{.File}}">{{.File}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{else}}
+<p class="empty box">{{if .Total}}No job matches this filter.{{else}}No managed job observed yet.{{end}}</p>
+{{end}}
+{{template "chrome_foot" .}}
+{{end}}
