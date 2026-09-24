@@ -76,6 +76,14 @@ htmx adds `hx-boost` (page navigation without a full reload) and the status
 polling above. The CSP is `script-src 'self'; style-src 'self'` — there is no
 inline script or style to allow.
 
+Static files are cached for a day, so the templates link them through the
+`asset` function, which adds a version taken from the file's own bytes
+(`/static/app.css?v=<10 hex digits of its SHA-256>`): a changed file has a new
+address and a browser never shows the new pages with the old stylesheet, while
+an unchanged one stays cached. The version is computed once per file from the
+embedded copy; a file that does not exist makes the page fail loud (a logged
+500) instead of linking a 404. The login page uses it too.
+
 The look reads [GitHub's Primer](https://primer.style): its color tokens for
 light and dark (the theme follows the system), a 14px base, 6px corners and
 system font stacks, so nothing is downloaded. It is built for scanning, not
