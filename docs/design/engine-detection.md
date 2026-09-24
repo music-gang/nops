@@ -171,6 +171,20 @@ unredacted diff). Every other failure — a bad file, a job Nomad cannot plan,
 a hook that cannot be synced — is scoped to the one file or job it came from:
 logged, and the cycle continues with the rest.
 
+### The commit is recorded on the deployment; the cycle status lives in memory
+
+A deployment stores the subject and author of its commit
+(`commit_subject`, `commit_author`) next to `commit_sha`, taken from the
+`gitwatch.Snapshot` the cycle read: the clone is shallow and only ever holds
+the head, so a page about a deployment from three commits ago cannot ask git
+what that commit said. `Engine.Status()` reports how the last cycle went (when
+it ended, how long it took, the error that aborted it, how many managed jobs it
+found, how many it could not plan because of a Nomad failure, how many files
+Nomad could not parse), in memory like `Observations()` and for the same reason:
+it is recomputed every cycle. It exists because a cycle that logs an ERROR for
+every job and produces no observation looks, from the dashboard, exactly like a
+cluster with nothing to do.
+
 ## Tests
 
 `internal/engine`: a fake Nomad and a real, temp-file `store.Store`, table-

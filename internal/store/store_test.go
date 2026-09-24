@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -453,8 +454,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
-		t.Errorf("user_version = %d, %v; want 1", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
+		t.Errorf("user_version = %d, %v; want 2", v, err)
 	}
 }
 
@@ -599,5 +600,201 @@ func TestOpenFileMode(t *testing.T) {
 		if mode := fi.Mode().Perm(); mode != 0o600 {
 			t.Errorf("%s: mode = %o, want 0600 (job_spec is not redacted)", p, mode)
 		}
+	}
+}
+
+func TestCommitInfoRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	d := newDep("web")
+	d.CommitSubject, d.CommitAuthor = "fix(web): bump the image", "Iacopo Melani"
+	mustCreate(t, s, d)
+	got, err := s.GetDeployment(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitSubject != "fix(web): bump the image" || got.CommitAuthor != "Iacopo Melani" {
+		t.Errorf("commit info = %q by %q", got.CommitSubject, got.CommitAuthor)
+	}
+
+	// A deployment without them (created before they were recorded) reads back empty.
+	plain := mustCreate(t, s, newDep("db"))
+	got, err = s.GetDeployment(ctx, plain.ID)
+	if err != nil || got.CommitSubject != "" || got.CommitAuthor != "" || !got.RetriedAt.IsZero() || got.RetriedBy != "" {
+		t.Errorf("plain deployment = %+v, %v", got, err)
+	}
+}
+
+func TestListByJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	first := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, first.ID, StateSuperseded, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	second := mustCreate(t, s, newDep("web"))
+	mustCreate(t, s, newDep("db"))
+	other := newDep("web")
+	other.Namespace = "staging"
+	mustCreate(t, s, other)
+
+	got, err := s.ListByJob(ctx, "default", "web", 10)
+	if err != nil || len(got) != 2 || got[0].ID != second.ID || got[1].ID != first.ID {
+		t.Errorf("ListByJob = %+v, %v, want [second, first] (newest first, active included)", got, err)
+	}
+	if got, _ := s.ListByJob(ctx, "default", "web", 1); len(got) != 1 || got[0].ID != second.ID {
+		t.Errorf("ListByJob limit not applied: %+v", got)
+	}
+	if got, err := s.ListByJob(ctx, "default", "nope", 10); err != nil || len(got) != 0 {
+		t.Errorf("ListByJob(unknown job) = %+v, %v, want empty", got, err)
+	}
+}
+
+func TestLatestPerJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if got, err := s.LatestPerJob(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("LatestPerJob on an empty store = %+v, %v", got, err)
+	}
+
+	old := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, old.ID, StateFailed, Transition{From: StateDetected, Actor: "nops", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	newest := mustCreate(t, s, newDep("web"))
+	db := mustCreate(t, s, newDep("db"))
+	staging := newDep("web")
+	staging.Namespace = "staging"
+	mustCreate(t, s, staging)
+
+	got, err := s.LatestPerJob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, d := range got {
+		ids = append(ids, d.Namespace+"/"+d.JobID+"="+d.ID)
+	}
+	want := []string{"default/db=" + db.ID, "default/web=" + newest.ID, "staging/web=" + staging.ID}
+	if len(ids) != len(want) {
+		t.Fatalf("LatestPerJob = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("LatestPerJob[%d] = %s, want %s", i, ids[i], want[i])
+		}
+	}
+}
+
+func TestMarkRetried(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	failed := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, failed.ID, StateFailed, Transition{From: StateDetected, Actor: "nops", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkRetried(ctx, failed.ID, "iacopo"); err != nil {
+		t.Fatalf("MarkRetried: %v", err)
+	}
+	got, err := s.GetDeployment(ctx, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetriedBy != "iacopo" || got.RetriedAt.IsZero() || got.State != StateFailed {
+		t.Errorf("after MarkRetried: %+v, want retried by iacopo and still failed", got)
+	}
+	evs, err := s.Events(ctx, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := evs[len(evs)-1]
+	if last.From != StateFailed || last.To != StateFailed || last.Actor != "iacopo" || last.Message != "retry requested" {
+		t.Errorf("last event = %+v, want failed -> failed by iacopo", last)
+	}
+
+	if err := s.MarkRetried(ctx, failed.ID, "iacopo"); !errors.Is(err, ErrAlreadyRetried) {
+		t.Errorf("second MarkRetried err = %v, want ErrAlreadyRetried", err)
+	}
+	if evs2, _ := s.Events(ctx, failed.ID); len(evs2) != len(evs) {
+		t.Errorf("a refused MarkRetried logged an event")
+	}
+
+	// A rejected deployment can be retried too.
+	rejected := mustCreate(t, s, newDep("db"))
+	if err := s.Transition(ctx, rejected.ID, StatePendingApproval, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Transition(ctx, rejected.ID, StateRejected, Transition{From: StatePendingApproval, Actor: "iacopo", DecidedBy: "iacopo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkRetried(ctx, rejected.ID, "iacopo"); err != nil {
+		t.Errorf("MarkRetried on a rejected deployment: %v", err)
+	}
+}
+
+func TestMarkRetriedRefusals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	active := mustCreate(t, s, newDep("web"))
+	if err := s.MarkRetried(ctx, active.ID, "iacopo"); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("active deployment: err = %v, want ErrStateConflict", err)
+	}
+	done := mustCreate(t, s, newDep("db"))
+	if err := s.Transition(ctx, done.ID, StateCompleted, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkRetried(ctx, done.ID, "iacopo"); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("completed deployment: err = %v, want ErrStateConflict", err)
+	}
+	if err := s.MarkRetried(ctx, "nope", "iacopo"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+	if err := s.MarkRetried(ctx, active.ID, ""); err == nil {
+		t.Error("MarkRetried without an actor should fail")
+	}
+	if got, _ := s.GetDeployment(ctx, active.ID); !got.RetriedAt.IsZero() {
+		t.Errorf("a refused MarkRetried left retried_at set: %+v", got)
+	}
+}
+
+// TestUpgradeFromV1 opens a database left by the first schema, with a
+// deployment in it, and checks the second migration keeps it readable.
+func TestUpgradeFromV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1, err := migrationsFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		string(v1),
+		"PRAGMA user_version = 1",
+		`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+		 VALUES ('old', 'web', 'default', 'abc1234', 'h', '{}', 'approval', 'failed', 7, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v1: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	got, err := s.GetDeployment(context.Background(), "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.JobID != "web" || got.State != StateFailed || got.CommitSubject != "" || !got.RetriedAt.IsZero() {
+		t.Errorf("upgraded deployment = %+v", got)
+	}
+	if err := s.MarkRetried(context.Background(), "old", "iacopo"); err != nil {
+		t.Errorf("MarkRetried on an upgraded row: %v", err)
 	}
 }

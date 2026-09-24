@@ -73,14 +73,29 @@ unblocks it. Either case is visible in the dashboard as `Observation.BlockedBy`/
 (see [engine-apply](design/engine-apply.md), decisions 6 and 7): the job is
 not silently stuck.
 
+A human can lift the block without a new commit: **retry** (`Engine.Retry`,
+`POST /jobs/{namespace}/{job}/retry`). It marks the blocking deployment as
+retried (`retried_by`, `retried_at`; the state does not change) and asks
+detection for a cycle, and a *retried* deployment blocks nothing. The next
+cycle creates a new deployment like any other, so the policy still decides
+what happens: under `approval` it is `pending_approval` and waits for a
+human, under `auto` it proceeds. A retry is one more attempt, not a promise:
+if the new deployment fails the same way, the job is blocked again. See
+[engine-apply](design/engine-apply.md), decision 9.
+
 ## Schema
 
 The detail lives in `internal/store/migrations/`; this is the summary.
 
-- `deployments`: id (ULID), job_id, namespace, commit_sha, spec_hash,
-  job_spec (JSON), plan_diff (redacted JSON), policy, state, cas_index,
-  applied_index, eval_id, error, decided_by, decided_at, created_at,
-  updated_at.
+- `deployments`: id (ULID), job_id, namespace, commit_sha, commit_subject,
+  commit_author, spec_hash, job_spec (JSON), plan_diff (redacted JSON),
+  policy, state, cas_index, applied_index, eval_id, error, decided_by,
+  decided_at, retried_by, retried_at, created_at, updated_at.
+  `commit_subject` (first line of the message) and `commit_author` (name, no
+  email) are copied from the commit when the deployment is created, because
+  the git clone is shallow and only ever holds the head; they are empty for a
+  deployment created before they were recorded. `retried_by`/`retried_at` are
+  set by `Store.MarkRetried`, only on a `failed` or `rejected` deployment.
   `UNIQUE INDEX (namespace, job_id) WHERE state IN (detected,
   pending_approval, pre_hook, applying, post_hook)` is the per-job lock.
 - `hook_runs`: id, deployment_id, phase, hook_job_id, idempotency_token
@@ -88,13 +103,19 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   (`dispatching|running|succeeded|failed|timed_out`), timeout_s, error,
   started_at, finished_at. `UNIQUE(deployment_id, phase)`.
 - `events`: append-only log (deployment_id, ts, from_state, to_state, actor,
-  message). It feeds the history view in the dashboard.
+  message). It feeds the history view in the dashboard. `Store.MarkRetried`
+  appends one event whose `from_state` and `to_state` are both the
+  deployment's (terminal) state, message `retry requested`: nothing moves, it
+  is the audit trail of who asked.
 
 Store rules:
 
 - `Store.Transition` is the only way to change `state`: it validates the
   transition table, requires the starting state (compare-and-set on the state)
   and writes the event in the same transaction.
+- `Store.MarkRetried` is the only other write on a terminal deployment: it
+  changes no state, is guarded on `state IN (failed, rejected) AND retried_at
+  IS NULL`, and writes its event in the same transaction.
 - A single SQLite connection: writes are serialized.
 
 ## Recovery after a crash

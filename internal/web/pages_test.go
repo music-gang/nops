@@ -68,12 +68,21 @@ func (f *fakeStore) GetHookRun(ctx context.Context, deploymentID, phase string) 
 type approveCall struct{ id, specHash, actor string }
 type rejectCall struct{ id, actor string }
 
+type retryCall struct{ namespace, job, actor string }
+
 type fakeEngine struct {
 	approveErr   error
 	rejectErr    error
+	retryErr     error
 	approveCalls []approveCall
 	rejectCalls  []rejectCall
+	retryCalls   []retryCall
 	observations []engine.Observation
+}
+
+func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) error {
+	f.retryCalls = append(f.retryCalls, retryCall{namespace, jobID, actor})
+	return f.retryErr
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -191,7 +200,7 @@ func TestPagesRequireLogin(t *testing.T) {
 		}
 	}
 
-	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject"}
+	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject", "/jobs/default/web/retry", "/fetch"}
 	for _, p := range postPaths {
 		rec := ts.do("POST", p, nil)
 		if rec.Code != http.StatusUnauthorized {
