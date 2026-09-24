@@ -27,12 +27,14 @@ header shows the current tab, the actor and a logout button.
 | `GET /deployments/{id}/status` | An [htmx](https://htmx.org) fragment: the decision rail without the diff, polled by the deployment page every 3s while the deployment is non-terminal, so an approval or a hook finishing elsewhere shows up without a reload. It stops polling itself once the deployment is terminal. |
 | `POST /deployments/{id}/approve` | Calls `Engine.Approve(ctx, id, spec_hash, actor)` with the actor from the session and the `spec_hash` shown on the page. A `spec_hash` that no longer matches (`ErrStaleApproval`) re-renders the page with a 409 and a notice to review the new diff, rather than approving the wrong spec. |
 | `POST /deployments/{id}/reject` | Calls `Engine.Reject(ctx, id, actor)`. |
-| `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` back to the optional `next` form value (confined to this site, like the post-login redirect) or `/`; `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for another namespace. |
-| `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` back to `next` or `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
+| `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` to `/`; `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for another namespace. |
+| `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` to `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
 | `GET /healthz` | `200 ok`, no session needed: what an orchestrator or a load balancer probes. |
 
 Both writes go through `Auth.Require` like approve and reject, so a
-cross-origin request is refused before anything is called. No page has the
+cross-origin request is refused before anything is called. Their redirect is
+the constant `/`: no form value reaches the `Location` header (see the
+[decision log](design/decisions.md), 2026-09-24). No page has the
 buttons yet: they arrive with the redesigned pages
 ([roadmap](roadmap.md#dashboard-ux)).
 

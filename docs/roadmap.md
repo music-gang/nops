@@ -103,8 +103,10 @@ operator does with it").
   decision row replacing the Airbnb one. Checked by hand at 1280px and 390px,
   light and dark: no row wraps, no horizontal scroll.
 - **Notes from `dashboard-data`:** `POST /jobs/{ns}/{job}/retry` and
-  `POST /fetch` exist and take a `next` form value (the page to go back to,
-  confined to the site). `Engine.Status()` and `Watcher.Status()` are not
+  `POST /fetch` exist and always redirect to `/`. When a button needs to go
+  back to another page (the job page, Jobs), add a server-side list of
+  destinations chosen by name (`back=jobs` mapped to a constant path): never
+  a path or URL from the form, CodeQL flags it (decision log, 2026-09-24). `Engine.Status()` and `Watcher.Status()` are not
   wired into `web` yet: add them to `web.Options` (small interfaces, like
   `Engine`). An event whose `from` and `to` are the same state is a retry
   request: show its message, not an arrow. `commit_subject`/`commit_author`

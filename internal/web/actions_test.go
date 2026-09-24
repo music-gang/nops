@@ -28,20 +28,17 @@ func TestRetry(t *testing.T) {
 	}
 }
 
-func TestRetryGoesBackToNext(t *testing.T) {
-	for next, want := range map[string]string{
-		"/jobs/default/web": "/jobs/default/web",
-		"/?filter=blocked":  "/?filter=blocked",
-		"https://evil.test": "/",
-		"//evil.test":       "/",
-		"/\\evil.test":      "/",
-		"":                  "/",
-	} {
-		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-		cookie := mintSession(t, ts.auth, "alice")
-		rec := ts.do("POST", "/jobs/default/web/retry", formBody(url.Values{"next": {next}}), cookie)
-		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != want {
-			t.Errorf("next=%q: status %d, Location %q, want 303 to %q", next, rec.Code, got, want)
+// The redirect after a write is a constant: whatever the form carries (a
+// "next", a URL, a path) never reaches the Location header.
+func TestWritesAlwaysRedirectToTheOverview(t *testing.T) {
+	for _, target := range []string{"/jobs/default/web/retry", "/fetch"} {
+		for _, next := range []string{"", "/jobs", "https://evil.test", "//evil.test", "/\\evil.test", "javascript:alert(1)"} {
+			ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+			cookie := mintSession(t, ts.auth, "alice")
+			rec := ts.do("POST", target, formBody(url.Values{"next": {next}, "back": {next}, "url": {next}}), cookie)
+			if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
+				t.Errorf("POST %s with next=%q: status %d, Location %q, want 303 to /", target, next, rec.Code, got)
+			}
 		}
 	}
 }
@@ -105,17 +102,12 @@ func TestFetchNow(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	cookie := mintSession(t, ts.auth, "alice")
 
-	rec := ts.do("POST", "/fetch", formBody(url.Values{"next": {"/jobs"}}), cookie)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/jobs" {
-		t.Fatalf("status %d, Location %q, want 303 to /jobs", rec.Code, rec.Header().Get("Location"))
+	rec := ts.do("POST", "/fetch", nil, cookie)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status %d, Location %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
 	}
 	if ts.trig != 1 {
 		t.Errorf("Trigger called %d times, want 1", ts.trig)
-	}
-
-	rec = ts.do("POST", "/fetch", formBody(url.Values{"next": {"//evil.test"}}), cookie)
-	if got := rec.Header().Get("Location"); got != "/" {
-		t.Errorf("next=//evil.test: Location %q, want /", got)
 	}
 }
 

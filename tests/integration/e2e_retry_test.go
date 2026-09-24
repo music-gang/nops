@@ -4,7 +4,6 @@ package integration
 
 import (
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,7 +166,7 @@ func TestE2EFetchNow(t *testing.T) {
 		t.Fatalf("nops saw the commit with a 1h poll interval, before anyone asked")
 	}
 
-	status, _ := e.dash.post(t, "/fetch", url.Values{"next": {"/"}})
+	status, _ := e.dash.post(t, "/fetch", nil)
 	if status != http.StatusSeeOther {
 		t.Fatalf("fetch: status %d, want 303", status)
 	}
