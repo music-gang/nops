@@ -15,6 +15,7 @@ import (
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
+	"github.com/music-gang/nops/internal/hooks"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -67,10 +68,12 @@ func newEngine(t *testing.T, snap staticSnapshot) (*engine.Engine, *store.Store)
 	}
 	t.Cleanup(func() { st.Close() })
 
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	e := engine.New(engine.Options{
 		Store: st, Nomad: c, Snapshots: snap, Notifier: noopNotifier{},
-		Namespace: "default", DriftInterval: time.Hour,
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Hooks:     hooks.New(c, st, log, 200*time.Millisecond),
+		Namespace: "default", DriftInterval: time.Hour, EngineInterval: 200 * time.Millisecond, ApplyTimeout: time.Minute,
+		Log: log,
 	})
 	return e, st
 }
@@ -124,8 +127,9 @@ func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 		t.Errorf("cas_index = %d, want 0 (the job did not exist yet)", d.CASIndex)
 	}
 
-	// Apply it out of band (standing in for engine-apply, which does not
-	// exist yet): the live job's modify index moves.
+	// Apply it out of band, standing in for a human approving it and
+	// engine-apply carrying it out (this test only exercises detection): the
+	// live job's modify index moves.
 	parsed, err := c.ParseHCL(ctx, managedEnvHCL(jobID, hookID, secret), "")
 	if err != nil {
 		t.Fatal(err)
@@ -147,5 +151,88 @@ func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 	// The live job now matches git: no new deployment (there is no more drift).
 	if _, err := st.ActiveDeployment(ctx, "default", jobID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("ActiveDeployment: err = %v, want ErrNotFound (in sync, nothing to approve)", err)
+	}
+}
+
+// managedBatchHCL is a lightweight raw_exec batch job, managed with policy
+// auto and no hooks. A batch job produces no Nomad deployment, so applying it
+// exercises engine-apply's allocations-based health path.
+func managedBatchHCL(id string) string {
+	return fmt.Sprintf(`
+job %q {
+  type = "batch"
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+  }
+  group "g" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "exit 0"]
+      }
+    }
+  }
+}`, id)
+}
+
+// TestEngineApplyAgainstRealNomad drives a managed job with no hooks from
+// detection through a real apply to completed: detected -> applying
+// (a fresh plan and CAS register) -> healthy, via the allocations of the
+// applied version since a batch job has no Nomad deployment -> completed.
+func TestEngineApplyAgainstRealNomad(t *testing.T) {
+	ctx := context.Background()
+	c, raw := newClient(t)
+	jobID := uniqueID(t, raw, "apply")
+
+	snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+		Commit: "c1",
+		Files:  []gitwatch.File{{Path: "job.nomad.hcl", Content: managedBatchHCL(jobID)}},
+	}}
+	e, st := newEngine(t, snap)
+
+	if err := e.Detect(ctx); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	d, err := st.ActiveDeployment(ctx, "default", jobID)
+	if err != nil {
+		t.Fatalf("ActiveDeployment: %v", err)
+	}
+	if d.State != store.StateDetected || d.Policy != store.PolicyAuto {
+		t.Fatalf("deployment = %+v, want detected/auto", d)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go e.RunApply(runCtx)
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		got, err := st.GetDeployment(ctx, d.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == store.StateCompleted {
+			if got.AppliedIndex == 0 {
+				t.Errorf("completed with no applied_index recorded")
+			}
+			break
+		}
+		if got.State == store.StateFailed {
+			t.Fatalf("deployment failed: %s", got.Error)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment did not reach completed in time, last state = %+v", got)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	live, err := c.Job(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.JobModifyIndex == nil || *live.JobModifyIndex == 0 {
+		t.Errorf("live job was not registered")
 	}
 }

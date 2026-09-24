@@ -37,73 +37,39 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `notify` | Notifications through built-in adapters ([notifications](error-handling.md#notifications)) | `internal/notify` |
 | `gitwatch` | In-memory git watcher ([design](design/gitwatch.md)), `-git-path` in `config` | #12, `internal/gitwatch` |
 | `engine-detection` | Detection cycle: parse, plan, create/supersede/revalidate deployments, hook sync ([design](design/engine-detection.md)) | `internal/engine` |
+| `engine-apply` | Apply loop: approve/reject, register, health, timeout, the anti-loop rule and blocked drift ([design](design/engine-apply.md)) | `internal/engine` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`engine-apply`](#engine-apply) | `engine-detection` | plan first |
 | [`engine-recovery`](#engine-recovery) | `engine-apply` | plan first |
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
 
-### engine-apply
-
-Move a deployment from approval to `completed`.
-
-- **Read first:** [state-machine.md](state-machine.md),
-  [architecture.md](architecture.md#apply-and-downtime),
-  [hooks.md](hooks.md), [error-handling.md](error-handling.md),
-  invariants 1, 2, 3, 7 in [philosophy.md](philosophy.md).
-- **Scope:** the loop that advances non-terminal deployments: `pre_hook` →
-  `applying` → `post_hook` → `completed`, and every failure path. Apply is a
-  fresh plan (no difference: `completed` as a no-op) and `RegisterCAS` with the
-  saved `cas_index`; `applied_index` comes from re-reading the live job, not
-  from the register response. Then wait for the Nomad deployment to be
-  `successful` (or the allocations to be running, if there is none), with a
-  configurable timeout.
-- **Ready: plan first.**
-- **Notes from `hooks`:** `hooks.Runner.Run` blocks until the hook run is
-  terminal, so run it in a goroutine per deployment. A returned error is a
-  Nomad or SQLite failure: retry, do not fail the deployment. A `Result` with
-  `failed` or `timed_out` fails the deployment: a pre-hook leaves the live job
-  untouched, a post-hook does not undo the apply. `Request` needs the commit and
-  the target job (parsed spec). The timeout is counted from `started_at`, so a
-  restart does not extend it. A run that is already terminal returns its stored
-  result without touching Nomad. Every transition goes through `Store.Transition`.
-- **Notes from `notify`:** call `Notifier.Notify(ctx, d)` with the deployment
-  as saved, right after `Store.Transition` to `failed` succeeds, never before
-  (invariant 7); `pending_approval` is detection's. It never returns an error.
-  It is synchronous and can take up to `-notify-timeout` per adapter, so call
-  it in a goroutine if the cycle must not wait. Declare a one-method interface
-  for it in `engine`.
-- **Notes from `engine-detection`:** an `auto` deployment is left in
-  `detected` by detection, ready to apply; there is no separate "approved"
-  state for `auto`. `deployments.job_spec` already holds the exact parsed job
-  to register (task-group `Count` already adjusted for any `scaling` policy):
-  use it as is, do not re-parse or re-plan before the CAS register beyond
-  what invariant 1 already requires. `engine.Nomad`/`engine.Store` in
-  `internal/engine/engine.go` are the small interfaces detection declared
-  over `nomadx`/`store`; extend them (or declare sibling ones next to them)
-  rather than duplicating. `Store.LatestDeployment` and `store.Transition`'s
-  full rules (allowed table, `ErrStateConflict`) are already in place. Watch
-  out for a deployment superseded by detection concurrently with an apply in
-  progress: detection never touches `pre_hook`/`applying`/`post_hook`, so
-  this cannot happen from that side.
-
 ### engine-recovery
 
 Resume what a restart interrupted.
 
-- **Read first:** [state-machine.md](state-machine.md#recovery-after-a-crash).
-- **Scope:** at startup, for every non-terminal deployment: `pre_hook` and
-  `post_hook` call the hook runner again (it resumes by itself); `applying`
-  re-reads the live job and decides between repeating the CAS register, moving
-  on, or `failed` (conflict). `detected` and `pending_approval` need nothing.
-- **Ready: plan first.**
+- **Read first:** [state-machine.md](state-machine.md#recovery-after-a-crash),
+  [engine-apply.md](design/engine-apply.md) (decision 8: every apply step is
+  resume-safe on its own).
+- **Scope:** narrowed by `engine-apply`'s design to (a) calling `engine-apply`'s
+  same per-deployment step once for every active deployment at startup,
+  before its ticker starts, so a crash is noticed immediately rather than
+  after up to one `-engine-interval`, and (b) the crash-window table tests
+  below. `detected` and `pending_approval` need nothing at startup.
+- **Ready: plan first.** What is left open: whether any crash window needs
+  more than calling the step function again (the design assumes not).
 - **Done when:** a table-driven test per case, including a crash between
   `Dispatch` and the saved child ID and a CAS conflict after restart.
+- **Notes from `engine-apply`:** the per-deployment step function is
+  `Engine.applyStep` (unexported); exporting it (or a thin wrapper) is this
+  task's to decide. `Engine.RunApply`'s in-flight guard (`startApply`/
+  `finishApply`) already keeps two overlapping callers from stepping the same
+  deployment twice, so calling `applyStep` once per active deployment at
+  startup and then starting `RunApply` needs no extra locking.
 
 ### web
 
@@ -114,8 +80,10 @@ The dashboard and the git webhook.
 - **Scope:** `internal/web`. Pending deployments with the redacted diff and
   approve/reject, history, auth from the proxy header (403 on a write without
   it), POST only with a CSRF token, the git webhook endpoint that fires the
-  `gitwatch` trigger. Approve and reject only record the human decision with
-  `Store.Transition` (`decided_by`); the engine does the rest.
+  `gitwatch` trigger. Approve and reject call `Engine.Approve`/`Reject`
+  (`engine-apply`'s decision 1) with the actor and the `spec_hash` shown on
+  the page; the dashboard never calls `Store.Transition` for a decision or
+  picks the next state itself.
 - **Ready: plan first.** Question for the plan: how the webhook is
   authenticated (a shared secret in the request).
 - **Done when:** `httptest` tests for the handlers, header auth, CSRF and 403.
@@ -134,6 +102,12 @@ The dashboard and the git webhook.
   job no longer in the repo. `deployments.job_spec` is never redacted (see
   [engine-detection](design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec)):
   never render that column.
+- **Notes from `engine-apply`:** an `Observation` with `BlockedBy` set means a
+  retry rule is suppressing a new deployment for that job's drift (either the
+  existing failed/rejected-with-unchanged-index rule, or the anti-loop rule
+  for a deployment that failed after applying); render `BlockedReason` next
+  to the drift so this is never silently stuck. See
+  [engine-apply.md](design/engine-apply.md), decisions 6 and 7.
 
 ### wiring
 

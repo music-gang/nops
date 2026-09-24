@@ -504,6 +504,77 @@ func TestLatestDeployment(t *testing.T) {
 	}
 }
 
+func TestSetApplied(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, d.ID, StateApplying, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetApplied(ctx, d.ID, 7, "eval-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetDeployment(ctx, d.ID)
+	if err != nil || got.AppliedIndex != 7 || got.EvalID != "eval-1" || got.State != StateApplying {
+		t.Fatalf("deployment = %+v, %v", got, err)
+	}
+
+	// A crash-recovery call with no fresh eval ID keeps the one already
+	// recorded rather than blanking it out.
+	if err := s.SetApplied(ctx, d.ID, 8, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetDeployment(ctx, d.ID)
+	if got.AppliedIndex != 8 || got.EvalID != "eval-1" {
+		t.Errorf("deployment = %+v", got)
+	}
+
+	if err := s.SetApplied(ctx, d.ID, 0, "eval-2"); err == nil {
+		t.Error("appliedIndex = 0: want an error")
+	}
+
+	// The deployment moved on: SetApplied no longer matches applying.
+	if err := s.Transition(ctx, d.ID, StateCompleted, Transition{From: StateApplying, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetApplied(ctx, d.ID, 9, "eval-3"); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("err = %v, want ErrStateConflict", err)
+	}
+
+	if err := s.SetApplied(ctx, "missing", 1, "eval-4"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAppliedSince(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := mustCreate(t, s, newDep("web"))
+
+	if _, err := s.AppliedSince(ctx, d.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("before applying: err = %v, want ErrNotFound", err)
+	}
+
+	if err := s.Transition(ctx, d.ID, StateApplying, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	since, err := s.AppliedSince(ctx, d.ID)
+	if err != nil || since.IsZero() {
+		t.Fatalf("AppliedSince = %v, %v", since, err)
+	}
+	evs, _ := s.Events(ctx, d.ID)
+	var want time.Time
+	for _, e := range evs {
+		if e.To == StateApplying {
+			want = e.Time
+		}
+	}
+	if !since.Equal(want) {
+		t.Errorf("AppliedSince = %v, want %v (the -> applying event)", since, want)
+	}
+}
+
 func TestOpenFileMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file permissions are not enforced the same way on windows")

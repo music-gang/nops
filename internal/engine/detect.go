@@ -248,9 +248,11 @@ func (e *Engine) reconcileJob(ctx context.Context, commit string, mf parsedFile,
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	if err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, liveIndex, drift, redacted, planJob, hookIDs); err != nil {
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, liveIndex, drift, redacted, planJob, hookIDs)
+	if err != nil {
 		return obs, true, err
 	}
+	obs.BlockedBy, obs.BlockedReason = blockedBy, blockedReason
 	return obs, true, nil
 }
 
@@ -258,65 +260,67 @@ func (e *Engine) reconcileJob(ctx context.Context, commit string, mf parsedFile,
 // docs/state-machine.md to one job: revalidate an existing detected/
 // pending_approval deployment, then create a new one if there is still drift
 // to apply. A deployment in pre_hook/applying/post_hook is left untouched:
-// detection never interferes with an apply in progress.
+// detection never interferes with an apply in progress. blockedBy is the ID
+// of the deployment whose retry rule is suppressing a new deployment for
+// this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
+// 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID, commit string, cfg meta.Config,
-	hash string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hookIDs map[string]bool) error {
+	hash string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hookIDs map[string]bool) (blockedBy, blockedReason string, err error) {
 
 	active, err := e.store.ActiveDeployment(ctx, e.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		active = nil
 	case err != nil:
-		return fmt.Errorf("active deployment of %s: %w", jobID, err)
+		return "", "", fmt.Errorf("active deployment of %s: %w", jobID, err)
 	}
 
 	if active != nil {
 		switch active.State {
 		case store.StatePreHook, store.StateApplying, store.StatePostHook:
-			return nil
+			return "", "", nil
 		case store.StateDetected, store.StatePendingApproval:
 			switch {
 			case cfg.Policy == meta.PolicyNone:
 				if err := e.transition(ctx, log, active, store.StateSuperseded, "policy changed to none"); err != nil {
-					return err
+					return "", "", err
 				}
 			case active.SpecHash != hash:
 				if err := e.transition(ctx, log, active, store.StateSuperseded, fmt.Sprintf("newer spec at commit %s", commit)); err != nil {
-					return err
+					return "", "", err
 				}
 			case active.CASIndex != liveIndex:
 				if err := e.transition(ctx, log, active, store.StateSuperseded, "job modified outside nops"); err != nil {
-					return err
+					return "", "", err
 				}
 			case !drift:
 				if err := e.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
-					return err
+					return "", "", err
 				}
 			default:
-				return nil // still approvable / still pending: nothing to do
+				return "", "", nil // still approvable / still pending: nothing to do
 			}
 		}
 	}
 
 	if cfg.Policy == meta.PolicyNone || !drift {
-		return nil
+		return "", "", nil
 	}
 
 	latest, err := e.store.LatestDeployment(ctx, e.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
-		return fmt.Errorf("latest deployment of %s: %w", jobID, err)
+		return "", "", fmt.Errorf("latest deployment of %s: %w", jobID, err)
 	default:
-		failedOrRejected := latest.State == store.StateFailed || latest.State == store.StateRejected
-		if failedOrRejected && latest.SpecHash == hash && latest.CASIndex == liveIndex {
-			return nil // same outcome as before nothing changed; a new commit or live change is needed
+		if blockedBy, blockedReason = blockedRetry(latest, hash, liveIndex); blockedBy != "" {
+			return blockedBy, blockedReason, nil
 		}
 	}
 
 	specJSON, err := json.Marshal(planJob)
 	if err != nil {
-		return fmt.Errorf("marshal job spec of %s: %w", jobID, err)
+		return "", "", fmt.Errorf("marshal job spec of %s: %w", jobID, err)
 	}
 	d := &store.Deployment{
 		JobID: jobID, Namespace: e.namespace, CommitSHA: commit, SpecHash: hash,
@@ -325,18 +329,42 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 	if err := e.store.CreateDeployment(ctx, d); err != nil {
 		if errors.Is(err, store.ErrActiveDeployment) {
 			log.WarnContext(ctx, "active deployment appeared concurrently: skipped this cycle", "error", err)
-			return nil
+			return "", "", nil
 		}
-		return fmt.Errorf("create deployment for %s: %w", jobID, err)
+		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
 	}
 
 	if missing := missingHook(cfg, hookIDs); missing != "" {
-		return e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit))
+		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit))
 	}
 	if cfg.Policy == meta.PolicyApproval {
-		return e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
+		return "", "", e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
 	}
-	return nil
+	return "", "", nil
+}
+
+// blockedRetry decides whether a job's drift is blocked from a new
+// deployment by its latest one, and why (docs/state-machine.md, "not
+// retrying an unchanged failure", extended by
+// docs/design/engine-apply.md, decision 6): a failed or rejected deployment
+// with the same spec_hash blocks as long as nothing has changed — the live
+// index too, unless the deployment reached the register (AppliedIndex != 0),
+// in which case it blocks regardless of the live index, since Nomad itself
+// (for example auto_revert) may be the one moving it.
+func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (blockedBy, reason string) {
+	if latest.State != store.StateFailed && latest.State != store.StateRejected {
+		return "", ""
+	}
+	if latest.SpecHash != hash {
+		return "", ""
+	}
+	if latest.AppliedIndex != 0 {
+		return latest.ID, fmt.Sprintf("deployment %s failed after applying this spec; a new commit is needed to retry", latest.ID)
+	}
+	if latest.CASIndex == liveIndex {
+		return latest.ID, fmt.Sprintf("deployment %s failed on the same live job; nothing has changed since", latest.ID)
+	}
+	return "", ""
 }
 
 // supersedeRemoved supersedes every detected/pending_approval deployment

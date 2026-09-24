@@ -157,9 +157,13 @@ func (c *Client) Dispatch(ctx context.Context, parentID string, meta map[string]
 	return &DispatchResult{JobID: resp.DispatchedJobID, EvalID: resp.EvalID}, nil
 }
 
-// Alloc is the part of an allocation that hook outcome detection needs.
+// Alloc is the part of an allocation that hook outcome and apply health
+// detection need.
 type Alloc struct {
 	ID string
+	// JobVersion is the version of the job this allocation was placed for
+	// (apply health: which allocations belong to the version just applied).
+	JobVersion uint64
 	// ClientStatus is pending, running, complete, failed or lost.
 	ClientStatus string
 	// DesiredStatus is what the server wants: run, stop or evict. A batch
@@ -183,12 +187,30 @@ func (c *Client) Allocations(ctx context.Context, jobID string) ([]Alloc, error)
 	for _, s := range stubs {
 		out = append(out, Alloc{
 			ID:            s.ID,
+			JobVersion:    s.JobVersion,
 			ClientStatus:  s.ClientStatus,
 			DesiredStatus: s.DesiredStatus,
 			Failure:       failure(s),
 		})
 	}
 	return out, nil
+}
+
+// LatestDeployment returns the Nomad deployment currently tracking jobID, or
+// nil if the job has none (a batch job, or an update stanza that produces
+// none): Nomad answers with an empty body rather than a 404 in that case.
+func (c *Client) LatestDeployment(ctx context.Context, jobID string) (*api.Deployment, error) {
+	d, _, err := c.jobs.LatestDeployment(jobID, c.query(ctx))
+	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("latest deployment of job %s: %w", jobID, ErrJobNotFound)
+		}
+		return nil, fmt.Errorf("latest deployment of job %s: %w", jobID, err)
+	}
+	if d == nil || d.ID == "" {
+		return nil, nil
+	}
+	return d, nil
 }
 
 // failure builds a human-readable reason for a failed allocation.
