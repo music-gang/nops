@@ -36,59 +36,17 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | #9, `internal/redact` |
 | `notify` | Notifications through built-in adapters ([notifications](error-handling.md#notifications)) | `internal/notify` |
 | `gitwatch` | In-memory git watcher ([design](design/gitwatch.md)), `-git-path` in `config` | #12, `internal/gitwatch` |
+| `engine-detection` | Detection cycle: parse, plan, create/supersede/revalidate deployments, hook sync ([design](design/engine-detection.md)) | `internal/engine` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`engine-detection`](#engine-detection) | `gitwatch`, `redact`, `notify` | plan first |
 | [`engine-apply`](#engine-apply) | `engine-detection` | plan first |
 | [`engine-recovery`](#engine-recovery) | `engine-apply` | plan first |
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### engine-detection
-
-Compare the repo with Nomad and create the deployments.
-
-- **Read first:** [state-machine.md](state-machine.md) (supersede, revalidating
-  pending deployments, schema), [policies.md](policies.md),
-  [hooks.md](hooks.md#contract), [error-handling.md](error-handling.md),
-  [philosophy.md](philosophy.md) invariants 1, 4, 6, 7.
-- **Scope:** `internal/engine`, detection only. For each managed job: parse
-  (`nomadx.ParseHCL`, with the vars file), `meta.Parse`, plan, and if there is a
-  difference create a deployment (`cas_index` = live `JobModifyIndex`, 0 if the
-  job does not exist; redacted diff; spec hash). Supersede, revalidate pending
-  deployments on every cycle, sync the hook jobs (register or update with plan +
-  CAS, whatever the policy), notify on `pending_approval`. Not in scope: apply.
-- **Ready: plan first.** Questions for the plan: `deployments.job_spec` keeps
-  the full spec to register, which can contain the same secrets as the diff,
-  and it is not redacted: either accept it (the database is local, and the
-  spec is needed to apply) or re-read the spec from git at apply time and
-  check `spec_hash`, then write the choice in the decision log; where the
-  drift of a job under policy `none` is kept, as the schema has no table for
-  observations (compute it on demand in the dashboard, or keep it in memory);
-  a hook declared but missing from the repo is `failed`, never skipped.
-- **Notes from `redact`:** `redact.Diff(plan.Diff)` returns the JSON for
-  `Deployment.PlanDiff` (as a string); it never modifies the plan, so the same
-  `JobDiff` can still drive the decision. An error from it is a bug, not a
-  Nomad failure: fail the cycle loudly, never save the unredacted diff.
-- **Notes from `notify`:** call `Notifier.Notify(ctx, d)` with the deployment
-  as saved, right after `Store.Transition` to `pending_approval` or `failed`
-  succeeds, never before (invariant 7) and never for other states. It never
-  returns an error. It is synchronous and can take up to `-notify-timeout` per
-  adapter, so call it in a goroutine if the cycle must not wait. Declare a
-  one-method interface for it in `engine`.
-- **Notes from `gitwatch`:** `Watcher.Snapshot()` gives `{Commit, Files}`;
-  each `File` has `Path`, `Content`, and `VarsPath`/`Vars` (empty when there
-  is no vars file). Parse every file with `nomadx.ParseHCL(ctx, f.Content,
-  f.Vars)`, then classify by `meta.Parse`'s result: `nops_role == "hook"` is
-  a hook, `nops_managed` is a managed job, anything else is ignored. Two
-  files parsing to the same job ID are both ignored, with an ERROR. Run
-  detection on `Watcher.Changed()` and on the drift ticker; a parse cache
-  keyed by `(Content, Vars)` avoids re-parsing unchanged files on every drift
-  tick.
 
 ### engine-apply
 
@@ -120,6 +78,19 @@ Move a deployment from approval to `completed`.
   It is synchronous and can take up to `-notify-timeout` per adapter, so call
   it in a goroutine if the cycle must not wait. Declare a one-method interface
   for it in `engine`.
+- **Notes from `engine-detection`:** an `auto` deployment is left in
+  `detected` by detection, ready to apply; there is no separate "approved"
+  state for `auto`. `deployments.job_spec` already holds the exact parsed job
+  to register (task-group `Count` already adjusted for any `scaling` policy):
+  use it as is, do not re-parse or re-plan before the CAS register beyond
+  what invariant 1 already requires. `engine.Nomad`/`engine.Store` in
+  `internal/engine/engine.go` are the small interfaces detection declared
+  over `nomadx`/`store`; extend them (or declare sibling ones next to them)
+  rather than duplicating. `Store.LatestDeployment` and `store.Transition`'s
+  full rules (allowed table, `ErrStateConflict`) are already in place. Watch
+  out for a deployment superseded by detection concurrently with an apply in
+  progress: detection never touches `pre_hook`/`applying`/`post_hook`, so
+  this cannot happen from that side.
 
 ### engine-recovery
 
@@ -156,6 +127,13 @@ The dashboard and the git webhook.
 - **Notes from `gitwatch`:** the webhook handler calls `Watcher.Trigger()`
   (non-blocking) after checking the shared secret; it does not wait for a
   poll to happen.
+- **Notes from `engine-detection`:** a `none` policy job never gets a
+  deployment, so its drift for the dashboard comes from
+  `Engine.Observations()` (one entry per managed job, redacted diff
+  included), not from the store; it is rebuilt every cycle and empty for a
+  job no longer in the repo. `deployments.job_spec` is never redacted (see
+  [engine-detection](design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec)):
+  never render that column.
 
 ### wiring
 

@@ -24,6 +24,13 @@ and reads the user from a configurable header (`NOPS_AUTH_HEADER`, default
 
 ## Secret redaction
 
+`deployments.job_spec` (the full parsed job nops will register at apply time)
+is a **separate column, never redacted**: apply needs the exact spec that was
+planned, and it can carry the same secrets as the diff. The dashboard must
+never render it (see
+[engine-detection](design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec)).
+Only `plan_diff` is meant to be shown.
+
 The diff is redacted **before** being saved to SQLite and rendered in HTML, by
 [`internal/redact`](../internal/redact/redact.go) (keep the two aligned). A
 secret value becomes `<redacted>`; an empty value stays empty. The field name

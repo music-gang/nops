@@ -30,17 +30,37 @@ retries.
 
 ## Revalidating pending deployments
 
-On every detection cycle, for each `pending_approval`:
+On every detection cycle, for each `detected` or `pending_approval`
+deployment (in that order; see [engine-detection](design/engine-detection.md)
+for the full per-job procedure):
 
-- if the live `JobModifyIndex` differs from `cas_index`, the pending one moves
-  to `superseded` (reason: "job modified outside nops") and, if there is still
-  drift, a new deployment is created with an updated plan and index;
-- if the plan is empty, the pending one moves to `completed` as a no-op
-  (reason: "already in sync").
+- if the job's policy is now `none`, it moves to `superseded` (reason:
+  "policy changed to none");
+- else if the target spec changed, it moves to `superseded` (reason: "newer
+  spec at commit `<sha>`") — this compares `spec_hash`, never `commit_sha`: an
+  unrelated commit that does not touch the job's file must not disturb it;
+- else if the live `JobModifyIndex` differs from `cas_index`, it moves to
+  `superseded` (reason: "job modified outside nops");
+- else if the plan is empty, it moves to `completed` as a no-op (reason:
+  "already in sync").
+
+In every `superseded` case, a new deployment is created right after if there
+is still drift and the job's policy allows one (see
+[policies](policies.md)); creation follows the normal rules, including a
+retry check below.
 
 This way a pending deployment shown in the dashboard is always approvable.
 There is no time-based expiry of pending deployments: this revalidation is
 enough.
+
+## Not retrying an unchanged failure
+
+A new deployment is not created for a job whose most recent one is `failed`
+or `rejected` with the same `spec_hash` **and** the same live index
+(`cas_index`): nothing that produced that outcome has changed, so recreating
+it would only repeat the same failure, the same event and the same
+notification on every cycle. A new commit, or a change to the live job
+(including nops's own apply, once it exists), makes a new deployment again.
 
 ## Schema
 
