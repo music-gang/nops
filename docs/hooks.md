@@ -97,15 +97,18 @@ happens when the dispatched job of a saved ID disappears before nops saw its out
 
 ## Examples
 
-The files are in [`examples/`](../examples/). They are the standard cases nops
-must cover; none of them is "the" reference case.
+The files are in [`examples/`](../examples/), one runnable directory per
+scenario (the target job and its hook together, with a `.vars.hcl` for what
+you would tweak for your own cluster). They are the standard cases nops must
+cover; none of them is "the" reference case. Three of them are also what the
+[acceptance checklists](acceptance/) deploy against a real cluster.
 
-| Case | File | Notes |
+| Case | Files | Notes |
 |---|---|---|
-| DB migration before deploy | [`migrate-hook.nomad.hcl`](../examples/migrate-hook.nomad.hcl) | Uses the same image as the new version; `migrate up` must be a no-op if already applied. |
-| Post-deploy smoke test | [`smoke-hook.nomad.hcl`](../examples/smoke-hook.nomad.hcl) | HTTP check on the service that was just updated. |
-| Pre-pull of a heavy image on a host volume | [`prepull-hostvolume.nomad.hcl`](../examples/prepull-hostvolume.nomad.hcl) | See below. |
-| Backup before a stateful deploy | — | A `pre` hook that dumps or snapshots the volume (e.g. `pg_dump` to backup storage) with a generous timeout. It runs after approval, so the backup is fresh. |
+| DB migration before deploy | [`examples/migrate/`](../examples/migrate/) | Uses the same image as the new version; `migrate up` must be a no-op if already applied. |
+| Post-deploy smoke test | [`examples/approval/`](../examples/approval/) | HTTP check on the service that was just updated. |
+| Pre-pull of a heavy image on a host volume | [`examples/prepull-hostvolume/`](../examples/prepull-hostvolume/) | See below. |
+| Backup before a stateful deploy | [`examples/backup-stateful/`](../examples/backup-stateful/) | A `pre` hook that dumps the volume (`pg_dump` to a separate backup volume) with a generous timeout. It runs after approval, so the backup is fresh. |
 
 ### Pre-pull on a host volume
 

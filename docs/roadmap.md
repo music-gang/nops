@@ -57,5 +57,8 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
   checklists for the real cluster).
 - **Scope:** `docs/acceptance/`: one checklist per realistic scenario (heavy
   image pre-pull on a host volume, backup before a stateful deploy, approval
-  flow). The README status note changes from "early development" to usable.
-- **Done when:** the checklists exist and were run once against the real cluster.
+  flow), each deploying a runnable job pair from `examples/`. The README
+  status note changes from "early development" to usable.
+- **Done when:** the checklists exist (done) **and** were run once against
+  the real cluster (still open — needs the maintainer's hardware; see the
+  `## Notes` on the PR that added the checklists).
