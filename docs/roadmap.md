@@ -39,38 +39,15 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `gitwatch` | In-memory git watcher ([design](design/gitwatch.md)), `-git-path` in `config` | #12, `internal/gitwatch` |
 | `engine-detection` | Detection cycle: parse, plan, create/supersede/revalidate deployments, hook sync ([design](design/engine-detection.md)) | `internal/engine` |
 | `engine-apply` | Apply loop: approve/reject, register, health, timeout, the anti-loop rule and blocked drift ([design](design/engine-apply.md)) | `internal/engine` |
+| `engine-recovery` | Recovery after a restart: `RunApply`'s first cycle, crash-window tests, health fails on an outside edit ([design](design/engine-apply.md#decisions), 8) | `internal/engine` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`engine-recovery`](#engine-recovery) | `engine-apply` | plan first |
 | [`web`](#web) | `engine-detection`, `config` | plan first |
 | [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### engine-recovery
-
-Resume what a restart interrupted.
-
-- **Read first:** [state-machine.md](state-machine.md#recovery-after-a-crash),
-  [engine-apply.md](design/engine-apply.md) (decision 8: every apply step is
-  resume-safe on its own).
-- **Scope:** narrowed by `engine-apply`'s design to (a) calling `engine-apply`'s
-  same per-deployment step once for every active deployment at startup,
-  before its ticker starts, so a crash is noticed immediately rather than
-  after up to one `-engine-interval`, and (b) the crash-window table tests
-  below. `detected` and `pending_approval` need nothing at startup.
-- **Ready: plan first.** What is left open: whether any crash window needs
-  more than calling the step function again (the design assumes not).
-- **Done when:** a table-driven test per case, including a crash between
-  `Dispatch` and the saved child ID and a CAS conflict after restart.
-- **Notes from `engine-apply`:** the per-deployment step function is
-  `Engine.applyStep` (unexported); exporting it (or a thin wrapper) is this
-  task's to decide. `Engine.RunApply`'s in-flight guard (`startApply`/
-  `finishApply`) already keeps two overlapping callers from stepping the same
-  deployment twice, so calling `applyStep` once per active deployment at
-  startup and then starting `RunApply` needs no extra locking.
 
 ### web
 
@@ -131,6 +108,10 @@ The dashboard and the git webhook.
   Token: cfg.GitToken, PollInterval: cfg.GitPollInterval}, log)`; call
   `Start` before serving (its error is fatal, there is nothing to run
   detection on), then run `Run` in its own goroutine.
+- **Notes from `engine-recovery`:** there is no recovery call to make: start
+  `Engine.RunApply` in its own goroutine, and its first cycle (before the
+  ticker) is the recovery pass. It does not block, so `web` and detection can
+  start right after; a hook step in it can run for a hook's whole timeout.
 - **Done when:** `go build ./...` produces the binary and it starts against a
   `nomad agent -dev` (a smoke test in `tests/integration`).
 

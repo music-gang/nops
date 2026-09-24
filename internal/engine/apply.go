@@ -328,6 +328,13 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 	if err != nil {
 		return false, false, "", err
 	}
+	// The allocations of the live version are ours only while the live job is
+	// still the one nops registered: after an outside edit (for instance while
+	// nops was down) they belong to someone else's spec.
+	if liveIndex := derefUint64(live.JobModifyIndex); liveIndex != d.AppliedIndex {
+		return false, true, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
+			liveIndex, d.AppliedIndex), nil
+	}
 	version := derefUint64(live.Version)
 	allocs, err := e.nomad.Allocations(ctx, d.JobID)
 	if err != nil {

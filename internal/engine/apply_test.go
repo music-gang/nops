@@ -489,6 +489,25 @@ func TestStepHealthAllocationsPathFailedAlloc(t *testing.T) {
 	}
 }
 
+// The live job moved on after our register (an outside edit, e.g. while nops
+// was down) and no Nomad deployment tracks our index: its allocations are not
+// ours, so health must fail instead of reading them.
+func TestStepHealthAllocationsPathLiveJobModifiedFails(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", nil)
+	d := h.applyingWithIndex("web", job, 9)
+	h.liveApplied("web", job, 12, 4)
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running"})
+
+	h.step(d)
+
+	got := h.get(d.ID)
+	if got.State != store.StateFailed {
+		t.Fatalf("state = %s, want failed", got.State)
+	}
+	h.notifier.waitFor(t, 1)
+}
+
 func TestStepHealthCompletesToPostHookWhenDeclared(t *testing.T) {
 	h := newHarness(t)
 	job := managed("web", "auto", map[string]string{"nops_post_hook": "web-smoke"})
