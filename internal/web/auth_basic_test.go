@@ -223,6 +223,24 @@ func TestBasicAuthLoginFormRenders(t *testing.T) {
 	}
 }
 
+// A next that would leave the site (browsers read "/<TAB>/evil" as "//evil")
+// is neither rendered into the login form nor followed after the login.
+func TestBasicAuthIgnoresAnOffSiteNext(t *testing.T) {
+	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
+	const next = "/\t/evil.example.com"
+
+	rec := ba.do("GET", "/auth/login?next="+url.QueryEscape(next), nil, nil)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "evil.example.com") {
+		t.Errorf("login form: status %d, it carries the off-site next: %v", rec.Code, strings.Contains(rec.Body.String(), "evil.example.com"))
+	}
+
+	form := url.Values{"username": {"alice"}, "password": {"s3cret"}, "next": {next}}
+	rec = ba.do("POST", "/auth/login", strings.NewReader(form.Encode()), nil)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Errorf("login: status %d, Location %q, want a redirect to /", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 func TestBasicAuthLogout(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
 	sess := cookie(ba.login("alice", "s3cret"), sessionCookie)
