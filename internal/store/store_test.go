@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -463,6 +465,68 @@ func TestStateIsActive(t *testing.T) {
 	} {
 		if st.IsActive() != want {
 			t.Errorf("%s.IsActive() = %v, want %v", st, st.IsActive(), want)
+		}
+	}
+}
+
+func TestLatestDeployment(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.LatestDeployment(ctx, "default", "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+
+	first := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, first.ID, StateFailed, Transition{From: StateDetected, Actor: "nops", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LatestDeployment(ctx, "default", "web")
+	if err != nil || got.ID != first.ID || got.State != StateFailed {
+		t.Fatalf("LatestDeployment = %+v, %v", got, err)
+	}
+
+	// A newer deployment for the same job wins, even over an older one still
+	// unresolved elsewhere (the per-job lock guarantees there is at most one
+	// active at a time, but LatestDeployment looks at every state).
+	second := mustCreate(t, s, newDep("web"))
+	got, err = s.LatestDeployment(ctx, "default", "web")
+	if err != nil || got.ID != second.ID {
+		t.Fatalf("LatestDeployment = %+v, %v, want %s", got, err, second.ID)
+	}
+
+	// A different job or namespace is independent.
+	if _, err := s.LatestDeployment(ctx, "default", "db"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("db: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.LatestDeployment(ctx, "staging", "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("staging/web: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestOpenFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions are not enforced the same way on windows")
+	}
+	path := filepath.Join(t.TempDir(), "nops.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mustCreate(t, s, newDep("web")) // a write forces the WAL/SHM sidecars to exist
+
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if mode := fi.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s: mode = %o, want 0600 (job_spec is not redacted)", p, mode)
 		}
 	}
 }

@@ -15,7 +15,7 @@ approval [dashboard](dashboard.md).
 | `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched job by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
 | `internal/meta` | Parsing and validation of the `nops_*` meta keys: the [source of truth](meta-keys.md) for the HCL syntax. |
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
-| `internal/engine` | State machine, reconciler, recovery on restart. |
+| `internal/engine` | State machine, reconciler, recovery on restart. Detection ([design](design/engine-detection.md)) parses, plans, and creates, supersedes or revalidates deployments; apply and recovery are separate, later tasks. |
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Dashboard (`net/http` + `html/template`) and git webhook. |
 | `internal/notify` | [Notifications](error-handling.md#notifications) on `pending_approval` and `failed`, through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |

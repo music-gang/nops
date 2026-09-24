@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,8 +176,18 @@ type Option func(*Store)
 // WithClock injects the time source (tests).
 func WithClock(now func() time.Time) Option { return func(s *Store) { s.now = now } }
 
-// Open opens (creating if needed) the database at path and applies migrations.
+// dbFileMode is the permission the database file (and its WAL/SHM sidecars)
+// are kept at: job_spec holds the full job spec, unredacted, so it can carry
+// the same secrets as the plan diff (see docs/design/engine-detection.md).
+const dbFileMode = 0o600
+
+// Open opens (creating if needed) the database at path and applies
+// migrations. The file, and its WAL/SHM sidecars once they exist, are kept at
+// dbFileMode: job_spec is not redacted.
 func Open(path string, opts ...Option) (*Store, error) {
+	if err := ensureFileMode(path, dbFileMode); err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+	}
 	dsn := "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -197,7 +208,26 @@ func Open(path string, opts ...Option) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// WAL/SHM are only created on the first write (by migrate); chmod them now
+	// that they exist. Best-effort: a failure here does not fail Open.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Chmod(path+suffix, dbFileMode)
+	}
 	return s, nil
+}
+
+// ensureFileMode makes sure path exists at mode, creating an empty file if
+// needed and fixing the mode of one that already exists (a pre-existing file
+// may predate this rule, or have been created with a looser umask).
+func ensureFileMode(path string, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
 }
 
 // Close closes the database.
@@ -428,6 +458,23 @@ func (s *Store) ActiveDeployment(ctx context.Context, namespace, jobID string) (
 	}
 	if err != nil {
 		return nil, fmt.Errorf("active deployment %s/%s: %w", namespace, jobID, err)
+	}
+	return d, nil
+}
+
+// LatestDeployment returns the most recently created deployment of a job,
+// whatever its state, or ErrNotFound if the job never had one. It is how the
+// engine tells a fresh failure from one it already knows about (see
+// docs/design/engine-detection.md).
+func (s *Store) LatestDeployment(ctx context.Context, namespace, jobID string) (*Deployment, error) {
+	d, err := scanDeployment(s.db.QueryRowContext(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE namespace = ? AND job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+		namespace, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest deployment %s/%s: %w", namespace, jobID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("latest deployment %s/%s: %w", namespace, jobID, err)
 	}
 	return d, nil
 }

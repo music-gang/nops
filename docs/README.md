@@ -28,6 +28,8 @@ New here? Start with the [project README](../README.md).
 - [development.md](development.md): tests, coverage, commands, Go conventions.
 - [design/decisions.md](design/decisions.md): the decision log.
 - [design/gitwatch.md](design/gitwatch.md): how the git repository is read.
+- [design/engine-detection.md](design/engine-detection.md): how drift is
+  detected and deployments are created, superseded and revalidated.
 
 Not present yet, created together with the code: `acceptance/` (manual
 checklists for the real cluster).
@@ -40,6 +42,7 @@ checklists for the real cluster).
 | Behaviour of a policy | `policies.md` |
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | State, transition, schema, recovery | `state-machine.md` |
+| Detection cycle (parse, plan, create, supersede, hook sync) | `internal/engine` **and** `design/engine-detection.md` |
 | Flag or env var | `internal/config` **and** `configuration.md` |
 | Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
 | New concept, or a renamed term | `vocabulary.md` |
