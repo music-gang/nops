@@ -1,6 +1,9 @@
 // Package engine detects drift between the git repository and the Nomad
-// cluster and creates deployments accordingly. It does not apply anything:
-// that is the engine-apply task's job (see docs/design/engine-detection.md).
+// cluster, creates deployments accordingly (see
+// docs/design/engine-detection.md), and drives them from approval to
+// completed (see docs/design/engine-apply.md). Recovery after a restart is a
+// later task: every step here is already written to resume from persisted
+// state alone.
 package engine
 
 import (
@@ -13,20 +16,25 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/gitwatch"
+	"github.com/music-gang/nops/internal/hooks"
 	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 
-// Nomad is what detection needs from Nomad. *nomadx.Client implements it.
+// Nomad is what the engine needs from Nomad. *nomadx.Client implements it.
 type Nomad interface {
 	ParseHCL(ctx context.Context, hcl, vars string) (*api.Job, error)
 	Job(ctx context.Context, id string) (*api.Job, error)
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
 	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)
+	// Allocations and LatestDeployment are used by apply to decide whether the
+	// applied job version is healthy (see docs/design/engine-apply.md).
+	Allocations(ctx context.Context, jobID string) ([]nomadx.Alloc, error)
+	LatestDeployment(ctx context.Context, jobID string) (*api.Deployment, error)
 }
 
-// Store is what detection needs from the store. *store.Store implements it.
+// Store is what the engine needs from the store. *store.Store implements it.
 type Store interface {
 	CreateDeployment(ctx context.Context, d *store.Deployment) error
 	Transition(ctx context.Context, id string, to store.State, t store.Transition) error
@@ -34,6 +42,15 @@ type Store interface {
 	ActiveDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	LatestDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
+	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
+	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
+	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
+}
+
+// Hooks is what apply needs to run a deployment's hooks. *hooks.Runner
+// implements it.
+type Hooks interface {
+	Run(ctx context.Context, req hooks.Request) (hooks.Result, error)
 }
 
 // Snapshots is what detection needs from gitwatch. *gitwatch.Watcher implements it.
@@ -66,23 +83,37 @@ type Observation struct {
 	Issues []meta.Issue
 	// ObservedAt is when this cycle computed the observation.
 	ObservedAt time.Time
+	// BlockedBy is the ID of the deployment whose retry rule currently
+	// suppresses a new deployment for this job's drift, or "" if none (see
+	// docs/design/engine-apply.md, decisions 6 and 7).
+	BlockedBy string
+	// BlockedReason explains BlockedBy and what unblocks it. Empty when
+	// BlockedBy is empty.
+	BlockedReason string
 }
 
-// Engine runs the detection cycle: parse, plan, create and supersede
-// deployments, sync hook jobs, and keep the in-memory drift observations.
+// Engine runs the detection cycle (parse, plan, create and supersede
+// deployments, sync hook jobs, keep the in-memory drift observations) and the
+// apply loop (advance non-terminal deployments to completed).
 type Engine struct {
-	store         Store
-	nomad         Nomad
-	snapshots     Snapshots
-	notifier      Notifier
-	log           *slog.Logger
-	namespace     string
-	driftInterval time.Duration
-	now           func() time.Time
+	store          Store
+	nomad          Nomad
+	snapshots      Snapshots
+	notifier       Notifier
+	hooks          Hooks
+	log            *slog.Logger
+	namespace      string
+	driftInterval  time.Duration
+	engineInterval time.Duration
+	applyTimeout   time.Duration
+	now            func() time.Time
 
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[string]Observation
+
+	applyMu  sync.Mutex
+	inFlight map[string]struct{}
 }
 
 // Options configures New.
@@ -91,31 +122,42 @@ type Options struct {
 	Nomad     Nomad
 	Snapshots Snapshots
 	Notifier  Notifier
+	// Hooks runs a deployment's pre/post hooks (used by apply).
+	Hooks Hooks
 	// Namespace is the single Nomad namespace nops manages (config.Config.NomadNamespace).
 	Namespace string
-	// DriftInterval is how often a cycle runs when there is no new commit.
+	// DriftInterval is how often a detection cycle runs when there is no new commit.
 	DriftInterval time.Duration
-	Log           *slog.Logger
+	// EngineInterval is how often the apply loop advances non-terminal deployments.
+	EngineInterval time.Duration
+	// ApplyTimeout is how long an apply may wait for the Nomad deployment (or
+	// the allocations) to become healthy, counted from the "-> applying" event.
+	ApplyTimeout time.Duration
+	Log          *slog.Logger
 }
 
-// New creates an Engine. Call RunDetection to start the loop, or Detect
-// directly for a single cycle (recovery and tests).
+// New creates an Engine. Call RunDetection and RunApply to start the two
+// loops, or Detect directly for a single detection cycle (recovery and tests).
 func New(o Options) *Engine {
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Engine{
-		store:         o.Store,
-		nomad:         o.Nomad,
-		snapshots:     o.Snapshots,
-		notifier:      o.Notifier,
-		log:           log,
-		namespace:     o.Namespace,
-		driftInterval: o.DriftInterval,
-		now:           time.Now,
-		parseCache:    map[string]parseEntry{},
-		observations:  map[string]Observation{},
+		store:          o.Store,
+		nomad:          o.Nomad,
+		snapshots:      o.Snapshots,
+		notifier:       o.Notifier,
+		hooks:          o.Hooks,
+		log:            log,
+		namespace:      o.Namespace,
+		driftInterval:  o.DriftInterval,
+		engineInterval: o.EngineInterval,
+		applyTimeout:   o.ApplyTimeout,
+		now:            time.Now,
+		parseCache:     map[string]parseEntry{},
+		observations:   map[string]Observation{},
+		inFlight:       map[string]struct{}{},
 	}
 }
 

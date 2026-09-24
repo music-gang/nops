@@ -60,7 +60,18 @@ or `rejected` with the same `spec_hash` **and** the same live index
 (`cas_index`): nothing that produced that outcome has changed, so recreating
 it would only repeat the same failure, the same event and the same
 notification on every cycle. A new commit, or a change to the live job
-(including nops's own apply, once it exists), makes a new deployment again.
+(including nops's own apply), makes a new deployment again.
+
+A deployment that reached the register (`applied_index != 0`) and then
+`failed` blocks for its `spec_hash` regardless of the live index: Nomad's own
+`auto_revert`, for example, would otherwise move the live job back on its own
+(a different index) right after an apply that never became healthy, letting
+the rule above retry a spec Nomad has already rejected — apply, revert,
+re-detect, apply again, forever. Only a new commit (a different `spec_hash`)
+unblocks it. Either case is visible in the dashboard as `Observation.BlockedBy`/
+`BlockedReason` for a job whose policy would otherwise create a deployment
+(see [engine-apply](design/engine-apply.md), decisions 6 and 7): the job is
+not silently stuck.
 
 ## Schema
 

@@ -404,6 +404,53 @@ func (s *Store) Transition(ctx context.Context, id string, to State, t Transitio
 	return nil
 }
 
+// SetApplied records the applied index (and, when known, the eval ID) of a
+// deployment while it stays applying, without changing its state: invariant
+// 7 requires them persisted before nops starts waiting for health, and
+// Store.Transition only writes when the state itself changes. evalID may be
+// empty (a crash recovery that finds the register already done, without a
+// fresh eval to record). It returns ErrStateConflict if the deployment is no
+// longer applying, or ErrNotFound if it does not exist.
+func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error {
+	if appliedIndex == 0 {
+		return errors.New("set applied: appliedIndex is required")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE deployments SET
+			applied_index = ?,
+			eval_id = COALESCE(NULLIF(?, ''), eval_id),
+			updated_at = ?
+		WHERE id = ? AND state = ?`,
+		int64(appliedIndex), evalID, s.ts(), id, string(StateApplying))
+	if err != nil {
+		return fmt.Errorf("set applied %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.GetDeployment(ctx, id); err != nil {
+			return fmt.Errorf("set applied %s: %w", id, err)
+		}
+		return fmt.Errorf("set applied %s: %w", id, ErrStateConflict)
+	}
+	return nil
+}
+
+// AppliedSince returns the timestamp of a deployment's "-> applying" event:
+// the apply timeout is counted from it (docs/state-machine.md), so a restart
+// does not extend it. It returns ErrNotFound if the deployment never reached
+// applying.
+func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Time, error) {
+	var ts string
+	err := s.db.QueryRowContext(ctx, `SELECT ts FROM events
+		WHERE deployment_id = ? AND to_state = ? ORDER BY id DESC LIMIT 1`,
+		deploymentID, string(StateApplying)).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, fmt.Errorf("applied since %s: %w", deploymentID, ErrNotFound)
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("applied since %s: %w", deploymentID, err)
+	}
+	return parseTime(ts)
+}
+
 const deploymentCols = `id, job_id, namespace, commit_sha, spec_hash, job_spec, plan_diff, policy, state,
 	cas_index, applied_index, eval_id, error, decided_by, decided_at, created_at, updated_at`
 

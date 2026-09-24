@@ -71,6 +71,12 @@ type fakeNomad struct {
 
 	registerErr   map[string]error
 	registerCalls []registerCall
+	versions      map[string]uint64 // jobID -> version bumped on every RegisterCAS
+
+	allocs     map[string][]nomadx.Alloc
+	allocsErr  map[string]error
+	deployment map[string]*api.Deployment
+	deployErr  map[string]error
 }
 
 type registerCall struct {
@@ -89,6 +95,11 @@ func newFakeNomad() *fakeNomad {
 		lastTG:         map[string]map[string]int{},
 		planErr:        map[string]error{},
 		registerErr:    map[string]error{},
+		versions:       map[string]uint64{},
+		allocs:         map[string][]nomadx.Alloc{},
+		allocsErr:      map[string]error{},
+		deployment:     map[string]*api.Deployment{},
+		deployErr:      map[string]error{},
 	}
 }
 
@@ -96,6 +107,18 @@ func (f *fakeNomad) setFile(content string, j *api.Job)    { f.parseByContent[co
 func (f *fakeNomad) setParseErr(content string, err error) { f.parseErr[content] = err }
 func (f *fakeNomad) setLive(j *api.Job)                    { f.live[*j.ID] = j }
 func (f *fakeNomad) setDrift(id string, diff *api.JobDiff) { f.plan[id] = planFixture{diff: diff} }
+
+func (f *fakeNomad) setAllocs(jobID string, allocs ...nomadx.Alloc) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.allocs[jobID] = allocs
+}
+
+func (f *fakeNomad) setDeployment(jobID string, d *api.Deployment) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deployment[jobID] = d
+}
 
 func (f *fakeNomad) callCount() int {
 	f.mu.Lock()
@@ -167,8 +190,29 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	}
 	newIndex := index + 1
 	cp.JobModifyIndex = &newIndex
+	f.versions[id]++
+	version := f.versions[id]
+	cp.Version = &version
 	f.live[id] = cp
 	return &nomadx.RegisterResult{EvalID: "eval-" + id, JobModifyIndex: newIndex}, nil
+}
+
+func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, ok := f.allocsErr[jobID]; ok {
+		return nil, err
+	}
+	return append([]nomadx.Alloc(nil), f.allocs[jobID]...), nil
+}
+
+func (f *fakeNomad) LatestDeployment(_ context.Context, jobID string) (*api.Deployment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, ok := f.deployErr[jobID]; ok {
+		return nil, err
+	}
+	return f.deployment[jobID], nil
 }
 
 // -- fake Snapshots and Notifier ------------------------------------------
@@ -226,6 +270,31 @@ func (n *fakeNotifier) waitFor(t *testing.T, want int) []*store.Deployment {
 	}
 }
 
+// fakeClock is a controllable clock shared by the store and the engine in
+// tests that need deterministic timing (the apply timeout). Like store's own
+// test clock, Now ticks forward a little on every call so writes and events
+// keep a strict order without real time passing; Advance moves it further,
+// to simulate a timeout elapsing.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newFakeClock(start time.Time) *fakeClock { return &fakeClock{t: start} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(time.Millisecond)
+	return c.t
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
 // -- harness ---------------------------------------------------------------
 
 const testNamespace = "default"
@@ -236,12 +305,15 @@ type harness struct {
 	store    *store.Store
 	snap     *fakeSnapshots
 	notifier *fakeNotifier
+	hooks    *fakeHooks
+	clock    *fakeClock
 	engine   *Engine
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"))
+	clock := newFakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"), store.WithClock(clock.Now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,12 +325,15 @@ func newHarness(t *testing.T) *harness {
 		store:    st,
 		snap:     newFakeSnapshots(),
 		notifier: &fakeNotifier{},
+		hooks:    newFakeHooks(),
+		clock:    clock,
 	}
 	h.engine = New(Options{
-		Store: st, Nomad: h.nomad, Snapshots: h.snap, Notifier: h.notifier,
-		Namespace: testNamespace, DriftInterval: time.Hour,
+		Store: st, Nomad: h.nomad, Snapshots: h.snap, Notifier: h.notifier, Hooks: h.hooks,
+		Namespace: testNamespace, DriftInterval: time.Hour, EngineInterval: time.Hour, ApplyTimeout: time.Hour,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	h.engine.now = clock.Now
 	return h
 }
 
@@ -573,6 +648,119 @@ func TestRetryRuleDoesNotRecreateSameFailure(t *testing.T) {
 	third := h.latest("web")
 	if third.ID == first.ID {
 		t.Fatalf("no new deployment after the live job changed")
+	}
+}
+
+// TestBlockedByAppliedFailureSurvivesLiveIndexChange covers the anti-loop
+// rule (docs/design/engine-apply.md, decision 6): a deployment that reached
+// the register and then failed blocks a retry for the same spec_hash even
+// once the live index changes (Nomad's own auto_revert, for example), unlike
+// the ordinary retry rule above. Only a new commit unblocks it, and the
+// block is visible as Observation.BlockedBy/BlockedReason (decision 7).
+func TestBlockedByAppliedFailureSurvivesLiveIndexChange(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", nil)
+	h.nomad.setFile("web-v1", job)
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+
+	hash, err := specHash(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A deployment that reached the register and then failed (as if the
+	// apply never became healthy and Nomad's own auto_revert moved the live
+	// job back since).
+	d := &store.Deployment{
+		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: hash,
+		JobSpec: `{"ID":"web"}`, Policy: store.PolicyAuto, CASIndex: 0,
+	}
+	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Transition(context.Background(), d.ID, store.StateApplying,
+		store.Transition{From: store.StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetApplied(context.Background(), d.ID, 1, "eval-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Transition(context.Background(), d.ID, store.StateFailed,
+		store.Transition{From: store.StateApplying, Actor: "nops", Error: "apply did not become healthy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h.detect()
+	if latest := h.latest("web"); latest.ID != d.ID {
+		t.Fatalf("a new deployment was created: %+v", latest)
+	}
+	obs := h.engine.Observations()
+	if len(obs) != 1 || obs[0].BlockedBy != d.ID || obs[0].BlockedReason == "" {
+		t.Fatalf("observations = %+v", obs)
+	}
+
+	// The live index changes (Nomad's own auto_revert): the ordinary retry
+	// rule above would now allow a retry, but this deployment reached the
+	// register, so it still blocks.
+	live := managed("web", "auto", nil)
+	idx := uint64(3)
+	live.JobModifyIndex = &idx
+	h.nomad.setLive(live)
+	h.detect()
+
+	if latest := h.latest("web"); latest.ID != d.ID {
+		t.Fatalf("a new deployment was created after the live index changed: %+v", latest)
+	}
+	obs = h.engine.Observations()
+	if len(obs) != 1 || obs[0].BlockedBy != d.ID {
+		t.Fatalf("observations = %+v, want still blocked", obs)
+	}
+
+	// A new commit (a different spec_hash) unblocks it.
+	h.nomad.setFile("web-v2", managed("web", "auto", nil, taskGroup("g", 2, false)))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c2", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v2"})
+	h.detect()
+
+	if latest := h.latest("web"); latest.ID == d.ID {
+		t.Fatalf("no new deployment was created after a new commit")
+	}
+	obs = h.engine.Observations()
+	if len(obs) != 1 || obs[0].BlockedBy != "" {
+		t.Fatalf("observations = %+v, want unblocked", obs)
+	}
+}
+
+func TestBlockedRetry(t *testing.T) {
+	dep := func(state store.State, hash string, casIndex, appliedIndex uint64) *store.Deployment {
+		return &store.Deployment{ID: "dep-1", State: state, SpecHash: hash, CASIndex: casIndex, AppliedIndex: appliedIndex}
+	}
+	cases := []struct {
+		name          string
+		latest        *store.Deployment
+		hash          string
+		liveIndex     uint64
+		wantBlockedBy string
+	}{
+		{"not failed or rejected", dep(store.StateCompleted, "h1", 0, 0), "h1", 0, ""},
+		{"different spec hash", dep(store.StateFailed, "h1", 0, 0), "h2", 0, ""},
+		{"failed before register, live unchanged: blocked", dep(store.StateFailed, "h1", 5, 0), "h1", 5, "dep-1"},
+		{"failed before register, live changed: unblocked", dep(store.StateFailed, "h1", 5, 0), "h1", 6, ""},
+		{"rejected before register, live unchanged: blocked", dep(store.StateRejected, "h1", 5, 0), "h1", 5, "dep-1"},
+		{"failed after register: blocked regardless of live index", dep(store.StateFailed, "h1", 5, 9), "h1", 6, "dep-1"},
+		{"rejected after register (never happens, still safe)", dep(store.StateRejected, "h1", 5, 9), "h1", 6, "dep-1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			blockedBy, reason := blockedRetry(c.latest, c.hash, c.liveIndex)
+			if blockedBy != c.wantBlockedBy {
+				t.Errorf("blockedBy = %q, want %q", blockedBy, c.wantBlockedBy)
+			}
+			if (reason == "") != (blockedBy == "") {
+				t.Errorf("reason = %q inconsistent with blockedBy = %q", reason, blockedBy)
+			}
+		})
 	}
 }
 

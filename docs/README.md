@@ -30,6 +30,8 @@ New here? Start with the [project README](../README.md).
 - [design/gitwatch.md](design/gitwatch.md): how the git repository is read.
 - [design/engine-detection.md](design/engine-detection.md): how drift is
   detected and deployments are created, superseded and revalidated.
+- [design/engine-apply.md](design/engine-apply.md): how a deployment is moved
+  from approval to `completed`.
 
 Not present yet, created together with the code: `acceptance/` (manual
 checklists for the real cluster).
