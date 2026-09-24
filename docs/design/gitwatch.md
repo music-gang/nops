@@ -70,15 +70,30 @@ type File struct {
 }
 
 type Snapshot struct {
-    Commit string // SHA the files come from
-    Files  []File // sorted by Path
+    Commit      string    // SHA the files come from
+    Subject     string    // first line of the commit message
+    Author      string    // author name, no email
+    CommittedAt time.Time
+    Files       []File    // sorted by Path
 }
+
+// Status is how the last polls went, for the dashboard.
+type Status struct {
+    CheckedAt time.Time // last poll that reached the remote, new commit or not
+    Error     string    // the last poll's failure; "" if it succeeded
+    ErrorAt   time.Time
+}
+
+// CommitURL is <repo>/commit/<sha> for an http(s) repository URL, without
+// credentials or ".git"; "" for anything else (file://, scp-style).
+func CommitURL(repoURL, sha string) string
 
 func New(o Options, log *slog.Logger) *Watcher
 func (w *Watcher) Start(ctx context.Context) error // initial clone; an error is fatal for wiring
 func (w *Watcher) Run(ctx context.Context)         // fetch on every tick or Trigger, until ctx ends
 func (w *Watcher) Trigger()                        // non-blocking send on a channel of size 1: bursts coalesce
 func (w *Watcher) Snapshot() Snapshot              // the last good snapshot
+func (w *Watcher) Status() Status                  // how the last poll went
 func (w *Watcher) Changed() <-chan struct{}        // size 1, signalled when the commit changes
 ```
 
@@ -106,7 +121,9 @@ With go-git (`github.com/go-git/go-git/v5`, Apache-2.0):
 - **Initial clone** fails: `Start` returns the error and nops exits. There is
   nothing to work on.
 - **Later fetch** fails (network, expired token): ERROR with the cause, keep
-  the last good snapshot, retry at the next tick. Detection keeps running on
+  the last good snapshot, record it in `Status` (`Error`, `ErrorAt`, with
+  `CheckedAt` kept as it was: the dashboard shows how stale the snapshot is),
+  retry at the next tick. The next successful poll clears the error. Detection keeps running on
   that snapshot, so drift on the Nomad side is still seen.
 - **`-git-path` missing** in a new commit: treated as a failed fetch, never
   as "every job was removed".
@@ -123,6 +140,8 @@ with go-git over a `file://` URL, with no network:
 - vars pairing for `.nomad.hcl` and `.nomad`, orphan vars file (WARN);
 - `-git-path` scoping; unrelated files ignored;
 - a failed fetch keeps the snapshot; `-git-path` missing;
+- the commit's subject, author and time; `Status` through an idle poll, a
+  failure and a recovery; `CommitURL` for the URL shapes it accepts and refuses;
 - a failed initial clone returns an error.
 
 Auth: an `httptest` server checks the Basic auth header on the first

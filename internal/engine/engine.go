@@ -42,6 +42,8 @@ type Store interface {
 	ActiveDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	LatestDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
+	// MarkRetried is used by Retry (see docs/state-machine.md).
+	MarkRetried(ctx context.Context, id, actor string) error
 	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
 	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
 	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
@@ -92,6 +94,24 @@ type Observation struct {
 	BlockedReason string
 }
 
+// Status is how the last detection cycle went, kept only in memory for the
+// dashboard: whether nops is doing its job is not something an empty list of
+// deployments can say.
+type Status struct {
+	// At is when the last cycle ended; zero before the first one.
+	At time.Time
+	// Duration is how long that cycle took.
+	Duration time.Duration
+	// Error is the failure that aborted the cycle (a store or redact error),
+	// or "" if it ran to the end.
+	Error string
+	// Managed is how many managed jobs the cycle found. Skipped is how many of
+	// them it could not plan because of a Nomad failure scoped to the job
+	// (they have no observation this cycle). Unparsed is how many files Nomad
+	// could not parse (or that name a namespace nops does not manage).
+	Managed, Skipped, Unparsed int
+}
+
 // Engine runs the detection cycle (parse, plan, create and supersede
 // deployments, sync hook jobs, keep the in-memory drift observations) and the
 // apply loop (advance non-terminal deployments to completed).
@@ -111,6 +131,10 @@ type Engine struct {
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[string]Observation
+	status       Status
+
+	// kick asks the detection loop for a cycle now (Retry).
+	kick chan struct{}
 
 	applyMu  sync.Mutex
 	inFlight map[string]struct{}
@@ -158,11 +182,13 @@ func New(o Options) *Engine {
 		parseCache:     map[string]parseEntry{},
 		observations:   map[string]Observation{},
 		inFlight:       map[string]struct{}{},
+		kick:           make(chan struct{}, 1),
 	}
 }
 
 // RunDetection runs one cycle immediately, then again on every new commit
-// (Snapshots.Changed) and on every DriftInterval tick, until ctx is done.
+// (Snapshots.Changed), on every DriftInterval tick and when Retry asks for
+// one, until ctx is done.
 func (e *Engine) RunDetection(ctx context.Context) {
 	e.runOnce(ctx)
 	ticker := time.NewTicker(e.driftInterval)
@@ -174,6 +200,8 @@ func (e *Engine) RunDetection(ctx context.Context) {
 		case <-ticker.C:
 			e.runOnce(ctx)
 		case <-e.snapshots.Changed():
+			e.runOnce(ctx)
+		case <-e.kick:
 			e.runOnce(ctx)
 		}
 	}
@@ -197,4 +225,17 @@ func (e *Engine) Observations() []Observation {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].JobID < out[j].JobID })
 	return out
+}
+
+// Status returns how the last detection cycle went.
+func (e *Engine) Status() Status {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.status
+}
+
+func (e *Engine) setStatus(st Status) {
+	e.mu.Lock()
+	e.status = st
+	e.mu.Unlock()
 }

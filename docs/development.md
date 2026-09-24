@@ -41,7 +41,10 @@
   read alongside it. `TestE2EApprovalFlow` covers create, approve, reject,
   superseding, a stale `spec_hash` (409) and an outside edit under policy
   `approval`; `TestE2EAutoRevertsOutsideEdit` the same edit under `auto`; the
-  `TestE2EPreHook*` tests the hook scenarios above. The hooks write to a
+  `TestE2EPreHook*` tests the hook scenarios above; `TestE2ERetry*` the retry of
+  a blocked job (a failed pre-hook fixed without a commit, and under `approval`
+  the retry still waiting for a decision) and `TestE2EFetchNow` the "fetch now"
+  button with a one-hour poll interval. The hooks write to a
   test directory, so they need the Nomad agent on the same host as the tests
   (true for `nomad agent -dev`).
 - `TestNopsBinaryStartsAndShutsDown` is the smoke test of the same harness:

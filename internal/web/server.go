@@ -41,12 +41,13 @@ type Store interface {
 	GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error)
 }
 
-// Engine is what the dashboard calls to decide a pending deployment and to
-// read the drift of "none"-policy jobs. *engine.Engine implements it.
+// Engine is what the dashboard calls to decide a pending deployment, to
+// retry a blocked job and to read the drift of "none"-policy jobs. *engine.Engine implements it.
 type Engine interface {
 	Approve(ctx context.Context, id, specHash, actor string) error
 	Reject(ctx context.Context, id, actor string) error
 	Observations() []engine.Observation
+	Retry(ctx context.Context, namespace, jobID, actor string) error
 }
 
 // Authenticator is what the dashboard needs from a login backend: NewAuth
@@ -72,8 +73,9 @@ type Options struct {
 	Engine Engine
 
 	// Trigger runs the git watcher's non-blocking poll after a webhook
-	// request passes its signature check. Required only when WebhookSecret
-	// is set.
+	// request passes its signature check, and for the dashboard's "fetch
+	// now" button. Required when WebhookSecret is set; without it the button
+	// is not served.
 	Trigger func()
 	// WebhookSecret is compared against the per-forge signature of an
 	// incoming webhook request. Empty disables /webhook/git (a 404).
@@ -157,6 +159,10 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("GET /deployments/{id}/status", s.auth.Require(http.HandlerFunc(s.deploymentStatus)))
 	mux.Handle("POST /deployments/{id}/approve", s.auth.Require(http.HandlerFunc(s.approve)))
 	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
+	mux.Handle("POST /jobs/{namespace}/{job}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
+	if s.trigger != nil {
+		mux.Handle("POST /fetch", s.auth.Require(http.HandlerFunc(s.fetchNow)))
+	}
 
 	return mux
 }

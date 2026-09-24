@@ -38,6 +38,9 @@ var (
 	// ErrInvalidTransition is returned by Transition for a move the state
 	// machine does not allow.
 	ErrInvalidTransition = errors.New("invalid state transition")
+	// ErrAlreadyRetried is returned by MarkRetried when the deployment was
+	// already retried.
+	ErrAlreadyRetried = errors.New("deployment was already retried")
 )
 
 // State is the state of a deployment.
@@ -92,23 +95,33 @@ const (
 
 // Deployment is one attempt to bring a job to a given spec.
 type Deployment struct {
-	ID           string
-	JobID        string
-	Namespace    string
-	CommitSHA    string
-	SpecHash     string
-	JobSpec      string // JSON of the parsed job to register
-	PlanDiff     string // JSON of the redacted plan diff; may be empty
-	Policy       Policy
-	State        State
-	CASIndex     uint64
-	AppliedIndex uint64
-	EvalID       string
-	Error        string
-	DecidedBy    string
-	DecidedAt    time.Time // zero if not decided
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID        string
+	JobID     string
+	Namespace string
+	CommitSHA string
+	// CommitSubject and CommitAuthor describe CommitSHA (first line of the
+	// message, author name); empty for a deployment created before they
+	// were recorded.
+	CommitSubject string
+	CommitAuthor  string
+	SpecHash      string
+	JobSpec       string // JSON of the parsed job to register
+	PlanDiff      string // JSON of the redacted plan diff; may be empty
+	Policy        Policy
+	State         State
+	CASIndex      uint64
+	AppliedIndex  uint64
+	EvalID        string
+	Error         string
+	DecidedBy     string
+	DecidedAt     time.Time // zero if not decided
+	// RetriedBy and RetriedAt are set by MarkRetried on a failed or rejected
+	// deployment a human asked to retry: detection stops treating it as the
+	// reason a job's drift is blocked.
+	RetriedBy string
+	RetriedAt time.Time // zero if not retried
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // HookState is the state of a hook run.
@@ -315,10 +328,11 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
-		(id, job_id, namespace, commit_sha, spec_hash, job_spec, plan_diff, policy, state, cas_index, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
-		id, d.JobID, d.Namespace, d.CommitSHA, d.SpecHash, d.JobSpec, d.PlanDiff, string(d.Policy),
-		string(StateDetected), int64(d.CASIndex), now, now)
+		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff,
+		 policy, state, cas_index, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
+		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff,
+		string(d.Policy), string(StateDetected), int64(d.CASIndex), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
@@ -451,8 +465,9 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 	return parseTime(ts)
 }
 
-const deploymentCols = `id, job_id, namespace, commit_sha, spec_hash, job_spec, plan_diff, policy, state,
-	cas_index, applied_index, eval_id, error, decided_by, decided_at, created_at, updated_at`
+const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
+	plan_diff, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
+	retried_by, retried_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -460,18 +475,24 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	var (
 		d                                   Deployment
 		plan, eval, errMsg, by, decidedAt   sql.NullString
+		subject, author, retriedBy, retried sql.NullString
 		applied                             sql.NullInt64
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
-	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &d.SpecHash, &d.JobSpec, &plan,
-		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &createdAt, &updatedAt); err != nil {
+	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan,
+		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
+		&createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	d.PlanDiff, d.EvalID, d.Error, d.DecidedBy = plan.String, eval.String, errMsg.String, by.String
+	d.CommitSubject, d.CommitAuthor, d.RetriedBy = subject.String, author.String, retriedBy.String
 	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)
 	var err error
 	if d.DecidedAt, err = parseTime(decidedAt.String); err != nil {
+		return nil, err
+	}
+	if d.RetriedAt, err = parseTime(retried.String); err != nil {
 		return nil, err
 	}
 	if d.CreatedAt, err = parseTime(createdAt); err != nil {
@@ -553,6 +574,72 @@ func (s *Store) ListActive(ctx context.Context) ([]*Deployment, error) {
 // ListByState returns the deployments in a state, oldest first.
 func (s *Store) ListByState(ctx context.Context, st State) ([]*Deployment, error) {
 	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments WHERE state = ? ORDER BY created_at, id`, string(st))
+}
+
+// ListByJob returns the deployments of one job, whatever their state, newest
+// first.
+func (s *Store) ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*Deployment, error) {
+	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE namespace = ? AND job_id = ?
+		ORDER BY created_at DESC, id DESC LIMIT ?`, namespace, jobID, limit)
+}
+
+// LatestPerJob returns the most recent deployment of every job that ever had
+// one, whatever its state, ordered by namespace and job ID.
+func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
+	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE id = (SELECT x.id FROM deployments x
+			WHERE x.namespace = deployments.namespace AND x.job_id = deployments.job_id
+			ORDER BY x.created_at DESC, x.id DESC LIMIT 1)
+		ORDER BY namespace, job_id`)
+}
+
+// MarkRetried records that actor asked to retry a failed or rejected
+// deployment, and logs an event (from and to are both the deployment's state:
+// nothing moves, it is the audit trail of the decision). A deployment in any
+// other state is ErrStateConflict, one already retried is ErrAlreadyRetried,
+// a missing one is ErrNotFound. It does not touch Nomad: it only stops the
+// deployment from blocking its job's next one (docs/state-machine.md).
+func (s *Store) MarkRetried(ctx context.Context, id, actor string) error {
+	if actor == "" {
+		return errors.New("mark retried: actor is required")
+	}
+	now := s.ts()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mark retried %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	var state string
+	err = tx.QueryRowContext(ctx, `UPDATE deployments SET retried_by = ?, retried_at = ?, updated_at = ?
+		WHERE id = ? AND state IN ('failed','rejected') AND retried_at IS NULL
+		RETURNING state`, actor, now, now, id).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		var cur string
+		var retried sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT state, retried_at FROM deployments WHERE id = ?`, id).Scan(&cur, &retried)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("mark retried %s: %w", id, ErrNotFound)
+		case err != nil:
+			return fmt.Errorf("mark retried %s: %w", id, err)
+		case retried.Valid:
+			return fmt.Errorf("mark retried %s: %w", id, ErrAlreadyRetried)
+		}
+		return fmt.Errorf("mark retried %s: %w (is %s, want failed or rejected)", id, ErrStateConflict, cur)
+	}
+	if err != nil {
+		return fmt.Errorf("mark retried %s: %w", id, err)
+	}
+	if err := insertEvent(ctx, tx, id, now, State(state), State(state), actor, "retry requested"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark retried %s: commit: %w", id, err)
+	}
+	return nil
 }
 
 // ListHistory returns terminal deployments, newest first.

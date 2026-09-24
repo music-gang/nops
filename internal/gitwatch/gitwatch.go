@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -59,7 +60,28 @@ type File struct {
 // Snapshot is every job file at one commit.
 type Snapshot struct {
 	Commit string
-	Files  []File // sorted by Path
+	// Subject is the first line of the commit message, Author the author's
+	// name (no email) and CommittedAt the commit time. They exist so a
+	// deployment can say which change it came from without asking git again:
+	// the clone is shallow and only ever holds the head.
+	Subject     string
+	Author      string
+	CommittedAt time.Time
+	Files       []File // sorted by Path
+}
+
+// Status is how the last polls went, for the dashboard: the last time the
+// remote was reached and the last failure, if it is still the latest thing
+// that happened.
+type Status struct {
+	// CheckedAt is the last time a poll (or the initial clone) reached the
+	// remote and read its head, whether or not there was a new commit. Zero
+	// before Start.
+	CheckedAt time.Time
+	// Error is the last poll's failure, or "" if the last poll succeeded.
+	// ErrorAt is when it happened.
+	Error   string
+	ErrorAt time.Time
 }
 
 // Watcher clones and polls a git repository. Build it with New.
@@ -67,8 +89,10 @@ type Watcher struct {
 	opts Options
 	log  *slog.Logger
 
-	mu   sync.RWMutex
-	snap Snapshot
+	mu     sync.RWMutex
+	snap   Snapshot
+	status Status
+	now    func() time.Time
 
 	trigger chan struct{}
 	changed chan struct{}
@@ -79,6 +103,7 @@ func New(o Options, log *slog.Logger) *Watcher {
 	return &Watcher{
 		opts:    o,
 		log:     log,
+		now:     time.Now,
 		trigger: make(chan struct{}, 1),
 		changed: make(chan struct{}, 1),
 	}
@@ -93,6 +118,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 	w.mu.Lock()
 	w.snap = snap
+	w.status = Status{CheckedAt: w.now()}
 	w.mu.Unlock()
 	w.log.InfoContext(ctx, "gitwatch: initial clone", "commit", snap.Commit, "files", len(snap.Files))
 	return nil
@@ -131,6 +157,13 @@ func (w *Watcher) Snapshot() Snapshot {
 	return w.snap
 }
 
+// Status returns how the last poll went.
+func (w *Watcher) Status() Status {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.status
+}
+
 // Changed is signalled after a poll picks up a new commit. It has a buffer
 // of 1: several changes before the consumer reads it still signal once.
 func (w *Watcher) Changed() <-chan struct{} {
@@ -144,24 +177,43 @@ func (w *Watcher) poll(ctx context.Context) {
 	head, err := w.remoteHead(ctx)
 	if err != nil {
 		w.log.ErrorContext(ctx, "gitwatch: list remote refs", "error", err)
+		w.failed(err)
 		return
 	}
 	if head == w.Snapshot().Commit {
+		w.checked()
 		return
 	}
 	snap, err := w.fetch(ctx)
 	if err != nil {
 		w.log.ErrorContext(ctx, "gitwatch: fetch", "error", err)
+		w.failed(err)
 		return
 	}
 	w.mu.Lock()
 	w.snap = snap
+	w.status = Status{CheckedAt: w.now()}
 	w.mu.Unlock()
 	w.log.InfoContext(ctx, "gitwatch: new commit", "commit", snap.Commit, "files", len(snap.Files))
 	select {
 	case w.changed <- struct{}{}:
 	default:
 	}
+}
+
+// checked records a poll that reached the remote and clears the last error.
+func (w *Watcher) checked() {
+	w.mu.Lock()
+	w.status = Status{CheckedAt: w.now()}
+	w.mu.Unlock()
+}
+
+// failed records a poll that did not, keeping CheckedAt as it was. The error
+// text comes from go-git, which never puts the token in it (see auth).
+func (w *Watcher) failed(err error) {
+	w.mu.Lock()
+	w.status.Error, w.status.ErrorAt = err.Error(), w.now()
+	w.mu.Unlock()
 }
 
 // remoteHead returns the commit the configured branch points to on the
@@ -222,7 +274,35 @@ func (w *Watcher) fetch(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Commit: head.Hash().String(), Files: files}, nil
+	return Snapshot{
+		Commit:      head.Hash().String(),
+		Subject:     subject(commit.Message),
+		Author:      commit.Author.Name,
+		CommittedAt: commit.Committer.When,
+		Files:       files,
+	}, nil
+}
+
+// subject returns the first line of a commit message.
+func subject(msg string) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(msg), "\n")
+	return strings.TrimSpace(first)
+}
+
+// CommitURL returns the web address of a commit of the repository at
+// repoURL, in the form GitHub, Gitea and Forgejo share
+// (<repo>/commit/<sha>; GitLab redirects it). It returns "" when repoURL is
+// not an http(s) URL, so the dashboard shows the SHA without a link rather
+// than a broken one. Credentials embedded in repoURL are dropped, never
+// linked.
+func CommitURL(repoURL, sha string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || sha == "" {
+		return ""
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git") + "/commit/" + sha
+	return u.String()
 }
 
 // auth returns the HTTPS basic auth credentials, or nil for a public

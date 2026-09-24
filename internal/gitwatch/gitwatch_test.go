@@ -158,6 +158,108 @@ func TestStartInitialClone(t *testing.T) {
 	if snap.Files[0].VarsPath != "" {
 		t.Errorf("VarsPath = %q, want empty", snap.Files[0].VarsPath)
 	}
+	if snap.Subject != "test commit" || snap.Author != "test" || !snap.CommittedAt.Equal(time.Unix(0, 0)) {
+		t.Errorf("commit info = %q by %q at %v, want \"test commit\" by \"test\" at the epoch",
+			snap.Subject, snap.Author, snap.CommittedAt)
+	}
+}
+
+func TestStatusTracksPolls(t *testing.T) {
+	r := newTestRepo(t, "main")
+	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
+
+	log, _ := testLogger()
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	clock := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return clock }
+	ctx := context.Background()
+
+	if got := w.Status(); !got.CheckedAt.IsZero() || got.Error != "" {
+		t.Fatalf("Status before Start = %+v, want zero", got)
+	}
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	started := clock
+	if got := w.Status(); !got.CheckedAt.Equal(started) || got.Error != "" {
+		t.Fatalf("Status after Start = %+v, want checked at %v, no error", got, started)
+	}
+
+	// A poll that finds nothing new still counts as a check.
+	clock = clock.Add(time.Minute)
+	w.poll(ctx)
+	if got := w.Status(); !got.CheckedAt.Equal(clock) || got.Error != "" {
+		t.Fatalf("Status after an idle poll = %+v, want checked at %v", got, clock)
+	}
+	checked := clock
+
+	// The remote goes away: the failure is recorded and CheckedAt is kept.
+	moved := r.bareDir + ".away"
+	if err := os.Rename(r.bareDir, moved); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(time.Minute)
+	w.poll(ctx)
+	got := w.Status()
+	if got.Error == "" || !got.ErrorAt.Equal(clock) || !got.CheckedAt.Equal(checked) {
+		t.Fatalf("Status after a failed poll = %+v, want an error at %v and CheckedAt still %v", got, clock, checked)
+	}
+
+	// It comes back: the next poll clears the error.
+	if err := os.Rename(moved, r.bareDir); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(time.Minute)
+	w.poll(ctx)
+	if got := w.Status(); got.Error != "" || !got.CheckedAt.Equal(clock) {
+		t.Fatalf("Status after recovery = %+v, want no error, checked at %v", got, clock)
+	}
+
+	// A new commit is a successful poll too.
+	r.commit(map[string]string{"api.nomad.hcl": `job "api" { count = 2 }`})
+	clock = clock.Add(time.Minute)
+	w.poll(ctx)
+	if got := w.Status(); got.Error != "" || !got.CheckedAt.Equal(clock) {
+		t.Fatalf("Status after a new commit = %+v, want checked at %v", got, clock)
+	}
+}
+
+func TestSubject(t *testing.T) {
+	for msg, want := range map[string]string{
+		"fix(api): bump the image":              "fix(api): bump the image",
+		"first line\n\nbody paragraph\n":        "first line",
+		"  padded  \n":                          "padded",
+		"":                                      "",
+		"\n\nleading blank lines are trimmed\n": "leading blank lines are trimmed",
+	} {
+		if got := subject(msg); got != want {
+			t.Errorf("subject(%q) = %q, want %q", msg, got, want)
+		}
+	}
+}
+
+func TestCommitURL(t *testing.T) {
+	const sha = "0123456789abcdef"
+	cases := []struct{ name, repo, want string }{
+		{"github", "https://github.com/music-gang/nops.git", "https://github.com/music-gang/nops/commit/" + sha},
+		{"no .git suffix", "https://git.example.com/ops/jobs", "https://git.example.com/ops/jobs/commit/" + sha},
+		{"trailing slash", "https://git.example.com/ops/jobs/", "https://git.example.com/ops/jobs/commit/" + sha},
+		{"credentials dropped", "https://user:secret@git.example.com/ops/jobs.git", "https://git.example.com/ops/jobs/commit/" + sha},
+		{"query and fragment dropped", "https://git.example.com/ops/jobs.git?x=1#f", "https://git.example.com/ops/jobs/commit/" + sha},
+		{"port kept", "https://git.example.com:8443/ops/jobs.git", "https://git.example.com:8443/ops/jobs/commit/" + sha},
+		{"file transport", "file:///srv/git/jobs.git", ""},
+		{"ssh scp form", "git@github.com:music-gang/nops.git", ""},
+		{"no host", "https:///ops/jobs.git", ""},
+		{"empty", "", ""},
+	}
+	for _, c := range cases {
+		if got := CommitURL(c.repo, sha); got != c.want {
+			t.Errorf("%s: CommitURL(%q) = %q, want %q", c.name, c.repo, got, c.want)
+		}
+	}
+	if got := CommitURL("https://git.example.com/ops/jobs.git", ""); got != "" {
+		t.Errorf("CommitURL with no sha = %q, want empty", got)
+	}
 }
 
 func TestPollNewCommit(t *testing.T) {

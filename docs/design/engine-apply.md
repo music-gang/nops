@@ -210,14 +210,12 @@ expanded here.
    existing one or decision 6 above — currently suppresses a new deployment
    for this job) and `BlockedReason` (a message naming that deployment and
    what unblocks it: "the deployment `<id>` failed after applying this spec;
-   a new commit is needed to retry" or "... failed on the same live job;
-   nothing changed since"). Detection fills them for free, since it already
+   push a new commit or retry it" or "... failed on the same live job;
+   nothing has changed since (push a new commit or retry it)"). Detection fills them for free, since it already
    evaluates the retry rule at that point; `web` renders them next to the
    plain drift so a job that is not converging is never silently stuck.
-   Retrying without a new commit (an explicit dashboard action) is out of
-   scope here: nothing above prevents adding one later, and doing so would be
-   a thin wrapper over the same "create a deployment" path detection already
-   has.
+   Retrying without a new commit (an explicit dashboard action) was left out
+   here; decision 9 adds it.
 8. **Recovery is `RunApply`'s first cycle.** Every apply step above is
    resume-safe on its own — the goroutine loop just calls the same
    per-deployment step function again after a restart, and `ListActive`
@@ -260,3 +258,25 @@ never dispatched again). `tests/integration`: one full cycle against a real
 `completed`) and one with both hooks, plus whichever health path from
 decision 3 is not already covered by an existing `nomadx`/`hooks` integration
 test.
+9. **Retry lifts a block; it does not create or approve anything.** A job
+   blocked by decision 6 or by the existing rule can be retried from the
+   dashboard without a new commit (`Engine.Retry`). It is *not* a wrapper that
+   creates a deployment: it marks the blocking deployment as retried
+   (`Store.MarkRetried`: `retried_by`, `retried_at`, an event, persisted before
+   anything else, invariant 7), `blockedRetry` ignores a retried deployment,
+   and detection is asked for a cycle through a channel (`kick`, size 1, the
+   loop's fourth wake-up next to the tick, `Changed` and shutdown), so the
+   normal path creates the deployment. Consequences: the new deployment follows
+   the job's policy, so under `approval` it is `pending_approval` and needs a
+   human decision valid for its `(id, spec_hash)` (invariant 3), never
+   approved by the click that retried; a retry is one attempt, since the new
+   deployment blocks again if it fails; and there is one code path that
+   creates deployments. `Retry` refuses (`ErrNotBlocked`) unless the last
+   cycle's observation says the job is blocked by its *latest* deployment
+   (an observation older than a newer deployment is not trusted), and a
+   deployment already retried is `store.ErrAlreadyRetried`, so a double click
+   does nothing twice. Not chosen: creating the deployment in `Retry` (a second
+   path that would have to redo detection's checks, and under `approval` would
+   tempt an approval by the same click), and a "retry" that ignores the rule
+   for every deployment of the job (it would also lift blocks nobody looked
+   at).

@@ -31,16 +31,34 @@ type parsedFile struct {
 // It returns an error only for a failure that must stop the whole cycle: a
 // store failure (invariant 7: never act on Nomad with unpersisted state) or a
 // redact failure (never store an unredacted diff). Every other problem is
-// scoped to the one file or job it came from: it is logged and the cycle
-// continues.
+// scoped to the one file or job it came from: it is logged, counted in
+// Status and the cycle continues.
 func (e *Engine) Detect(ctx context.Context) error {
-	snap := e.snapshots.Snapshot()
-	commit := snap.Commit
+	start := e.now()
+	st, err := e.detect(ctx)
+	st.At = e.now()
+	st.Duration = st.At.Sub(start)
+	if err != nil {
+		st.Error = err.Error()
+	}
+	e.setStatus(st)
+	return err
+}
 
-	parsed, cache := e.parseFiles(ctx, snap)
+// detect is Detect without the bookkeeping: the returned Status carries the
+// counts of the cycle, whether or not it ended in an error.
+func (e *Engine) detect(ctx context.Context) (Status, error) {
+	snap := e.snapshots.Snapshot()
+	ref := commitRef{sha: snap.Commit, subject: snap.Subject, author: snap.Author}
+	commit := snap.Commit
+	var st Status
+
+	parsed, cache, unparsed := e.parseFiles(ctx, snap)
 	e.replaceParseCache(cache)
+	st.Unparsed = unparsed
 
 	hooks, managed := e.classify(ctx, commit, parsed)
+	st.Managed = len(managed)
 	e.syncHooks(ctx, commit, hooks)
 
 	hookIDs := make(map[string]bool, len(hooks))
@@ -54,27 +72,32 @@ func (e *Engine) Detect(ctx context.Context) error {
 		jobID := *mf.job.ID
 		seen[jobID] = true // classified as managed: never "removed from repo" this cycle
 
-		obs, ok, err := e.reconcileJob(ctx, commit, mf, hookIDs)
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hookIDs)
 		if err != nil {
-			return err
+			return st, err
 		}
 		if ok {
 			observations[jobID] = obs
+		} else {
+			st.Skipped++
 		}
 	}
 	e.replaceObservations(observations)
 
-	return e.supersedeRemoved(ctx, seen)
+	return st, e.supersedeRemoved(ctx, seen)
 }
+
+// commitRef is the commit a detection cycle reads, as a deployment records it.
+type commitRef struct{ sha, subject, author string }
 
 // parseFiles parses every file of the snapshot through Nomad, reusing the
 // previous cycle's cache entry when the (content, vars) pair is unchanged.
 // The returned cache replaces the engine's: an entry for a file no longer in
 // the snapshot is dropped, so the cache never grows across cycles.
-func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) ([]parsedFile, map[string]parseEntry) {
+func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int) {
 	prev := e.snapshotParseCache()
-	next := make(map[string]parseEntry, len(snap.Files))
-	parsed := make([]parsedFile, 0, len(snap.Files))
+	next = make(map[string]parseEntry, len(snap.Files))
+	parsed = make([]parsedFile, 0, len(snap.Files))
 
 	for _, f := range snap.Files {
 		key := parseCacheKey(f.Content, f.Vars)
@@ -88,19 +111,22 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) ([]pars
 		switch {
 		case entry.err != nil:
 			e.log.ErrorContext(ctx, "parse job file", "file", f.Path, "commit", snap.Commit, "error", entry.err)
+			unparsed++
 			continue
 		case entry.job.ID == nil || *entry.job.ID == "":
 			e.log.ErrorContext(ctx, "parsed job has no ID", "file", f.Path, "commit", snap.Commit)
+			unparsed++
 			continue
 		}
 		if ns := entry.job.Namespace; ns != nil && *ns != "" && *ns != e.namespace {
 			e.log.ErrorContext(ctx, "job declares a namespace nops does not manage", "file", f.Path,
 				"job", *entry.job.ID, "declared_namespace", *ns, "namespace", e.namespace)
+			unparsed++
 			continue
 		}
 		parsed = append(parsed, parsedFile{path: f.Path, job: entry.job, cfg: meta.Parse(entry.job.Meta)})
 	}
-	return parsed, next
+	return parsed, next, unparsed
 }
 
 // classify groups parsed files by job ID: two files parsing to the same ID
@@ -195,9 +221,9 @@ func (e *Engine) syncHooks(ctx context.Context, commit string, hooks []parsedFil
 // deployment. ok is false when the job was skipped because of a Nomad
 // failure scoped to it (already logged): the caller keeps no observation for
 // it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit string, mf parsedFile, hookIDs map[string]bool) (obs Observation, ok bool, err error) {
+func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hookIDs map[string]bool) (obs Observation, ok bool, err error) {
 	jobID := *mf.job.ID
-	log := e.log.With("job", jobID, "namespace", e.namespace, "commit", commit)
+	log := e.log.With("job", jobID, "namespace", e.namespace, "commit", commit.sha)
 
 	hash, err := specHash(mf.job)
 	if err != nil {
@@ -264,7 +290,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit string, mf parsedFile,
 // of the deployment whose retry rule is suppressing a new deployment for
 // this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
-func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID, commit string, cfg meta.Config,
+func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID string, commit commitRef, cfg meta.Config,
 	hash string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hookIDs map[string]bool) (blockedBy, blockedReason string, err error) {
 
 	active, err := e.store.ActiveDeployment(ctx, e.namespace, jobID)
@@ -286,7 +312,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 					return "", "", err
 				}
 			case active.SpecHash != hash:
-				if err := e.transition(ctx, log, active, store.StateSuperseded, fmt.Sprintf("newer spec at commit %s", commit)); err != nil {
+				if err := e.transition(ctx, log, active, store.StateSuperseded, fmt.Sprintf("newer spec at commit %s", commit.sha)); err != nil {
 					return "", "", err
 				}
 			case active.CASIndex != liveIndex:
@@ -323,8 +349,8 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 		return "", "", fmt.Errorf("marshal job spec of %s: %w", jobID, err)
 	}
 	d := &store.Deployment{
-		JobID: jobID, Namespace: e.namespace, CommitSHA: commit, SpecHash: hash,
-		JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
+		JobID: jobID, Namespace: e.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
+		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 	}
 	if err := e.store.CreateDeployment(ctx, d); err != nil {
 		if errors.Is(err, store.ErrActiveDeployment) {
@@ -335,7 +361,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 	}
 
 	if missing := missingHook(cfg, hookIDs); missing != "" {
-		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit))
+		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit.sha))
 	}
 	if cfg.Policy == meta.PolicyApproval {
 		return "", "", e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
@@ -350,19 +376,24 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 // with the same spec_hash blocks as long as nothing has changed — the live
 // index too, unless the deployment reached the register (AppliedIndex != 0),
 // in which case it blocks regardless of the live index, since Nomad itself
-// (for example auto_revert) may be the one moving it.
+// (for example auto_revert) may be the one moving it. A deployment a human
+// asked to retry (Engine.Retry, RetriedAt set) blocks nothing: the next
+// deployment follows the policy like any other.
 func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (blockedBy, reason string) {
 	if latest.State != store.StateFailed && latest.State != store.StateRejected {
+		return "", ""
+	}
+	if !latest.RetriedAt.IsZero() {
 		return "", ""
 	}
 	if latest.SpecHash != hash {
 		return "", ""
 	}
 	if latest.AppliedIndex != 0 {
-		return latest.ID, fmt.Sprintf("deployment %s failed after applying this spec; a new commit is needed to retry", latest.ID)
+		return latest.ID, fmt.Sprintf("deployment %s failed after applying this spec; push a new commit or retry it", latest.ID)
 	}
 	if latest.CASIndex == liveIndex {
-		return latest.ID, fmt.Sprintf("deployment %s failed on the same live job; nothing has changed since", latest.ID)
+		return latest.ID, fmt.Sprintf("deployment %s failed on the same live job; nothing has changed since (push a new commit or retry it)", latest.ID)
 	}
 	return "", ""
 }

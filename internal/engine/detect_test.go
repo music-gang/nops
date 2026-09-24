@@ -231,6 +231,13 @@ func (f *fakeSnapshots) set(commit string, files ...gitwatch.File) {
 	f.snap = gitwatch.Snapshot{Commit: commit, Files: files}
 }
 
+// setCommit is set with the commit's subject and author too.
+func (f *fakeSnapshots) setCommit(commit, subject, author string, files ...gitwatch.File) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snap = gitwatch.Snapshot{Commit: commit, Subject: subject, Author: author, Files: files}
+}
+
 func (f *fakeSnapshots) Snapshot() gitwatch.Snapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -403,6 +410,20 @@ func TestDriftAutoStaysDetected(t *testing.T) {
 	obs := h.engine.Observations()
 	if len(obs) != 1 || !obs[0].Drift || obs[0].PlanDiff == "" {
 		t.Fatalf("observations = %+v", obs)
+	}
+}
+
+func TestDeploymentRecordsCommitInfo(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "auto", nil))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.setCommit("c1", "feat(web): scale up", "Iacopo Melani", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+
+	h.detect()
+
+	d := h.active("web")
+	if d.CommitSHA != "c1" || d.CommitSubject != "feat(web): scale up" || d.CommitAuthor != "Iacopo Melani" {
+		t.Errorf("deployment commit = %q %q by %q", d.CommitSHA, d.CommitSubject, d.CommitAuthor)
 	}
 }
 
@@ -736,6 +757,10 @@ func TestBlockedRetry(t *testing.T) {
 	dep := func(state store.State, hash string, casIndex, appliedIndex uint64) *store.Deployment {
 		return &store.Deployment{ID: "dep-1", State: state, SpecHash: hash, CASIndex: casIndex, AppliedIndex: appliedIndex}
 	}
+	retried := func(d *store.Deployment) *store.Deployment {
+		d.RetriedBy, d.RetriedAt = "iacopo", time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+		return d
+	}
 	cases := []struct {
 		name          string
 		latest        *store.Deployment
@@ -750,6 +775,9 @@ func TestBlockedRetry(t *testing.T) {
 		{"rejected before register, live unchanged: blocked", dep(store.StateRejected, "h1", 5, 0), "h1", 5, "dep-1"},
 		{"failed after register: blocked regardless of live index", dep(store.StateFailed, "h1", 5, 9), "h1", 6, "dep-1"},
 		{"rejected after register (never happens, still safe)", dep(store.StateRejected, "h1", 5, 9), "h1", 6, "dep-1"},
+		{"retried failure, live unchanged: unblocked", retried(dep(store.StateFailed, "h1", 5, 0)), "h1", 5, ""},
+		{"retried failure after register: unblocked", retried(dep(store.StateFailed, "h1", 5, 9)), "h1", 6, ""},
+		{"retried rejection: unblocked", retried(dep(store.StateRejected, "h1", 5, 0)), "h1", 5, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

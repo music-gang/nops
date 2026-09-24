@@ -96,12 +96,16 @@ type errorData struct {
 // on whichever tab the visitor came from is not tracked, so it defaults to
 // pending; a 404 is not somewhere people navigate around from anyway.
 func (s *server) notFound(w http.ResponseWriter, r *http.Request) {
+	s.notFoundMessage(w, r, "This deployment does not exist.")
+}
+
+func (s *server) notFoundMessage(w http.ResponseWriter, r *http.Request, msg string) {
 	w.WriteHeader(http.StatusNotFound)
 	s.render(w, r, "error", errorData{
 		baseData: s.base(r, ""),
 		Status:   http.StatusNotFound,
 		Title:    "Not found",
-		Message:  "This deployment does not exist.",
+		Message:  msg,
 	})
 }
 
