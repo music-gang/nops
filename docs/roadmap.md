@@ -43,66 +43,13 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `web-auth` | OIDC login of the dashboard: allowlist, session, `Require`, cross-origin protection ([dashboard](dashboard.md#authentication)); `-auth-header` replaced by the `-oidc-*` options | `internal/web`, `internal/config` |
 | `web` | Dashboard pages (pending, history, drift, deployment detail with an htmx-polled status fragment), diff renderer, git webhook per forge ([dashboard](dashboard.md)) | `internal/web`, `internal/config` |
 | `local-auth` | A second login backend, local users (`-auth-mode=basic`, `username:bcrypt-hash` file), mutually exclusive with OIDC (`-auth-mode=oidc`) via a required `-auth-mode`; session/cookie/`Require`/logout shared between the two through `web.Authenticator` ([dashboard](dashboard.md#authentication)) | `internal/web`, `internal/config` |
+| `wiring` | `cmd/nops`: builds every component, runs the three loops and the dashboard, shuts down cleanly on `SIGINT`/`SIGTERM`; a `run(ctx, cfg, log) error` factored out of `main` for the whole wiring to be one reviewable, testable unit ([binary smoke test](development.md#integration)) | `cmd/nops` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
-| [`wiring`](#wiring) | `config`, `notify`, `gitwatch`, `engine-recovery`, `web` | yes |
 | [`acceptance`](#acceptance) | `wiring` | yes |
-
-### wiring
-
-- **Read first:** [architecture.md](architecture.md), the config docs.
-- **Scope:** `cmd/nops`: build config, store, Nomad client, engine and web,
-  start the three loops, shut down cleanly on a signal.
-- **Notes from `config`:** `config.Load(os.Args[1:], os.Getenv, os.Stderr)`
-  (exit 0 on `flag.ErrHelp`); the Nomad client is
-  `nomadx.New(cfg.Nomad(), cfg.NomadNamespace)`, never `api.DefaultConfig()`;
-  `hooks.New` takes `HookPollInterval`; log a WARN at startup when
-  `NomadTLSSkipVerify` is set. Never log the `Config` itself: it holds the
-  tokens and the notification URLs.
-- **Notes from `notify`:** `notify.New(notify.Options{...}, log)` built from
-  the `config.Config` notification fields (`NotifyWebhookURL` /
-  `NotifyWebhookToken`, `NotifyDiscordURL`, `NotifySlackURL`, `NotifyNtfyURL` /
-  `NotifyNtfyToken`, `NotifyGotifyURL` / `NotifyGotifyToken`, `PublicURL`,
-  `NotifyTimeout`). With no adapter set it is a no-op, not an error.
-- **Notes from `gitwatch`:** `gitwatch.New(gitwatch.Options{URL: cfg.GitURL,
-  Branch: cfg.GitBranch, Path: cfg.GitPath, Username: cfg.GitUsername,
-  Token: cfg.GitToken, PollInterval: cfg.GitPollInterval}, log)`; call
-  `Start` before serving (its error is fatal, there is nothing to run
-  detection on), then run `Run` in its own goroutine.
-- **Notes from `web-auth` and `local-auth`:** build a `web.Authenticator` by
-  `cfg.AuthMode` (`config.check()` already guarantees exactly one mode's
-  options are set, nothing else to validate here):
-  `oidc` → `web.NewAuth(web.AuthOptions{Issuer: cfg.OIDCIssuerURL, ClientID:
-  cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, RedirectURL:
-  cfg.PublicURL + "/auth/callback", AllowedUsers: cfg.OIDCAllowedUsers,
-  AllowedGroups: cfg.OIDCAllowedGroups, Log: log})` (does not contact the
-  provider: an outage must not stop nops, so a failure here is a
-  configuration error, fatal); `basic` → `web.NewBasicAuth(web.BasicAuthOptions{
-  UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, Log: log})` (reads the
-  file once, fatal on a bad one). Never log the client secret or the parsed
-  users map.
-- **Notes from `engine-recovery`:** there is no recovery call to make: start
-  `Engine.RunApply` in its own goroutine, and its first cycle (before the
-  ticker) is the recovery pass. It does not block, so `web` and detection can
-  start right after; a hook step in it can run for a hook's whole timeout.
-- **Notes from `web`:** `web.New(web.Options{Auth: auth, Store: store, Engine:
-  engine, Trigger: watcher.Trigger, WebhookSecret: cfg.WebhookSecret, Log:
-  log})` returns the full `http.Handler` (dashboard, `/healthz` and, only when
-  `WebhookSecret` is set, `/webhook/git`) — `Auth.Register` is **not** called
-  separately, `web.New` already wires the login routes through the `Auth` it
-  is given. `Trigger` is required only when `WebhookSecret` is non-empty
-  (`New` refuses otherwise); pass `watcher.Trigger` (the `gitwatch.Watcher`
-  from the `gitwatch` wiring above). `Store` and `Engine` are small
-  consumer-side interfaces (`web.Store`, `web.Engine`) that `*store.Store` and
-  `*engine.Engine` already satisfy, nothing to adapt. Serve the returned
-  handler with `http.ListenAndServe(cfg.ListenAddr, handler)` (or an
-  `http.Server` for graceful shutdown on the same signal that stops the other
-  loops).
-- **Done when:** `go build ./...` produces the binary and it starts against a
-  `nomad agent -dev` (a smoke test in `tests/integration`).
 
 ### acceptance
 

@@ -13,6 +13,7 @@
 | `internal/notify` | `httptest` receivers: the request of every adapter, several adapters at once, and non-2xx, timeout, unreachable and cancelled (a WARN each, no error, no URL in the log). |
 | `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers; the login against a fake OIDC provider (`httptest` serving discovery, keys, token and userinfo, signing real ID tokens), cross-origin refusals and 401/403. No coverage target. |
+| `cmd/nops` | Almost entirely straight-line wiring, so almost entirely covered by the integration smoke test below, not unit tests: a unit test only for the one piece of actual logic (`newAuthenticator` picking the login backend by `-auth-mode`). No coverage target. |
 | Real interaction with Nomad | Integration. |
 
 ## Integration
@@ -27,6 +28,11 @@
     `nops_image_<task>` and placement via host volume.
 - Realistic scenarios (pre-pulling heavy images, backups) are manual
   checklists in `docs/acceptance/`, to be run on the real cluster.
+- `TestNopsBinaryStartsAndShutsDown` builds the real `nops` binary and runs
+  it as a subprocess (basic auth, a scratch git repository): confirms
+  `/healthz` answers, then `SIGTERM` and a clean exit within the shutdown
+  grace period. It does not exercise detection or apply — those are already
+  covered end to end against the `engine` package directly.
 
 ## Coverage
 
