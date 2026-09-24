@@ -13,9 +13,9 @@ and can run **pre/post deployment hooks** (regular Nomad jobs that nops
 dispatches for you) around each deployment.
 
 > **Status: early development.** The design is settled and documented and
-> every building block is implemented; what is left is running the
-> [acceptance checklists](docs/acceptance/) against a real cluster. What is
-> done and what is left is in the [roadmap](docs/roadmap.md).
+> every building block is implemented and tested end to end against a real
+> Nomad; what is left is using it on a real cluster. What is done and what
+> is left is in the [roadmap](docs/roadmap.md).
 
 Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
 but written from scratch and extended with persistent state, approvals and hooks.
@@ -81,7 +81,8 @@ runnable ones, each paired with the job it deploys:
 - [`examples/backup-stateful/`](examples/backup-stateful/): back up a
   stateful service before its deploy.
 
-These are also what the [acceptance checklists](docs/acceptance/) deploy.
+The integration tests check that they still parse, that their hooks exist and
+that they need nothing but Nomad (no Consul).
 
 ## Design principles
 

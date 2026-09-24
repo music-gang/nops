@@ -10,8 +10,9 @@
 #
 # It runs after approval, so the backup is fresh, and before apply, so a bad
 # migration can be restored from it. pg_dump connects to the running "db"
-# service over the network (Consul DNS), not the filesystem, so this hook
-# only needs the volume it writes the dump to, never "db"'s own data volume.
+# service over the network (found through Nomad's service discovery), not
+# the filesystem, so this hook only needs the volume it writes the dump to,
+# never "db"'s own data volume.
 # The timeout is generous: a large database can take a while to dump.
 
 job "db-backup" {
@@ -45,10 +46,21 @@ job "db-backup" {
     task "dump" {
       driver = "docker"
 
+      # PGHOST and PGPORT come from Nomad's own service discovery (the "db"
+      # job registers it with provider = "nomad"): pg_dump reads them itself.
+      template {
+        destination = "local/db.env"
+        env         = true
+        data        = <<-EOT
+          {{ with nomadService "db" }}{{ with index . 0 }}PGHOST={{ .Address }}
+          PGPORT={{ .Port }}{{ end }}{{ end }}
+        EOT
+      }
+
       config {
         image   = "postgres:16-alpine"
         command = "sh"
-        args    = ["-c", "pg_dump -h db.service.consul -U postgres -Fc -f /backup/${NOMAD_META_nops_deployment_id}.dump db"]
+        args    = ["-c", "pg_dump -U postgres -Fc -f /backup/${NOMAD_META_nops_deployment_id}.dump db"]
       }
 
       env {

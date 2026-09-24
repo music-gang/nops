@@ -26,13 +26,43 @@
     `sleep 600` → timeout;
   - docker driver, when available: `busybox`/`alpine`, to check the passing of
     `nops_image_<task>` and placement via host volume.
-- Realistic scenarios (pre-pulling heavy images, backups) are manual
-  checklists in `docs/acceptance/`, to be run on the real cluster.
-- `TestNopsBinaryStartsAndShutsDown` builds the real `nops` binary and runs
-  it as a subprocess (basic auth, a scratch git repository): confirms
+- Realistic scenarios (pre-pulling a heavy image, a backup before a stateful
+  deploy) are **simulated**, not run on a real cluster: the same guarantees
+  (the pre-hook runs before the register and gets the deployment ID, a failing
+  or slow hook leaves the live job alone, a failure is not retried in a loop)
+  are checked with `raw_exec` hooks that append to a log or write a marker
+  file. What a simulation cannot say (how long a real pull takes, whether a
+  real dump restores, the cluster's own ACLs and TLS) is judged by using nops
+  on the cluster.
+- The **end-to-end tests** (`e2e_*_test.go`) build the real `nops` binary once
+  and run it as a subprocess against a scratch git repository (a bare repo
+  over `file://`, pushed to by the test) and the Nomad under test: basic
+  auth, 200ms intervals, the dashboard driven over HTTP and nops's own SQLite
+  read alongside it. `TestE2EApprovalFlow` covers create, approve, reject,
+  superseding, a stale `spec_hash` (409) and an outside edit under policy
+  `approval`; `TestE2EAutoRevertsOutsideEdit` the same edit under `auto`; the
+  `TestE2EPreHook*` tests the hook scenarios above. The hooks write to a
+  test directory, so they need the Nomad agent on the same host as the tests
+  (true for `nomad agent -dev`).
+- `TestNopsBinaryStartsAndShutsDown` is the smoke test of the same harness:
   `/healthz` answers, then `SIGTERM` and a clean exit within the shutdown
-  grace period. It does not exercise detection or apply — those are already
-  covered end to end against the `engine` package directly.
+  grace period.
+- `TestExamplesParse` parses every job and hook in `examples/` with Nomad's
+  own parser, checks its `nops_*` meta, that each declared hook exists and
+  that nothing needs Consul (every service has `provider = "nomad"`, no file
+  mentions Consul). It does not run the examples: their docker images are
+  not pulled in CI.
+- `TestMain` drops the `NOMAD_*` variables of the environment, so a shell set
+  up for a real cluster is never used by a test.
+- A dev agent answers `429` past 100 connections from one address, so a test
+  that creates a Nomad client closes its idle connections when it ends
+  (`newClient`).
+
+### First rollout on a real cluster
+
+The real check is using it. The policies allow going in steps: start with
+`nops_policy = "none"` on a few jobs and watch `/drift`; move stateful jobs to
+`approval` and stateless ones to `auto` one at a time.
 
 ## Coverage
 

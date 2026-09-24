@@ -2,9 +2,9 @@
 # smoke-tests it once healthy (see web-smoke.nomad.hcl). No host volume, so
 # it needs nothing set up on the client beyond the docker driver.
 #
-# Bump var.image or var.count (web.vars.hcl) to trigger a deployment for the
-# "approval-flow" checklist (docs/acceptance/approval-flow.md): approve,
-# reject, supersede with a new commit, and an outside edit (drift).
+# Bump var.image or var.count (web.vars.hcl) to trigger a deployment: approve,
+# reject, supersede with a new commit, and an outside edit (drift) are all
+# worth trying on it.
 
 job "web" {
   datacenters = ["dc1"]
@@ -26,8 +26,9 @@ job "web" {
     }
 
     service {
-      name = "web"
-      port = "http"
+      name     = "web"
+      port     = "http"
+      provider = "nomad"
 
       check {
         type     = "http"

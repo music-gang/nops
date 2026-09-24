@@ -13,9 +13,8 @@
 #     }
 #   }
 #
-# The password below is fine for a throwaway acceptance run, never for a real
-# database. Bump var.image (db.vars.hcl) to trigger a deployment for the
-# "backup-stateful" checklist (docs/acceptance/backup-stateful.md).
+# The password below is fine for a throwaway run, never for a real database.
+# Bump var.image (db.vars.hcl) to trigger a deployment.
 
 job "db" {
   datacenters = ["dc1"]
@@ -43,8 +42,9 @@ job "db" {
     }
 
     service {
-      name = "db"
-      port = "postgres"
+      name     = "db"
+      port     = "postgres"
+      provider = "nomad"
     }
 
     task "postgres" {

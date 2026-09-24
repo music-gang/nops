@@ -44,21 +44,9 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `web` | Dashboard pages (pending, history, drift, deployment detail with an htmx-polled status fragment), diff renderer, git webhook per forge ([dashboard](dashboard.md)) | `internal/web`, `internal/config` |
 | `local-auth` | A second login backend, local users (`-auth-mode=basic`, `username:bcrypt-hash` file), mutually exclusive with OIDC (`-auth-mode=oidc`) via a required `-auth-mode`; session/cookie/`Require`/logout shared between the two through `web.Authenticator` ([dashboard](dashboard.md#authentication)) | `internal/web`, `internal/config` |
 | `wiring` | `cmd/nops`: builds every component, runs the three loops and the dashboard, shuts down cleanly on `SIGINT`/`SIGTERM`; a `run(ctx, cfg, log) error` factored out of `main` for the whole wiring to be one reviewable, testable unit ([binary smoke test](development.md#integration)) | `cmd/nops` |
+| `e2e` | Simulated end-to-end integration tests in place of manual acceptance checklists: approval flow, self-heal under `auto`, the pre-hook scenarios (pre-pull, backup) with `raw_exec`, and `examples/` kept parsing ([development](development.md#integration)); the real check is using nops on the cluster ([first rollout](development.md#first-rollout-on-a-real-cluster)) | `tests/integration` |
 
 ## Todo
 
-| Task | Depends on | Ready |
-|---|---|---|
-| [`acceptance`](#acceptance) | `wiring` | yes |
-
-### acceptance
-
-- **Read first:** [development.md](development.md#integration) (manual
-  checklists for the real cluster).
-- **Scope:** `docs/acceptance/`: one checklist per realistic scenario (heavy
-  image pre-pull on a host volume, backup before a stateful deploy, approval
-  flow), each deploying a runnable job pair from `examples/`. The README
-  status note changes from "early development" to usable.
-- **Done when:** the checklists exist (done) **and** were run once against
-  the real cluster (still open — needs the maintainer's hardware; see the
-  `## Notes` on the PR that added the checklists).
+Nothing is left in the planned scope. What remains is using nops on a real
+cluster; what that turns up becomes new tasks here.

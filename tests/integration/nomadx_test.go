@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -35,6 +36,13 @@ func newClient(t *testing.T) (*nomadx.Client, *api.Client) {
 	t.Helper()
 	cfg := api.DefaultConfig()
 	cfg.Address = testAddr(t)
+	// A client of its own, so its idle connections can be closed at the end.
+	cfg.HttpClient = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	// Every client keeps its idle connections until the process exits, and
+	// Nomad answers 429 past 100 connections from one address (with the nops
+	// processes of the end-to-end tests alongside, a long run or -count=N gets
+	// there), so close them when the test is done.
+	t.Cleanup(cfg.HttpClient.CloseIdleConnections)
 	c, err := nomadx.New(cfg, "")
 	if err != nil {
 		t.Fatal(err)
