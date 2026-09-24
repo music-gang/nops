@@ -13,8 +13,9 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 - A task is startable when every task in *Depends on* is `done` and no branch
   for it exists.
 - **Ready** says whether it can be done unattended. `yes`: go. `plan first`:
-  design questions are still open, so write the plan and the questions in a
-  draft PR (docs only) and stop until the maintainer answers.
+  design questions are still open, so lay out the plan and the questions to
+  the maintainer in the session and wait for their answers — no branch, no PR
+  for this step.
 - The PR that finishes a task sets it to `done` here and adds the decisions it
   took to the [decision log](design/decisions.md). The *Notes* of the tasks that
   come next are updated with what was learned.

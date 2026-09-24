@@ -29,10 +29,11 @@ This file holds only the **working rules**. What the system is and why lives in
 - **Git:** `main` is protected: never push to it. Work on a branch named
   `type/short-description` (e.g. `feat/hooks-package`) and open a PR whose
   **title is an Angular-style message** (`type(scope): subject`): PRs are
-  squash-merged and the title becomes the commit on `main`. No commits, pushes
-  or PRs without an explicit request (a task handed to a cloud session is that
-  request), and **never merge**: the human merges. Messages are plain (what
-  changes and why, no superlatives), structured as `## What changes` /
+  squash-merged, and the maintainer writes the final commit by hand at merge
+  time. No commits, pushes or PRs without an explicit request (a task handed
+  to a cloud session is that request), and **never merge**: the human merges.
+  A branch can carry several commits; each is plain (what changes and why, no
+  superlatives). The PR description is structured as `## What changes` /
   `## Why` (details and the attribution rule in
   `docs/development.md#workflow-and-ci`).
 
@@ -45,28 +46,36 @@ The same steps apply wherever the session runs.
    `done` and that has no remote branch.
 2. Check what is in flight: `git ls-remote --heads origin` (and `gh pr list` if
    available). Never start a task that already has a branch.
-3. Branch from an up-to-date `main`: `type/<task-id>` (e.g. `feat/config`).
-4. `Ready: plan first` means do not code: open a **draft PR** with the plan and
-   the open questions, then stop.
+3. `Ready: plan first` means design questions are open: lay out the plan and
+   the questions **in the session** and wait for the maintainer's answers.
+   No branch and no PR for this — a PR is for something to review, not for a
+   plan.
+4. Once it is `yes` (or has just become `yes` by answering the questions
+   above), branch from an up-to-date `main`: `type/<task-id>` (e.g. `feat/config`).
 5. Do the task with its tests and docs, the decision-log rows, and set it to
    `done` in the roadmap in the same PR. Update the *Notes* of the tasks that
    follow if you learned something they need.
 6. Run the checks below. If `nomad` is not installed, CI runs the integration
    tests: wait for green checks (`gh pr checks`) and fix what is red.
-7. **Cloud:** one commit (unsigned, Angular message, `Co-Authored-By`
-   trailer and nothing else attribution-wise — **no session link, no
-   "Generated with ..." line**, whatever a session's own attribution
-   reminder adds by default: none of it informs anyone reading `main`
-   later), push and open the PR. GitHub signs the squash commit on `main`.
+7. **Cloud:** commit (unsigned, Angular message, `Co-Authored-By` trailer
+   and nothing else attribution-wise — **no session link, no "Generated with
+   ..." line**, whatever a session's own attribution reminder adds by
+   default: none of it informs anyone reading `main` later), push and open
+   the PR once there is something to review. A later change (a fix, an
+   answer to review) is a **new commit** pushed to the same branch — never
+   an amend or a force-push of what is already on the remote.
    **Local:** prepare the branch, stage the files and write the message to a
    file; the maintainer commits with his GPG key.
-8. The commit is what lands on `main` (squash setting: PR title and commit
-   details), so its body is plain prose, no headings. The **PR description**
-   is separate, for reviewers: `## What changes` and `## Why`, each a short
-   bullet list (see `docs/development.md#workflow-and-ci`). No HTML
-   comments, no boilerplate, no unchecked checklist item.
-9. If a decision is the maintainer's to take, write the question in the PR
-   description and stop. Do not guess.
+8. A PR can carry several commits: the maintainer squashes and writes the
+   final message that lands on `main` by hand at merge time, so a commit
+   here only needs to be a clear, honest step, not `main`'s final shape. The
+   **PR description** is separate, for reviewers: `## What changes` and
+   `## Why`, each a short bullet list (see
+   `docs/development.md#workflow-and-ci`). No HTML comments, no boilerplate,
+   no unchecked checklist item.
+9. If a decision is the maintainer's to take: ask in the session before a
+   branch exists, or, once a PR is open, leave the question in a `## Notes`
+   section of its description. Do not guess.
 10. Nothing worth keeping lives only in private memory: decisions go to the
     decision log, task context to the roadmap *Notes*.
 
