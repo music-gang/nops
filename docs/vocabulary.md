@@ -46,6 +46,9 @@ Some words exist in both worlds and mean different things. Say which one.
 | **terminal state** | `completed`, `failed`, `rejected`, `superseded`. No way out. |
 | **pending deployment** | A deployment in `pending_approval`. |
 | **approve / reject** | The authenticated human decision on a pending deployment, recorded with the **actor**. |
+| **actor** | Who did something: the logged-in user (`preferred_username`, else `email`, else `sub` of the OIDC token) for a decision, `nops` for the engine. It goes in `decided_by` and `events.actor`. |
+| **session** | The signed, encrypted cookie set after an OIDC login, valid 12 hours, with a key that lives only in the process ([dashboard](dashboard.md#authentication)). |
+| **allowlist** | `-oidc-allowed-users` and `-oidc-allowed-groups`: who may log in. Required. |
 | **supersede** | A newer commit (or a change outside nops) replaces a deployment that has not started applying. Result: `superseded`. |
 | **revalidation** | Re-checking every pending deployment on each detection cycle, so the one shown in the dashboard is always approvable. |
 | **observation** | The last detection cycle's drift for one managed job (policy, whether it drifted, its redacted diff), kept only in memory (`Engine.Observations()`), never in SQLite: it is always a function of the current git head and the current live job, so there is nothing to persist. It is how a `none` policy job's drift reaches the dashboard, since no deployment is ever created for it. |

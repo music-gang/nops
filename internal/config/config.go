@@ -45,7 +45,15 @@ type Config struct {
 
 	DBPath     string
 	ListenAddr string
-	AuthHeader string
+
+	// OIDC login of the dashboard (docs/dashboard.md#authentication). The
+	// client secret is read from a file by Load, or from its plain env var.
+	OIDCIssuerURL        string // exactly as the provider announces it: a trailing slash matters
+	OIDCClientID         string
+	OIDCClientSecretFile string
+	OIDCClientSecret     string
+	OIDCAllowedUsers     []string // preferred_username or email; at least one of users and groups is set
+	OIDCAllowedGroups    []string // values of the groups claim
 
 	// Notification adapters: each one is on when its URL is set. URLs that
 	// carry a token and every token are read from files by Load.
@@ -65,7 +73,7 @@ type Config struct {
 	NotifyGotifyToken      string
 	NotifyTimeout          time.Duration
 
-	PublicURL string // external URL of the dashboard, without trailing slash; may be empty
+	PublicURL string // external URL of the dashboard, without trailing slash
 
 	GitPollInterval  time.Duration
 	DriftInterval    time.Duration
@@ -133,14 +141,26 @@ var options = []option{
 			c.ListenAddr = v
 			return nil
 		}},
-	{name: "auth-header", def: "Remote-User", usage: "request header carrying the user authenticated by the reverse proxy",
-		set: func(c *Config, v string) error {
-			if !validHeaderName(v) {
-				return fmt.Errorf("invalid header name %q", v)
+	{name: "oidc-issuer-url", usage: "issuer URL of the OIDC provider, exactly as it announces it (required)",
+		set: func(c *Config, v string) (err error) {
+			if v == "" {
+				return errors.New("required")
 			}
-			c.AuthHeader = v
-			return nil
+			c.OIDCIssuerURL, err = httpURL(v)
+			return
 		}},
+	{name: "oidc-client-id", usage: "OIDC client ID of nops (required)",
+		set: func(c *Config, v string) (err error) { c.OIDCClientID, err = required(v); return }},
+	{name: "oidc-client-secret-file", usage: "file holding the OIDC client secret (required)",
+		set: func(c *Config, v string) (err error) {
+			c.OIDCClientSecretFile = v
+			c.OIDCClientSecret, err = secretFile(v)
+			return
+		}},
+	{name: "oidc-allowed-users", usage: "comma-separated usernames or emails allowed to log in (with or without -oidc-allowed-groups)",
+		set: func(c *Config, v string) error { c.OIDCAllowedUsers = csvList(v); return nil }},
+	{name: "oidc-allowed-groups", usage: "comma-separated groups (claim \"groups\") allowed to log in (with or without -oidc-allowed-users)",
+		set: func(c *Config, v string) error { c.OIDCAllowedGroups = csvList(v); return nil }},
 
 	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
@@ -184,8 +204,14 @@ var options = []option{
 		}},
 	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
 		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
-	{name: "public-url", usage: "external URL of the dashboard, used for links in notifications (empty: no links)",
-		set: func(c *Config, v string) (err error) { c.PublicURL, err = optionalURL(v); return }},
+	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it (required)",
+		set: func(c *Config, v string) (err error) {
+			if v == "" {
+				return errors.New("required")
+			}
+			c.PublicURL, err = optionalURL(v)
+			return
+		}},
 
 	{name: "git-poll-interval", def: "1m", usage: "how often the repository is fetched",
 		set: func(c *Config, v string) (err error) { c.GitPollInterval, err = positiveDuration(v); return }},
@@ -270,6 +296,8 @@ type secretValue struct {
 }
 
 var secretValues = []secretValue{
+	{envVar: "NOPS_OIDC_CLIENT_SECRET",
+		get: func(c *Config) string { return c.OIDCClientSecret }, set: func(c *Config, v string) { c.OIDCClientSecret = v }},
 	{envVar: "NOPS_GIT_TOKEN",
 		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
 	{envVar: "NOPS_NOMAD_TOKEN",
@@ -339,6 +367,12 @@ func (c *Config) check() []error {
 	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
 		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
+	if c.OIDCClientSecret == "" {
+		errs = append(errs, errors.New("the OIDC client secret is required (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
+	}
+	if len(c.OIDCAllowedUsers) == 0 && len(c.OIDCAllowedGroups) == 0 {
+		errs = append(errs, errors.New("nobody is allowed to log in: set -oidc-allowed-users or -oidc-allowed-groups"))
+	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
 	}
@@ -398,6 +432,18 @@ func gitPath(v string) (string, error) {
 		return "", fmt.Errorf("%q must be a relative path inside the repository", v)
 	}
 	return clean, nil
+}
+
+// csvList splits a comma-separated list, dropping blanks around and between
+// the items. An empty value is an empty (nil) list.
+func csvList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func positiveDuration(v string) (time.Duration, error) {
@@ -481,20 +527,4 @@ func secretFile(path string) (string, error) {
 		return "", fmt.Errorf("%s is empty", path)
 	}
 	return s, nil
-}
-
-// validHeaderName reports whether v is an HTTP token (RFC 9110, section 5.1).
-func validHeaderName(v string) bool {
-	if v == "" {
-		return false
-	}
-	for _, r := range v {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
-		default:
-			return false
-		}
-	}
-	return true
 }

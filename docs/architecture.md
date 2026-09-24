@@ -17,7 +17,7 @@ approval [dashboard](dashboard.md).
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
 | `internal/engine` | State machine, reconciler, recovery on restart. Detection ([design](design/engine-detection.md)) parses, plans, and creates, supersedes or revalidates deployments; apply ([design](design/engine-apply.md)) advances them, and its first cycle is recovery. |
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
-| `internal/web` | Dashboard (`net/http` + `html/template`) and git webhook. |
+| `internal/web` | OIDC login ([dashboard](dashboard.md#authentication)), the dashboard (`net/http` + `html/template`) and the git webhook. |
 | `internal/notify` | [Notifications](error-handling.md#notifications) on `pending_approval` and `failed`, through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |
 | `internal/redact` | Removes secret values from the plan diff before it is saved or shown ([rules](dashboard.md#secret-redaction)). A pure function, called by `engine` at detection. |
 

@@ -70,7 +70,9 @@ The generic JSON, which is also the data every adapter formats:
 }
 ```
 
-`url` is empty when `-public-url` is not set.
+`url` is `<public-url>/deployments/<id>`; `-public-url` is required (the OIDC
+login needs it), so a notification always has one. The notifier itself still
+tolerates an empty one and then sends no link.
 
 A notification is the only soft failure: each adapter gets one attempt,
 bounded by `-notify-timeout`, with no retry. An answer that is not 2xx, a
