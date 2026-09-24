@@ -1,0 +1,21 @@
+{{define "deployment"}}
+{{template "chrome_head" .}}
+<section>
+  <h1 class="page-title">{{.Deployment.Namespace}}/{{.Deployment.JobID}}</h1>
+  <div class="detail-grid">
+    <div class="detail-main">
+      <h2 class="page-subtitle">Plan diff</h2>
+      {{template "diff" .Diff}}
+    </div>
+    <aside class="detail-rail">
+      <div id="deployment-status"
+           hx-get="/deployments/{{.Deployment.ID}}/status"
+           {{if not (isTerminal .Deployment.State)}}hx-trigger="every 3s"{{end}}
+           hx-swap="outerHTML">
+        {{template "status_inner" .}}
+      </div>
+    </aside>
+  </div>
+</section>
+{{template "chrome_foot" .}}
+{{end}}

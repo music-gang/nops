@@ -1,0 +1,43 @@
+{{define "drift"}}
+{{template "chrome_head" .}}
+<section>
+  <h1 class="page-title">Drift</h1>
+  <p class="page-intro">Every managed job, including policy <code>none</code>: what nops last observed compared to git,
+  rebuilt every detection cycle.</p>
+  {{if .Observations}}
+  <div class="card-list">
+    {{range .Observations}}
+    <div class="drift-card">
+      <div class="drift-card__header">
+        <span class="deployment-card__job">{{.Namespace}}/{{.JobID}}</span>
+        <span class="badge badge--policy">{{.Policy}}</span>
+        {{if .Drift}}<span class="badge state-pending">drift</span>{{else}}<span class="badge state-success">in sync</span>{{end}}
+      </div>
+      <div class="deployment-card__meta">
+        <span class="mono">{{.FilePath}}</span>
+        <span>&middot;</span>
+        <span>observed {{.ObservedAt}}</span>
+      </div>
+      {{if .BlockedBy}}
+      <p class="rail-notice">Blocked by <a href="/deployments/{{.BlockedBy}}">an earlier deployment</a>: {{.BlockedReason}}</p>
+      {{end}}
+      {{if .Issues}}
+      <ul class="issue-list">
+        {{range .Issues}}<li class="issue-item issue-item--{{.Severity}}"><span class="issue-item__key">{{.Key}}</span> {{.Message}}</li>{{end}}
+      </ul>
+      {{end}}
+      {{if .Drift}}
+      <details class="drift-card__diff">
+        <summary>Plan diff</summary>
+        {{template "diff" .Diff}}
+      </details>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty-state">No managed job observed yet.</p>
+  {{end}}
+</section>
+{{template "chrome_foot" .}}
+{{end}}

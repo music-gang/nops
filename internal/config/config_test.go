@@ -128,6 +128,7 @@ func TestLoadEveryOption(t *testing.T) {
 	ntfyTok := writeFile(t, "ntfy-token", "ntfy-secret")
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
+	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
 	values := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
 		"nomad-namespace":           "apps",
@@ -148,6 +149,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"oidc-client-secret-file":   oidcSecret,
 		"oidc-allowed-users":        "alice, bob@example.com,,",
 		"oidc-allowed-groups":       "nops-approvers",
+		"webhook-secret-file":       webhookSecret,
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
 		"notify-discord-url-file":   discordURL,
@@ -191,6 +193,8 @@ func TestLoadEveryOption(t *testing.T) {
 		OIDCClientSecret:       "oidc-client-secret",
 		OIDCAllowedUsers:       []string{"alice", "bob@example.com"},
 		OIDCAllowedGroups:      []string{"nops-approvers"},
+		WebhookSecretFile:      webhookSecret,
+		WebhookSecret:          "webhook-shared-secret",
 		NotifyWebhookURLFile:   webhookURL,
 		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
 		NotifyWebhookTokenFile: webhookTok,
