@@ -89,7 +89,9 @@ type Config struct {
 	NotifyGotifyToken      string
 	NotifyTimeout          time.Duration
 
-	PublicURL string // external URL of the dashboard, without trailing slash
+	// PublicURL is the dashboard's external URL, without trailing slash. If
+	// not set explicitly, check() derives it from ListenAddr.
+	PublicURL string
 
 	GitPollInterval  time.Duration
 	DriftInterval    time.Duration
@@ -243,11 +245,8 @@ var options = []option{
 		}},
 	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
 		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
-	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it (required)",
+	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it (default: derived from -listen-addr)",
 		set: func(c *Config, v string) (err error) {
-			if v == "" {
-				return errors.New("required")
-			}
 			c.PublicURL, err = optionalURL(v)
 			return
 		}},
@@ -385,9 +384,14 @@ func resolveSecretValues(c *Config, getenv func(string) string) []error {
 	return errs
 }
 
-// check validates the rules that involve more than one option.
+// check validates the rules that involve more than one option, and fills
+// the one default that depends on another option's value (-public-url on
+// -listen-addr).
 func (c *Config) check() []error {
 	var errs []error
+	if c.PublicURL == "" {
+		c.PublicURL = publicURLDefault(c.ListenAddr)
+	}
 	if c.GitToken != "" {
 		if c.GitURL != "" && !strings.HasPrefix(strings.ToLower(c.GitURL), "https://") {
 			errs = append(errs, fmt.Errorf("a git token needs an https:// -git-url, got %q", c.GitURL))
@@ -538,6 +542,29 @@ func optionalURL(v string) (string, error) {
 	}
 	u, err := httpURL(v)
 	return strings.TrimRight(u, "/"), err
+}
+
+// publicURLDefault derives a default -public-url from -listen-addr, for an
+// operator with no reverse proxy in front who would otherwise have nothing
+// meaningful to put there (typically -auth-mode=basic on a personal
+// machine, though the default applies to -auth-mode=oidc too: it is wrong
+// for a real OIDC provider, same as forgetting -public-url used to be, just
+// no longer a hard stop at startup). A specific host is kept as is; an
+// address with no host, or the wildcard 0.0.0.0/[::] (listen on every
+// interface), becomes localhost, since that says nothing about which
+// interface a browser should use. listenAddr is assumed already validated
+// by the -listen-addr option (net.SplitHostPort); an invalid one yields "",
+// same as no default, since that failure is already reported on its own.
+func publicURLDefault(listenAddr string) string {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // urlFile reads a URL that carries a secret (a Discord or Slack webhook

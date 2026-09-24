@@ -130,6 +130,13 @@ until their session ends.
 
 ### Setting up the client
 
+`-public-url` is no longer required to start nops (see
+[configuration](configuration.md#dashboard)): unset, it defaults to a
+`localhost` guess derived from `-listen-addr`, which is essentially never
+right for OIDC — a provider redirects the browser to the registered URI, not
+to wherever nops happens to be listening. **Set `-public-url` explicitly**
+before configuring the client below.
+
 Create an OIDC client (confidential, authorization code) at the provider:
 
 - **Redirect URI:** `<public-url>/auth/callback`, e.g.

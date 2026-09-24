@@ -355,7 +355,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"notify-ntfy-token-file", empty, "is empty"},
 		{"notify-gotify-url", "gotify", "not an http"},
 		{"notify-gotify-token-file", missing, "no such file"},
-		{"public-url", "", "required"},
 		{"public-url", "nops.example.com", "not an http"},
 		{"notify-timeout", "10", "missing unit"},
 		{"notify-timeout", "0s", "must be positive"},
@@ -398,6 +397,71 @@ func TestLoadInvalid(t *testing.T) {
 				t.Errorf("empty %s should fall back to the default, got %v", o.env(), err)
 			}
 		})
+	}
+}
+
+// TestLoadPublicURLDefault covers -public-url's default, derived from
+// -listen-addr when not set explicitly: an operator with no reverse proxy
+// (typically -auth-mode=basic on a personal machine) no longer has to type
+// something there just to satisfy a required flag. The default applies to
+// -auth-mode=oidc too (see publicURLDefault's doc comment on why that is
+// still the operator's call to override for a real provider).
+func TestLoadPublicURLDefault(t *testing.T) {
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	basicArgs := func(extra ...string) []string {
+		return append([]string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile}, extra...)
+	}
+
+	tests := []struct {
+		name       string
+		listenAddr string
+		want       string
+	}{
+		{"default listen-addr", "", "http://localhost:8080"},
+		{"specific host", "127.0.0.1:9090", "http://127.0.0.1:9090"},
+		{"no host", ":9090", "http://localhost:9090"},
+		{"ipv4 wildcard", "0.0.0.0:9090", "http://localhost:9090"},
+		{"ipv6 wildcard", "[::]:9090", "http://localhost:9090"},
+		{"ipv6 host kept as is", "[::1]:9090", "http://[::1]:9090"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := basicArgs()
+			if tt.listenAddr != "" {
+				args = append(args, "-listen-addr", tt.listenAddr)
+			}
+			c, err := Load(args, rawEnvOf(nil), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.PublicURL != tt.want {
+				t.Errorf("public URL = %q, want %q", c.PublicURL, tt.want)
+			}
+		})
+	}
+
+	// An explicit -public-url always wins, whatever -listen-addr is.
+	c, err := Load(basicArgs("-listen-addr", "0.0.0.0:9090", "-public-url", "https://nops.example.com"), rawEnvOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicURL != "https://nops.example.com" {
+		t.Errorf("public URL = %q, want the explicit value kept", c.PublicURL)
+	}
+
+	// -auth-mode=oidc gets the same default: -public-url is no longer
+	// required by either mode.
+	oidc := map[string]string{
+		"NOPS_GIT_URL": repo, "NOPS_AUTH_MODE": "oidc",
+		"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
+		"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+	}
+	c, err = Load(nil, rawEnvOf(oidc), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicURL != "http://localhost:8080" {
+		t.Errorf("oidc public URL = %q, want the derived default", c.PublicURL)
 	}
 }
 
@@ -479,7 +543,6 @@ func TestLoadOIDCRequired(t *testing.T) {
 		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url is required with -auth-mode=oidc"},
 		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id is required with -auth-mode=oidc"},
 		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required with -auth-mode=oidc"},
-		{"public url", "NOPS_PUBLIC_URL", "-public-url / NOPS_PUBLIC_URL: required"},
 		{"allowlist", "NOPS_OIDC_ALLOWED_USERS", "nobody is allowed to log in"},
 	}
 	for _, tt := range tests {

@@ -70,9 +70,10 @@ The generic JSON, which is also the data every adapter formats:
 }
 ```
 
-`url` is `<public-url>/deployments/<id>`; `-public-url` is required (the OIDC
-login needs it), so a notification always has one. The notifier itself still
-tolerates an empty one and then sends no link.
+`url` is `<public-url>/deployments/<id>`; `-public-url` always has a value —
+explicit, or [derived from `-listen-addr`](configuration.md#dashboard) — so a
+notification always has one. The notifier itself still tolerates an empty one
+and then sends no link.
 
 A notification is the only soft failure: each adapter gets one attempt,
 bounded by `-notify-timeout`, with no retry. An answer that is not 2xx, a
