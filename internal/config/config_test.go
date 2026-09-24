@@ -18,7 +18,28 @@ import (
 
 const repo = "https://git.example.com/ops/jobs.git"
 
+// authEnv is what a valid configuration needs besides -git-url: the OIDC
+// login and the public URL are required. envOf adds it under every test
+// environment, unless the test sets (or blanks) the variable itself.
+var authEnv = map[string]string{
+	"NOPS_PUBLIC_URL":         "https://nops.example.com",
+	"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/application/o/nops/",
+	"NOPS_OIDC_CLIENT_ID":     "nops",
+	"NOPS_OIDC_CLIENT_SECRET": "client-secret",
+	"NOPS_OIDC_ALLOWED_USERS": "alice",
+}
+
 func envOf(m map[string]string) func(string) string {
+	return func(k string) string {
+		if v, ok := m[k]; ok {
+			return v
+		}
+		return authEnv[k]
+	}
+}
+
+// rawEnvOf is an environment with nothing added, for the tests of what is required.
+func rawEnvOf(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
 
@@ -44,7 +65,11 @@ func TestLoadDefaults(t *testing.T) {
 		GitUsername:      "git",
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
-		AuthHeader:       "Remote-User",
+		OIDCIssuerURL:    "https://idp.example.com/application/o/nops/",
+		OIDCClientID:     "nops",
+		OIDCClientSecret: "client-secret",
+		OIDCAllowedUsers: []string{"alice"},
+		PublicURL:        "https://nops.example.com",
 		NotifyTimeout:    10 * time.Second,
 		GitPollInterval:  time.Minute,
 		DriftInterval:    5 * time.Minute,
@@ -102,6 +127,7 @@ func TestLoadEveryOption(t *testing.T) {
 	slackURL := writeFile(t, "slack-url", "https://hooks.slack.com/services/T/B/abc")
 	ntfyTok := writeFile(t, "ntfy-token", "ntfy-secret")
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
+	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	values := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
 		"nomad-namespace":           "apps",
@@ -117,7 +143,11 @@ func TestLoadEveryOption(t *testing.T) {
 		"git-token-file":            gitTok,
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
-		"auth-header":               "X-Forwarded-User",
+		"oidc-issuer-url":           "https://auth.example.com/application/o/nops/",
+		"oidc-client-id":            "nops-dashboard",
+		"oidc-client-secret-file":   oidcSecret,
+		"oidc-allowed-users":        "alice, bob@example.com,,",
+		"oidc-allowed-groups":       "nops-approvers",
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
 		"notify-discord-url-file":   discordURL,
@@ -155,7 +185,12 @@ func TestLoadEveryOption(t *testing.T) {
 		GitToken:               "git-secret",
 		DBPath:                 "/var/lib/nops/nops.db",
 		ListenAddr:             "127.0.0.1:9000",
-		AuthHeader:             "X-Forwarded-User",
+		OIDCIssuerURL:          "https://auth.example.com/application/o/nops/",
+		OIDCClientID:           "nops-dashboard",
+		OIDCClientSecretFile:   oidcSecret,
+		OIDCClientSecret:       "oidc-client-secret",
+		OIDCAllowedUsers:       []string{"alice", "bob@example.com"},
+		OIDCAllowedGroups:      []string{"nops-approvers"},
 		NotifyWebhookURLFile:   webhookURL,
 		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
 		NotifyWebhookTokenFile: webhookTok,
@@ -239,9 +274,11 @@ func TestLoadInvalid(t *testing.T) {
 		{"db-path", "", "required"},
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
-		{"auth-header", "", "invalid header name"},
-		{"auth-header", "Remote User", "invalid header name"},
-		{"auth-header", "Remote:User", "invalid header name"},
+		{"oidc-issuer-url", "", "required"},
+		{"oidc-issuer-url", "idp.example.com", "not an http"},
+		{"oidc-client-id", "", "required"},
+		{"oidc-client-secret-file", missing, "no such file"},
+		{"oidc-client-secret-file", empty, "is empty"},
 		{"notify-webhook-url-file", missing, "no such file"},
 		{"notify-webhook-url-file", empty, "is empty"},
 		{"notify-webhook-url-file", notURL, "does not hold an http"},
@@ -252,6 +289,7 @@ func TestLoadInvalid(t *testing.T) {
 		{"notify-ntfy-token-file", empty, "is empty"},
 		{"notify-gotify-url", "gotify", "not an http"},
 		{"notify-gotify-token-file", missing, "no such file"},
+		{"public-url", "", "required"},
 		{"public-url", "nops.example.com", "not an http"},
 		{"notify-timeout", "10", "missing unit"},
 		{"notify-timeout", "0s", "must be positive"},
@@ -350,6 +388,71 @@ func TestLoadCrossChecks(t *testing.T) {
 	// Uppercase scheme is still https.
 	if _, err := Load([]string{"-git-url", "HTTPS://git.example.com/jobs.git", "-git-token-file", tok}, envOf(nil), io.Discard); err != nil {
 		t.Errorf("uppercase https: %v", err)
+	}
+}
+
+func TestLoadOIDCRequired(t *testing.T) {
+	full := map[string]string{
+		"NOPS_GIT_URL":            repo,
+		"NOPS_PUBLIC_URL":         "https://nops.example.com",
+		"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/",
+		"NOPS_OIDC_CLIENT_ID":     "nops",
+		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
+		"NOPS_OIDC_ALLOWED_USERS": "alice",
+	}
+	if _, err := Load(nil, rawEnvOf(full), io.Discard); err != nil {
+		t.Fatalf("full OIDC configuration: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		drop string
+		want string
+	}{
+		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url / NOPS_OIDC_ISSUER_URL: required"},
+		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id / NOPS_OIDC_CLIENT_ID: required"},
+		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required"},
+		{"public url", "NOPS_PUBLIC_URL", "-public-url / NOPS_PUBLIC_URL: required"},
+		{"allowlist", "NOPS_OIDC_ALLOWED_USERS", "nobody is allowed to log in"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{}
+			for k, v := range full {
+				if k != tt.drop {
+					env[k] = v
+				}
+			}
+			_, err := Load(nil, rawEnvOf(env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+
+	// Groups alone are enough, and blanks in the lists are dropped.
+	env := map[string]string{}
+	for k, v := range full {
+		env[k] = v
+	}
+	delete(env, "NOPS_OIDC_ALLOWED_USERS")
+	env["NOPS_OIDC_ALLOWED_GROUPS"] = " nops-approvers , ,ops "
+	c, err := Load(nil, rawEnvOf(env), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.OIDCAllowedGroups, []string{"nops-approvers", "ops"}) || len(c.OIDCAllowedUsers) != 0 {
+		t.Errorf("groups = %q, users = %q", c.OIDCAllowedGroups, c.OIDCAllowedUsers)
+	}
+
+	// The issuer is kept exactly as given: providers such as Authentik
+	// announce it with a trailing slash and the check compares the strings.
+	c, err = Load(nil, rawEnvOf(full), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.OIDCIssuerURL != "https://idp.example.com/" {
+		t.Errorf("issuer = %q, want it untouched", c.OIDCIssuerURL)
 	}
 }
 
@@ -495,6 +598,7 @@ func TestSecretValueFallback(t *testing.T) {
 	}{
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
+		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
 			map[string]string{"NOPS_NOTIFY_WEBHOOK_URL": "https://n8n.example.com/webhook/plain"}},
