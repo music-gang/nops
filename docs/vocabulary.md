@@ -46,8 +46,8 @@ Some words exist in both worlds and mean different things. Say which one.
 | **terminal state** | `completed`, `failed`, `rejected`, `superseded`. No way out. |
 | **pending deployment** | A deployment in `pending_approval`. |
 | **approve / reject** | The authenticated human decision on a pending deployment, recorded with the **actor**. |
-| **actor** | Who did something: the logged-in user (`preferred_username`, else `email`, else `sub` of the OIDC token) for a decision, `nops` for the engine. It goes in `decided_by` and `events.actor`. |
-| **session** | The signed, encrypted cookie set after an OIDC login, valid 12 hours, with a key that lives only in the process ([dashboard](dashboard.md#authentication)). |
+| **actor** | Who did something: the logged-in user for a decision, `nops` for the engine. The user is the OIDC token's `preferred_username`, else `email`, else `sub` (`-auth-mode=oidc`), or the username as is (`-auth-mode=basic`). It goes in `decided_by` and `events.actor`. |
+| **session** | The signed, encrypted cookie set after a login, either backend (`-auth-mode`), valid 12 hours, with a key that lives only in the process ([dashboard](dashboard.md#authentication)). |
 | **allowlist** | `-oidc-allowed-users` and `-oidc-allowed-groups`: who may log in. Required. |
 | **supersede** | A newer commit (or a change outside nops) replaces a deployment that has not started applying. Result: `superseded`. |
 | **revalidation** | Re-checking every pending deployment on each detection cycle, so the one shown in the dashboard is always approvable. |

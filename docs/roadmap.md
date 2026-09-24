@@ -42,6 +42,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `engine-recovery` | Recovery after a restart: `RunApply`'s first cycle, crash-window tests, health fails on an outside edit ([design](design/engine-apply.md#decisions), 8) | #16, `internal/engine` |
 | `web-auth` | OIDC login of the dashboard: allowlist, session, `Require`, cross-origin protection ([dashboard](dashboard.md#authentication)); `-auth-header` replaced by the `-oidc-*` options | `internal/web`, `internal/config` |
 | `web` | Dashboard pages (pending, history, drift, deployment detail with an htmx-polled status fragment), diff renderer, git webhook per forge ([dashboard](dashboard.md)) | `internal/web`, `internal/config` |
+| `local-auth` | A second login backend, local users (`-auth-mode=basic`, `username:bcrypt-hash` file), mutually exclusive with OIDC (`-auth-mode=oidc`) via a required `-auth-mode`; session/cookie/`Require`/logout shared between the two through `web.Authenticator` ([dashboard](dashboard.md#authentication)) | `internal/web`, `internal/config` |
 
 ## Todo
 
@@ -71,13 +72,18 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
   Token: cfg.GitToken, PollInterval: cfg.GitPollInterval}, log)`; call
   `Start` before serving (its error is fatal, there is nothing to run
   detection on), then run `Run` in its own goroutine.
-- **Notes from `web-auth`:** `web.NewAuth(web.AuthOptions{Issuer:
-  cfg.OIDCIssuerURL, ClientID: cfg.OIDCClientID, ClientSecret:
-  cfg.OIDCClientSecret, RedirectURL: cfg.PublicURL + "/auth/callback",
-  AllowedUsers: cfg.OIDCAllowedUsers, AllowedGroups: cfg.OIDCAllowedGroups,
-  Log: log})`. It does not contact the provider (an outage must not stop
-  nops), so its error is a configuration error and fatal. Never log the
-  client secret.
+- **Notes from `web-auth` and `local-auth`:** build a `web.Authenticator` by
+  `cfg.AuthMode` (`config.check()` already guarantees exactly one mode's
+  options are set, nothing else to validate here):
+  `oidc` → `web.NewAuth(web.AuthOptions{Issuer: cfg.OIDCIssuerURL, ClientID:
+  cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, RedirectURL:
+  cfg.PublicURL + "/auth/callback", AllowedUsers: cfg.OIDCAllowedUsers,
+  AllowedGroups: cfg.OIDCAllowedGroups, Log: log})` (does not contact the
+  provider: an outage must not stop nops, so a failure here is a
+  configuration error, fatal); `basic` → `web.NewBasicAuth(web.BasicAuthOptions{
+  UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, Log: log})` (reads the
+  file once, fatal on a bad one). Never log the client secret or the parsed
+  users map.
 - **Notes from `engine-recovery`:** there is no recovery call to make: start
   `Engine.RunApply` in its own goroutine, and its first cycle (before the
   ticker) is the recovery pass. It does not block, so `web` and detection can

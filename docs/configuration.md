@@ -95,7 +95,13 @@ supported. Which files under `-git-path` are read as jobs is described in
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
 | `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](dashboard.md#git-webhook). |
-| `-public-url` | `NOPS_PUBLIC_URL` | none, **required** | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (nops sits behind a proxy and cannot know it). The OIDC redirect URL is `<public-url>/auth/callback`, and notifications link to `<public-url>/deployments/<id>`. |
+| `-public-url` | `NOPS_PUBLIC_URL` | none, **required** | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. |
+| `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | How the dashboard logs people in: `oidc` or `basic`. The two are mutually exclusive — only the options of the chosen one may be set, nops refuses to start otherwise (a leftover flag from switching modes is caught, not silently ignored). See [authentication](dashboard.md#authentication). |
+
+### OIDC (`-auth-mode=oidc`)
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
 | `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL of the OIDC provider, exactly as it announces it in its discovery document: a trailing slash matters (Authentik's has one), nops does not add or drop it. |
 | `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of nops at the provider. |
 | `-oidc-client-secret-file` | `NOPS_OIDC_CLIENT_SECRET_FILE` | none, **required** | File holding the client secret (or `NOPS_OIDC_CLIENT_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). |
@@ -107,6 +113,17 @@ start, since every user of the provider would be able to approve a
 deployment. A user must match either list. How the login works, and how to
 set the client up at Authentik or Authelia, is in
 [dashboard](dashboard.md#authentication).
+
+### Local users (`-auth-mode=basic`)
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-users-file` | `NOPS_USERS_FILE` | none, **required** | File holding one `username:bcrypt-hash` per line (blank lines and `#` comments ignored), read once at startup. Generate a line with `htpasswd -nB <user>`. See [dashboard](dashboard.md#local-users). |
+
+No OIDC provider needed: nops checks the password itself against the file.
+The actor recorded with a decision is the username as is. There is no
+lockout or rate limiting on failed attempts — a known limitation for this
+personal-use tool, see [dashboard](dashboard.md#local-users).
 
 ## Notifications
 
