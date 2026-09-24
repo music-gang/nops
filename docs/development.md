@@ -69,14 +69,17 @@ Flow:
 
 1. Branch from `main`: `type/short-description` (e.g. `feat/hooks-package`).
    For a task in the [roadmap](roadmap.md) the description is the task ID
-   (`feat/config`): that is how the roadmap knows the task is in flight.
-2. **One commit**, already in its final [Angular style](#commit-messages):
-   it is what GitHub proposes as the squash commit (see below), so amend it
-   (`git commit --amend`) rather than adding more while the branch is open.
-3. Open a PR **titled in Angular style**, matching the commit subject.
-4. When CI is green, **squash and merge**: the prefilled message is the
-   branch's own commit, and needs no editing. The branch is deleted
-   automatically.
+   (`feat/config`): that is how the roadmap knows the task is in flight. A
+   `plan first` task is discussed with the maintainer before this step, in
+   the session — there is no branch or PR for the plan itself.
+2. Commit as the work happens, each in [Angular style](#commit-messages). A
+   later change — a fix, an answer to a review comment — is a **new
+   commit**, not an amend or a force-push: the branch's history is free to
+   show the work as it went.
+3. Open a PR **titled in Angular style** once there is something to review.
+4. When CI is green, the maintainer **squashes and merges** by hand, writing
+   the final commit from the branch's commits and the PR description. The
+   branch is deleted automatically.
 
 Commits inside a branch do not need to be signed, whoever makes them: the
 squash commit on `main` is created and signed by GitHub, and the ruleset does
@@ -84,15 +87,16 @@ not require signed commits. Locally the maintainer commits with his GPG key;
 in a cloud session Claude commits unsigned and opens the PR
 (see [CLAUDE.md](../CLAUDE.md#picking-up-work)).
 
-Merges are squash-only, so `main` is a straight line with one commit per PR,
-and **the commit that lands on `main` is the branch's own commit, not the PR
-description**: the repository's squash setting is "Default to pull request
-title and commit details" (`squash_merge_commit_message = COMMIT_MESSAGES`),
-so GitHub prefills the squash box from the commit(s) on the branch. A branch
-has exactly **one commit**, already in its final [Angular
-style](#commit-messages) (plain prose body, wrapped at 72 characters, no
-markdown headings): that is what GitHub proposes and what gets merged,
-without anyone editing the box by hand.
+Merges are squash-only, so `main` is a straight line with one commit per PR.
+The repository's squash setting is "Default to pull request title and commit
+details" (`squash_merge_commit_message = COMMIT_MESSAGES`), which prefills
+the squash box from the PR title and the branch's own commit messages — but
+the maintainer edits that box by hand before merging, since he is the one
+who merges. A branch is free to carry several commits as the work (or a
+review round) goes: each one plain and honest in its own
+[Angular style](#commit-messages) (wrapped at 72 characters, no markdown
+headings), rather than a single commit rewritten every time to look like
+`main`'s final shape.
 
 The **PR description** is a separate field, for whoever reviews it on GitHub,
 and is free to use real structure:
@@ -164,9 +168,10 @@ go vet -tags integration ./...
   characters (`feat(store): add hook_runs table`).
 - **Body:** wrap at 72 characters; plain prose, no markdown headings (this is
   what `git log` shows); explain what and why, not how; no superlatives. A
-  branch has **one commit**, already in this final shape — see
-  [Workflow and CI](#workflow-and-ci) for how it relates to the PR title and
-  to the PR description, which is a separate, richer text.
+  branch can carry several commits — see [Workflow and CI](#workflow-and-ci)
+  for how the maintainer turns them into the one commit that lands on
+  `main`, and how the PR description, a separate and richer text, relates to
+  it.
 - **Breaking changes** (state machine, schema, HCL meta syntax): add a
   `BREAKING CHANGE:` footer, or `!` after the scope.
 - **Attribution:** a commit made by an assistant carries
