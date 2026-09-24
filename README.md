@@ -12,9 +12,10 @@ keeps its own state in SQLite, shows pending changes in a PR-style dashboard,
 and can run **pre/post deployment hooks** (regular Nomad jobs that nops
 dispatches for you) around each deployment.
 
-> **Status: early development.** The design is settled and documented and the
-> building blocks are being implemented one by one; it is not usable yet. What
-> is done and what is left is in the [roadmap](docs/roadmap.md).
+> **Status: early development.** The design is settled and documented and
+> every building block is implemented; what is left is running the
+> [acceptance checklists](docs/acceptance/) against a real cluster. What is
+> done and what is left is in the [roadmap](docs/roadmap.md).
 
 Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
 but written from scratch and extended with persistent state, approvals and hooks.
@@ -67,15 +68,20 @@ untouched and you get a notification. See the
 
 ### Hook examples
 
-Hooks are ordinary Nomad jobs; [`examples/`](examples/) has ready-made ones:
+Hooks are ordinary Nomad jobs; [`examples/`](examples/) has ready-made,
+runnable ones, each paired with the job it deploys:
 
-- [`migrate-hook.nomad.hcl`](examples/migrate-hook.nomad.hcl): run database
-  migrations before the new version starts.
-- [`smoke-hook.nomad.hcl`](examples/smoke-hook.nomad.hcl): check that the
-  service answers after the deploy.
-- [`prepull-hostvolume.nomad.hcl`](examples/prepull-hostvolume.nomad.hcl):
-  pre-pull a heavy image on the node that holds a host volume, so a
-  stop+start deploy only pays for the restart, not for the download.
+- [`examples/migrate/`](examples/migrate/): run database migrations before
+  the new version starts.
+- [`examples/approval/`](examples/approval/): check that the service answers
+  after the deploy.
+- [`examples/prepull-hostvolume/`](examples/prepull-hostvolume/): pre-pull a
+  heavy image on the node that holds a host volume, so a stop+start deploy
+  only pays for the restart, not for the download.
+- [`examples/backup-stateful/`](examples/backup-stateful/): back up a
+  stateful service before its deploy.
+
+These are also what the [acceptance checklists](docs/acceptance/) deploy.
 
 ## Design principles
 

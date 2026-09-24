@@ -3,7 +3,7 @@
 # In the "web" job:
 #   meta {
 #     nops_managed   = "true"
-#     nops_policy    = "auto"
+#     nops_policy    = "approval"
 #     nops_post_hook = "web-smoke"
 #   }
 #
@@ -39,7 +39,7 @@ job "web-smoke" {
       config {
         image   = "curlimages/curl:8.10.1"
         command = "curl"
-        args    = ["-fsS", "--retry", "5", "--retry-connrefused", "http://web.service.consul:8080/healthz"]
+        args    = ["-fsS", "--retry", "5", "--retry-connrefused", "http://web.service.consul:8080/"]
       }
 
       resources {

@@ -32,9 +32,7 @@ New here? Start with the [project README](../README.md).
   detected and deployments are created, superseded and revalidated.
 - [design/engine-apply.md](design/engine-apply.md): how a deployment is moved
   from approval to `completed`.
-
-Not present yet, created together with the code: `acceptance/` (manual
-checklists for the real cluster).
+- [acceptance/](acceptance/): manual checklists for the real cluster.
 
 ## If you change X, update Y
 
@@ -43,6 +41,7 @@ checklists for the real cluster).
 | New meta key or different valid values | `internal/meta` **and** `meta-keys.md` |
 | Behaviour of a policy | `policies.md` |
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
+| A scenario in `examples/` | The matching checklist in `acceptance/`, if it deploys one |
 | State, transition, schema, recovery | `state-machine.md` |
 | Detection cycle (parse, plan, create, supersede, hook sync) | `internal/engine` **and** `design/engine-detection.md` |
 | Flag or env var | `internal/config` **and** `configuration.md` |

@@ -32,10 +32,8 @@ job "myapp-prepull" {
 
   group "prepull" {
     volume "myapp_data" {
-      type            = "host"
-      source          = "myapp_data"
-      access_mode     = "single-node-writer"
-      attachment_mode = "file-system"
+      type   = "host"
+      source = "myapp_data"
     }
 
     restart {
