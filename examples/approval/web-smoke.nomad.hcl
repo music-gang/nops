@@ -36,10 +36,20 @@ job "web-smoke" {
     task "check" {
       driver = "docker"
 
+      # Where "web" answers comes from Nomad's own service discovery (the job
+      # registers it with provider = "nomad"), so the hook needs nothing but
+      # Nomad. It reaches the service on its host address and port.
+      template {
+        destination = "local/url"
+        data        = <<-EOT
+          {{ with nomadService "web" }}{{ with index . 0 }}http://{{ .Address }}:{{ .Port }}/{{ end }}{{ end }}
+        EOT
+      }
+
       config {
         image   = "curlimages/curl:8.10.1"
-        command = "curl"
-        args    = ["-fsS", "--retry", "5", "--retry-connrefused", "http://web.service.consul:8080/"]
+        command = "sh"
+        args    = ["-c", "curl -fsS --retry 5 --retry-connrefused \"$(cat /local/url)\""]
       }
 
       resources {

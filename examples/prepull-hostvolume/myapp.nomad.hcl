@@ -9,8 +9,7 @@
 #     }
 #   }
 #
-# Bump var.image (myapp.vars.hcl) to trigger a deployment for the
-# "prepull-hostvolume" checklist (docs/acceptance/prepull-hostvolume.md).
+# Bump var.image (myapp.vars.hcl) to trigger a deployment.
 
 job "myapp" {
   datacenters = [var.datacenter]
@@ -41,8 +40,9 @@ job "myapp" {
     }
 
     service {
-      name = "myapp"
-      port = "http"
+      name     = "myapp"
+      port     = "http"
+      provider = "nomad"
     }
 
     task "myapp" {

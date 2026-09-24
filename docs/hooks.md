@@ -100,8 +100,9 @@ happens when the dispatched job of a saved ID disappears before nops saw its out
 The files are in [`examples/`](../examples/), one runnable directory per
 scenario (the target job and its hook together, with a `.vars.hcl` for what
 you would tweak for your own cluster). They are the standard cases nops must
-cover; none of them is "the" reference case. Three of them are also what the
-[acceptance checklists](acceptance/) deploy against a real cluster.
+cover; none of them is "the" reference case. `TestExamplesParse` (integration)
+keeps them parsing, with valid meta, with the hooks they declare and needing
+nothing but Nomad (see below).
 
 | Case | Files | Notes |
 |---|---|---|
@@ -123,3 +124,25 @@ the target job: `force_pull = false`.
 A real-world case is an n8n warm-up: `entrypoint` (not `command`) fully
 replaces the image's ENTRYPOINT, which would otherwise do real setup and get
 OOM-killed with little memory.
+
+### Reaching the service from a hook
+
+The examples need nothing but Nomad, not even Consul: the deployed job
+registers its service with Nomad's own discovery (`provider = "nomad"` in the
+`service` block; a service without it defaults to Consul, and the job is not
+even placed on a cluster that has none), and the hook reads the address in a
+`template`:
+
+```hcl
+template {
+  destination = "local/url"
+  data        = <<-EOT
+    {{ with nomadService "web" }}{{ with index . 0 }}http://{{ .Address }}:{{ .Port }}/{{ end }}{{ end }}
+  EOT
+}
+```
+
+With `env = true` the same idea gives environment variables (the backup
+example renders `PGHOST` and `PGPORT` for `pg_dump`). A hook runs after the
+new version is healthy, or after approval for a pre-hook, so the service of an
+already running job is registered by then.
