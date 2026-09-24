@@ -1,21 +1,23 @@
 {{define "deployment"}}
 {{template "chrome_head" .}}
-<section>
-  <h1 class="page-title">{{.Deployment.Namespace}}/{{.Deployment.JobID}}</h1>
-  <div class="detail-grid">
-    <div class="detail-main">
-      <h2 class="page-subtitle">Plan diff</h2>
-      {{template "diff" .Diff}}
-    </div>
-    <aside class="detail-rail">
-      <div id="deployment-status"
-           hx-get="/deployments/{{.Deployment.ID}}/status"
-           {{if not (isTerminal .Deployment.State)}}hx-trigger="every 3s"{{end}}
-           hx-swap="outerHTML">
-        {{template "status_inner" .}}
+{{template "deployment_head" .}}
+<div class="layout">
+  <div class="layout__main">
+    {{/* Open to be reviewed; folded once there is nothing to decide, so what a
+         finished deployment did (hooks, timeline) is not pushed off the page
+         by a long diff. */}}
+    <details class="box fold"{{if .CanDecide}} open{{end}}>
+      <summary class="box__header"><h2 class="box__title">Plan diff</h2>{{if .Summary.Total}}<span class="muted">{{.Summary.Total}} field {{if eq .Summary.Total 1}}change{{else}}changes{{end}}</span>{{end}}</summary>
+      <div class="box__body">
+        {{template "diff_summary" .Summary}}
+        {{template "diff" .Diff}}
       </div>
-    </aside>
+    </details>
+    {{template "deployment_activity" .}}
   </div>
-</section>
+  <aside class="layout__side">
+    {{template "deployment_details" .}}
+  </aside>
+</div>
 {{template "chrome_foot" .}}
 {{end}}

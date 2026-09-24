@@ -1,4 +1,3 @@
-{{define "status_fragment"}}<div id="deployment-status"
-     hx-get="/deployments/{{.Deployment.ID}}/status"
-     {{if not (isTerminal .Deployment.State)}}hx-trigger="every 3s"{{end}}
-     hx-swap="outerHTML">{{template "status_inner" .}}</div>{{end}}
+{{/* What the deployment page polls while the deployment is not finished: the
+     head replaces itself, the activity and the details swap out of band. */}}
+{{define "status_fragment"}}{{template "deployment_head" .}}{{template "deployment_activity" .}}{{template "deployment_details" .}}{{end}}

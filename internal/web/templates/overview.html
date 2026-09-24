@@ -1,0 +1,99 @@
+{{define "overview"}}
+{{template "chrome_head" .}}
+<div class="pagehead"><h1 class="pagehead__title">Overview</h1></div>
+
+<section class="box strip">
+  <div class="strip__row">
+    <span class="strip__label">Git</span>
+    {{if .Git.Known}}
+    <span class="strip__main">
+      {{if .Git.URL}}<a class="mono" href="{{.Git.URL}}" target="_blank" rel="noopener noreferrer" title="{{.Git.SHA}}">{{.Git.Short}}</a>{{else}}<span class="mono" title="{{.Git.SHA}}">{{.Git.Short}}</span>{{end}}
+      <span class="strip__text" title="{{.Git.Subject}}">{{.Git.Subject}}</span>
+    </span>
+    <span class="strip__meta hide-sm">{{if .Git.Author}}{{.Git.Author}} &middot; {{end}}{{template "time" .Git.CommittedAt}}</span>
+    {{else}}
+    <span class="strip__main muted">no commit read yet</span>
+    {{end}}
+    <span class="strip__meta">checked {{template "time" .Git.CheckedAt}}</span>
+    {{if .Git.CanFetch}}
+    <form method="post" action="/fetch" class="strip__action">
+      <button type="submit" class="btn btn--sm">Fetch now</button>
+    </form>
+    {{end}}
+  </div>
+  {{if .Git.Error}}
+  <p class="flash flash--error flash--flat">The last poll of the repository failed {{template "time" .Git.ErrorAt}}, so nops is working from the last commit it read: {{.Git.Error}}</p>
+  {{end}}
+
+  <div class="strip__row">
+    <span class="strip__label">Detection</span>
+    {{if .Cycle.Ran}}
+    <span class="strip__main">
+      last cycle {{template "time" .Cycle.At}}, took {{.Cycle.Took}}
+      <span class="muted">&middot; {{.Cycle.Managed}} managed {{if eq .Cycle.Managed 1}}job{{else}}jobs{{end}}</span>
+    </span>
+    {{if .Cycle.Error}}<span class="pill state-failed">aborted</span>
+    {{else if or .Cycle.Skipped .Cycle.Unparsed}}<span class="pill state-pending">degraded</span>
+    {{else}}<span class="pill state-success">ok</span>{{end}}
+    {{else}}
+    <span class="strip__main muted">waiting for the first cycle</span>
+    {{end}}
+  </div>
+  {{if .Cycle.Error}}<p class="flash flash--error flash--flat">The last cycle stopped: {{.Cycle.Error}}</p>{{end}}
+  {{if .Cycle.Skipped}}<p class="flash flash--warn flash--flat">{{.Cycle.Skipped}} {{if eq .Cycle.Skipped 1}}job was{{else}}jobs were{{end}} skipped in the last cycle because Nomad failed on {{if eq .Cycle.Skipped 1}}it{{else}}them{{end}}: their state below may be out of date. The logs say why.</p>{{end}}
+  {{if .Cycle.Unparsed}}<p class="flash flash--warn flash--flat">{{.Cycle.Unparsed}} {{if eq .Cycle.Unparsed 1}}file{{else}}files{{end}} in the repository could not be parsed by Nomad and {{if eq .Cycle.Unparsed 1}}is{{else}}are{{end}} ignored. The logs say which.</p>{{end}}
+</section>
+
+<section class="box">
+  <header class="box__header">
+    <h2 class="box__title">Needs attention</h2>
+    {{if .Attention}}<span class="box__count">{{len .Attention}}</span>{{end}}
+  </header>
+  {{if .Attention}}
+  <ul class="rows">
+    {{range .Attention}}
+    <li class="row row--attention">
+      <span class="pill {{.KindClass}}">{{.KindLabel}}</span>
+      <a class="row__title" href="{{.Path}}" title="{{.Title}}">{{.Title}}</a>
+      <span class="row__detail" title="{{.Detail}}">{{.Detail}}</span>
+      <span class="row__when hide-sm">{{template "time" .When}}</span>
+      <span class="row__action">
+        {{if .RetryPath}}
+        <form method="post" action="{{.RetryPath}}">
+          <input type="hidden" name="back" value="overview">
+          <button type="submit" class="btn btn--sm">Retry</button>
+        </form>
+        {{else}}
+        <a class="btn btn--sm{{if eq .Kind "pending"}} btn--primary{{end}}" href="{{.Path}}">{{if eq .Kind "pending"}}Review{{else}}Open{{end}}</a>
+        {{end}}
+      </span>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">Nothing needs your attention.</p>
+  {{end}}
+</section>
+
+<section class="box">
+  <header class="box__header">
+    <h2 class="box__title">In progress</h2>
+    {{if .InProgress}}<span class="box__count">{{len .InProgress}}</span>{{end}}
+  </header>
+  {{if .InProgress}}
+  <ul class="rows">
+    {{range .InProgress}}
+    <li class="row row--progress">
+      {{template "state_badge" .State}}
+      <a class="row__title" href="{{.Path}}" title="{{.Title}}">{{.Title}}</a>
+      <span class="row__detail" title="{{.CommitSubj}}">{{if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="mono">{{.CommitShort}}</span>{{end}}</span>
+      <span class="row__when">{{template "time" .CreatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">No deployment is in progress.</p>
+  {{end}}
+</section>
+{{template "chrome_foot" .}}
+{{end}}

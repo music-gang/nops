@@ -1,6 +1,6 @@
-{{/* Shared chrome, diff renderer and status fragment, included by every page
-     template parsed alongside it (server.go parses templates/*.html as one
-     set). See docs/dashboard.md for what each page shows. */}}
+{{/* Shared chrome, the small pieces every page reuses, the diff renderer and
+     the status fragment. server.go parses templates/*.html as one set. See
+     docs/dashboard.md for what each page shows. */}}
 
 {{define "chrome_head"}}
 <!doctype html>
@@ -18,9 +18,9 @@
   <div class="app-header__inner">
     <a class="app-header__brand" href="/">nops</a>
     <nav class="app-nav">
-      <a class="app-nav__link{{if eq .Nav "pending"}} is-active{{end}}" href="/">Pending</a>
-      <a class="app-nav__link{{if eq .Nav "history"}} is-active{{end}}" href="/history">History</a>
-      <a class="app-nav__link{{if eq .Nav "drift"}} is-active{{end}}" href="/drift">Drift</a>
+      <a class="app-nav__link{{if eq .Nav "overview"}} is-active{{end}}" href="/">Overview</a>
+      <a class="app-nav__link{{if eq .Nav "jobs"}} is-active{{end}}" href="/jobs">Jobs</a>
+      <a class="app-nav__link{{if eq .Nav "history"}} is-active{{end}}" href="/history">Activity</a>
     </nav>
     <div class="app-header__actor">
       {{if .Actor}}
@@ -41,9 +41,20 @@
 </html>
 {{end}}
 
-{{/* -- deployment state badge ------------------------------------------- */}}
-{{define "state_badge"}}<span class="badge {{stateClass .}}">{{stateLabel .}}</span>{{end}}
-{{define "hook_state_badge"}}<span class="badge {{hookStateClass .}}">{{hookStateLabel .}}</span>{{end}}
+{{/* -- small pieces ------------------------------------------------------- */}}
+
+{{/* A moment: relative text, absolute time on hover. Takes a timeView. */}}
+{{define "time"}}{{if .ISO}}<time datetime="{{.ISO}}" title="{{.Full}}">{{.Rel}}</time>{{end}}{{end}}
+
+{{define "state_badge"}}<span class="pill {{stateClass .}}">{{stateLabel .}}</span>{{end}}
+{{define "hook_state_badge"}}<span class="pill {{hookStateClass .}}">{{hookStateLabel .}}</span>{{end}}
+
+{{/* A page's filter: links with their counts, the active one marked. */}}
+{{define "filters"}}
+<nav class="filters" aria-label="Filter">
+  {{range .}}<a class="filter{{if .Active}} is-active{{end}}" href="{{if .Key}}?state={{.Key}}{{else}}?{{end}}">{{.Label}} <span class="filter__count">{{.Count}}</span></a>{{end}}
+</nav>
+{{end}}
 
 {{/* -- plan diff, recursively: Job -> TaskGroups -> Tasks -> Objects/Fields
      A field or object of Type "None" carries no change, so unchanged
@@ -74,7 +85,7 @@
   {{end}}
 </div>
 {{else}}
-<p class="diff-empty-state">No changes.</p>
+<p class="empty">No changes.</p>
 {{end}}
 {{end}}
 
@@ -107,74 +118,159 @@
 {{end}}
 {{end}}
 
-{{/* -- events timeline ---------------------------------------------------- */}}
-{{define "events_timeline"}}
-{{if .}}
-<ol class="timeline">
-  {{range .}}
-  <li class="timeline-item">
-    <span class="timeline-item__time">{{.Time}}</span>
-    <span class="timeline-item__transition">{{.From}} &rarr; {{.To}}</span>
-    <span class="timeline-item__actor">{{.Actor}}</span>
-    {{if .Msg}}<span class="timeline-item__msg">{{.Msg}}</span>{{end}}
-  </li>
-  {{end}}
-</ol>
-{{else}}
-<p class="empty-state">No events yet.</p>
-{{end}}
-{{end}}
-
-{{/* -- hook runs ------------------------------------------------------- */}}
-{{define "hook_runs"}}
-{{if .}}
-<ul class="hook-list">
-  {{range .}}
-  <li class="hook-item">
-    <span class="hook-item__phase">{{.Phase}}-deploy hook</span>
-    {{template "hook_state_badge" .State}}
-    <span class="hook-item__job">{{.JobID}}</span>
-    <span class="hook-item__time">started {{.StartedAt}}{{if .FinishedAt}}, finished {{.FinishedAt}}{{end}}</span>
-    {{if .Error}}<span class="hook-item__error">{{.Error}}</span>{{end}}
-  </li>
-  {{end}}
+{{/* The diff at a glance: how many fields, and where. Takes a diffSummary. */}}
+{{define "diff_summary"}}
+{{if .Total}}
+<p class="diff-summary">
+  <strong>{{.Total}} field {{if eq .Total 1}}change{{else}}changes{{end}}</strong>
+  {{if .Added}}<span class="diff-summary__n diff-summary__n--added">+{{.Added}} added</span>{{end}}
+  {{if .Edited}}<span class="diff-summary__n diff-summary__n--edited">~{{.Edited}} edited</span>{{end}}
+  {{if .Deleted}}<span class="diff-summary__n diff-summary__n--deleted">&minus;{{.Deleted}} removed</span>{{end}}
+</p>
+<ul class="places">
+  {{range .Places}}<li class="place"><span class="diff-kind">{{if eq .Kind "job"}}Job{{else if eq .Kind "group"}}Group{{else}}Task{{end}}</span>{{if .Name}} <span class="mono">{{.Name}}</span>{{end}} <span class="muted">{{.Changes}}</span></li>{{end}}
 </ul>
 {{end}}
 {{end}}
 
-{{/* -- decision rail + status, polled by the deployment page while the
-     deployment is non-terminal ------------------------------------------ */}}
-{{define "status_inner"}}
-<div class="rail-card">
-  {{template "state_badge" .Deployment.State}}
-  {{if .Deployment.Error}}<p class="rail-error">{{.Deployment.Error}}</p>{{end}}
-  {{if .Notice}}<p class="rail-notice">{{.Notice}}</p>{{end}}
+{{/* -- deployments of a job, one line each --------------------------------- */}}
+{{define "deployment_rows"}}
+<ul class="rows">
+  {{range .}}
+  <li class="row row--deployment">
+    {{template "state_badge" .State}}
+    <a class="row__title" href="{{.Path}}">{{.CommitShort}}</a>
+    <span class="row__detail" title="{{.CommitSubj}}">{{if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="muted">no commit message</span>{{end}}</span>
+    <span class="row__meta hide-sm">{{if .DecidedBy}}{{.DecidedBy}}{{else}}<span class="muted">&mdash;</span>{{end}}</span>
+    <span class="row__when">{{template "time" .CreatedAt}}</span>
+  </li>
+  {{end}}
+</ul>
+{{end}}
 
-  <dl class="rail-fields">
-    <dt>Job</dt><dd class="mono">{{.Deployment.Namespace}}/{{.Deployment.JobID}}</dd>
-    <dt>Commit</dt><dd class="mono">{{shortCommit .Deployment.CommitSHA}}</dd>
-    <dt>Spec hash</dt><dd class="mono">{{.Deployment.SpecHash}}</dd>
-    <dt>Created</dt><dd>{{.Deployment.CreatedAt}}</dd>
-    {{if .Deployment.DecidedBy}}<dt>Decided by</dt><dd>{{.Deployment.DecidedBy}} at {{.Deployment.DecidedAt}}</dd>{{end}}
-    {{if .Deployment.EvalID}}<dt>Eval</dt><dd class="mono">{{.Deployment.EvalID}}</dd>{{end}}
-  </dl>
+{{/* -- hook runs and the timeline, one line each ---------------------------- */}}
+{{define "hook_runs"}}
+{{if .}}
+<ul class="rows">
+  {{range .}}
+  <li class="row row--hook">
+    <span class="row__kind">{{.Phase}}-hook</span>
+    <span class="row__title mono" title="{{.JobID}}">{{.JobID}}</span>
+    {{template "hook_state_badge" .State}}
+    <span class="row__detail">{{if .Error}}<span class="text-failed" title="{{.Error}}">{{.Error}}</span>{{end}}</span>
+    <span class="row__when">{{template "time" .StartedAt}}{{if .FinishedAt.ISO}} <span class="muted">&rarr;</span> {{template "time" .FinishedAt}}{{end}}</span>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="empty">No hook ran.</p>
+{{end}}
+{{end}}
+
+{{define "events_timeline"}}
+{{if .}}
+<ul class="rows">
+  {{range .}}
+  <li class="row row--event">
+    <span class="row__when">{{template "time" .Time}}</span>
+    <span class="row__transition">{{if .Retry}}retry requested{{else}}{{stateLabel .From}}{{if .From}} &rarr; {{end}}{{stateLabel .To}}{{end}}</span>
+    <span class="row__meta">{{.Actor}}</span>
+    <span class="row__detail" title="{{.Msg}}">{{.Msg}}</span>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="empty">No events yet.</p>
+{{end}}
+{{end}}
+
+{{/* -- the deployment page, in the three regions the status fragment
+     refreshes while the deployment is not finished: the head (state and
+     decision), the activity (hooks and timeline) and the details. ---------- */}}
+
+{{define "deployment_head"}}
+<div id="deployment-status"
+     hx-get="{{.Deployment.Path}}/status"
+     {{if not (isTerminal .Deployment.State)}}hx-trigger="every 3s"{{end}}
+     hx-swap="outerHTML">
+  <div class="pagehead">
+    <p class="crumbs"><a href="/jobs">Jobs</a> / <a href="{{.Deployment.JobPath}}">{{.Deployment.Title}}</a></p>
+    <h1 class="pagehead__title">{{.Deployment.Title}} {{template "state_badge" .Deployment.State}}</h1>
+    <p class="pagehead__sub">
+      {{if .Deployment.CommitURL}}<a class="mono" href="{{.Deployment.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</a>{{else}}<span class="mono" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</span>{{end}}
+      {{if .Deployment.CommitSubj}}<span class="pagehead__subject" title="{{.Deployment.CommitSubj}}">{{.Deployment.CommitSubj}}</span>{{end}}
+      <span class="muted pagehead__meta">{{if .Deployment.CommitAuthor}}by {{.Deployment.CommitAuthor}} &middot; {{end}}created {{template "time" .Deployment.CreatedAt}}</span>
+    </p>
+  </div>
+
+  {{if .Deployment.Error}}<p class="flash flash--error">{{.Deployment.Error}}</p>{{end}}
+  {{with .Blocking}}
+  <section class="flash flash--warn flash--action">
+    <div><strong>This deployment blocks its job.</strong> {{.Reason}}</div>
+    <form method="post" action="{{.RetryPath}}">
+      <input type="hidden" name="back" value="job">
+      <button type="submit" class="btn btn--sm">Retry</button>
+    </form>
+  </section>
+  {{end}}
+  {{if .Notice}}<p class="flash flash--warn">{{.Notice}}</p>{{end}}
 
   {{if .CanDecide}}
-  <div class="rail-actions">
-    <form method="post" action="/deployments/{{.Deployment.ID}}/approve">
-      <input type="hidden" name="spec_hash" value="{{.Deployment.SpecHash}}">
-      <button type="submit" class="btn btn--primary">Approve</button>
-    </form>
-    <form method="post" action="/deployments/{{.Deployment.ID}}/reject">
-      <button type="submit" class="btn btn--secondary">Reject</button>
-    </form>
-  </div>
+  <section class="box decision">
+    <header class="box__header"><h2 class="box__title">Review</h2><span class="muted">Approving is valid for this exact spec (<span class="mono" title="{{.Deployment.SpecHash}}">{{.Deployment.SpecShort}}</span>)</span></header>
+    <div class="box__body">
+      <p class="decision__intro">Approving runs, in order:</p>
+      <ol class="steps">
+        {{range .Steps}}
+        <li>{{if eq .Kind "pre"}}Run the pre-hook <span class="mono">{{.Job}}</span> (timeout {{.Timeout}}). If it fails, the live job is left untouched.
+        {{else if eq .Kind "register"}}{{.Text}}
+        {{else if eq .Kind "health"}}Wait for the new version to become healthy.
+        {{else}}Run the post-hook <span class="mono">{{.Job}}</span> (timeout {{.Timeout}}).{{end}}</li>
+        {{end}}
+      </ol>
+      <div class="decision__actions">
+        <form method="post" action="{{.Deployment.Path}}/approve">
+          <input type="hidden" name="spec_hash" value="{{.Deployment.SpecHash}}">
+          <button type="submit" class="btn btn--primary">Approve</button>
+        </form>
+        <form method="post" action="{{.Deployment.Path}}/reject">
+          <button type="submit" class="btn btn--danger">Reject</button>
+        </form>
+      </div>
+    </div>
+  </section>
   {{end}}
+</div>
+{{end}}
 
-  <h3 class="rail-subhead">Hooks</h3>
-  {{template "hook_runs" .HookRuns}}
+{{define "deployment_activity"}}
+<div id="deployment-activity"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  <section class="box">
+    <header class="box__header"><h2 class="box__title">Hooks</h2></header>
+    {{template "hook_runs" .HookRuns}}
+  </section>
+  <section class="box">
+    <header class="box__header"><h2 class="box__title">Timeline</h2></header>
+    {{template "events_timeline" .Events}}
+  </section>
+</div>
+{{end}}
 
-  <h3 class="rail-subhead">History</h3>
-  {{template "events_timeline" .Events}}
+{{define "deployment_details"}}
+<div id="deployment-details"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  <section class="box">
+    <header class="box__header"><h2 class="box__title">Details</h2></header>
+    <dl class="dl">
+      <dt>Job</dt><dd><a href="{{.Deployment.JobPath}}">{{.Deployment.Title}}</a></dd>
+      <dt>Policy</dt><dd>{{.Deployment.Policy}}</dd>
+      <dt>Commit</dt><dd class="mono" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</dd>
+      <dt>Spec hash</dt><dd class="mono" title="{{.Deployment.SpecHash}}">{{.Deployment.SpecShort}}</dd>
+      <dt>Live index</dt><dd class="mono" title="The job's index in Nomad when this was detected">{{.Deployment.CASIndex}}</dd>
+      {{if .Deployment.EvalID}}<dt>Eval</dt><dd class="mono" title="{{.Deployment.EvalID}}">{{.Deployment.EvalShort}}</dd>{{end}}
+      <dt>Created</dt><dd>{{template "time" .Deployment.CreatedAt}}</dd>
+      {{if .Deployment.DecidedBy}}<dt>Decided</dt><dd title="{{.Deployment.DecidedBy}}">{{.Deployment.DecidedBy}} {{template "time" .Deployment.DecidedAt}}</dd>{{end}}
+      {{if .Deployment.RetriedBy}}<dt>Retried</dt><dd title="{{.Deployment.RetriedBy}}">{{.Deployment.RetriedBy}} {{template "time" .Deployment.RetriedAt}}</dd>{{end}}
+    </dl>
+  </section>
 </div>
 {{end}}

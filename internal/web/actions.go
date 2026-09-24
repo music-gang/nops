@@ -13,8 +13,8 @@ import (
 // (Engine.Retry). It never applies anything: the next deployment follows the
 // job's policy, so under "approval" it still waits for a human decision.
 //
-// It always goes back to "/": nothing the browser sends reaches the Location
-// header, so there is no redirect to validate.
+// The form's "back" names the page to return to (see backTo): nothing the
+// browser sends reaches the Location header as a path or URL.
 func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFrom(r.Context())
 	if !ok {
@@ -25,7 +25,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	err := s.engine.Retry(r.Context(), ns, job, actor)
 	switch {
 	case err == nil:
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, s.backTo(r.FormValue("back"), ns, job), http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFoundMessage(w, r, "This job does not exist.")
 	case errors.Is(err, engine.ErrNotBlocked), errors.Is(err, store.ErrAlreadyRetried):
@@ -49,4 +49,27 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 func (s *server) fetchNow(w http.ResponseWriter, r *http.Request) {
 	s.trigger()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// backTo is the page a write returns to, chosen from a fixed list by the name
+// the form sends ("jobs", "activity", "job"; anything else is the Overview).
+// A name is not a path: every result is a constant or built here from what
+// nops itself knows, so there is no redirect to validate (decision log,
+// 2026-09-24).
+func (s *server) backTo(name, namespace, jobID string) string {
+	switch name {
+	case "jobs":
+		return "/jobs"
+	case "activity":
+		return "/history"
+	case "job":
+		// The job's own page, from the engine's copy of its name, not the
+		// request's.
+		for _, o := range s.engine.Observations() {
+			if o.Namespace == namespace && o.JobID == jobID {
+				return jobPath(o.Namespace, o.JobID)
+			}
+		}
+	}
+	return "/"
 }

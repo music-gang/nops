@@ -2,17 +2,53 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/music-gang/nops/internal/store"
 )
 
-// formatTime is how every timestamp is shown: UTC, so it reads the same
+// formatTime is how an absolute timestamp is shown: UTC, so it reads the same
 // whatever timezone the operator's browser is in.
 func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+// timeView is a moment as the pages show it: relative ("3m ago") in the text,
+// with the absolute UTC time on hover and the ISO one for the <time> element.
+// The zero value means "no such moment" and renders as nothing.
+type timeView struct {
+	Rel, Full, ISO string
+}
+
+// when builds the timeView of t as seen from the server's clock.
+func (s *server) when(t time.Time) timeView {
+	if t.IsZero() {
+		return timeView{}
+	}
+	return timeView{Rel: relative(s.now(), t), Full: formatTime(t), ISO: t.UTC().Format(time.RFC3339)}
+}
+
+// relative says how long before now t was. Under a minute it is "just now"
+// (nops's own clocks and the operator's need not agree to the second, so a t a
+// little in the future reads the same); past a month it is the date.
+func relative(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
+	default:
+		return t.UTC().Format("2006-01-02")
+	}
 }
 
 // baseData is what every page template needs for its chrome (nav, actor).
@@ -20,7 +56,7 @@ func formatTime(t time.Time) string {
 // {{.Actor}} works from any page template.
 type baseData struct {
 	Actor string
-	Nav   string // which nav tab is active: "pending", "history" or "drift"
+	Nav   string // which nav tab is active: "overview", "jobs" or "history"
 }
 
 func (s *server) base(r *http.Request, nav string) baseData {
@@ -28,45 +64,97 @@ func (s *server) base(r *http.Request, nav string) baseData {
 	return baseData{Actor: actor, Nav: nav}
 }
 
-// deploymentCard is a deployment as shown in a list (pending, active,
-// history) or in the decision rail of its own page. It never carries
-// JobSpec: the full unredacted job (see
-// docs/design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
-type deploymentCard struct {
-	ID           string
-	JobID        string
-	Namespace    string
-	CommitSHA    string
-	SpecHash     string
-	State        store.State
-	StateLabel   string
-	StateClass   string
-	Error        string
-	DecidedBy    string
-	DecidedAt    string // formatted, "" if not decided
-	CreatedAt    string
-	AppliedIndex uint64
-	EvalID       string
+// duration writes d the way a person would: "10m", not Go's "10m0s".
+func duration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
-func toCard(d *store.Deployment) deploymentCard {
+// jobPath is where a job's page lives. ns and job are path-escaped: both can
+// hold characters a URL path does not.
+func jobPath(namespace, jobID string) string {
+	return "/jobs/" + url.PathEscape(namespace) + "/" + url.PathEscape(jobID)
+}
+
+// deploymentCard is a deployment as shown in a list or on its own page. It
+// never carries JobSpec: the full unredacted job (see
+// docs/design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
+// Long identifiers come twice: the short form for the text and the full one
+// for the hover title.
+type deploymentCard struct {
+	ID         string
+	JobID      string
+	Namespace  string
+	Title      string // namespace/job
+	JobPath    string
+	Path       string // the deployment's own page
+	Policy     store.Policy
+	State      store.State
+	StateLabel string
+	StateClass string
+	Error      string
+	Retried    bool
+
+	CommitSHA    string
+	CommitShort  string
+	CommitURL    string // "" when there is no link
+	CommitSubj   string // "" for a deployment created before it was recorded
+	CommitAuthor string
+
+	SpecHash  string
+	SpecShort string
+	CASIndex  uint64
+	EvalID    string
+	EvalShort string
+	Applied   bool // the register was reached
+
+	DecidedBy string
+	DecidedAt timeView
+	RetriedBy string
+	RetriedAt timeView
+	CreatedAt timeView
+	UpdatedAt timeView
+}
+
+func (s *server) card(d *store.Deployment) deploymentCard {
 	c := deploymentCard{
 		ID:           d.ID,
 		JobID:        d.JobID,
 		Namespace:    d.Namespace,
-		CommitSHA:    d.CommitSHA,
-		SpecHash:     d.SpecHash,
+		Title:        d.Namespace + "/" + d.JobID,
+		JobPath:      jobPath(d.Namespace, d.JobID),
+		Path:         "/deployments/" + url.PathEscape(d.ID),
+		Policy:       d.Policy,
 		State:        d.State,
 		StateLabel:   stateLabel(d.State),
 		StateClass:   stateClass(d.State),
 		Error:        d.Error,
-		DecidedBy:    d.DecidedBy,
-		CreatedAt:    formatTime(d.CreatedAt),
-		AppliedIndex: d.AppliedIndex,
+		Retried:      !d.RetriedAt.IsZero(),
+		CommitSHA:    d.CommitSHA,
+		CommitShort:  shortCommit(d.CommitSHA),
+		CommitSubj:   d.CommitSubject,
+		CommitAuthor: d.CommitAuthor,
+		SpecHash:     d.SpecHash,
+		SpecShort:    short(12, d.SpecHash),
+		CASIndex:     d.CASIndex,
 		EvalID:       d.EvalID,
+		EvalShort:    short(8, d.EvalID),
+		Applied:      d.AppliedIndex != 0,
+		DecidedBy:    d.DecidedBy,
+		DecidedAt:    s.when(d.DecidedAt),
+		RetriedBy:    d.RetriedBy,
+		RetriedAt:    s.when(d.RetriedAt),
+		CreatedAt:    s.when(d.CreatedAt),
+		UpdatedAt:    s.when(d.UpdatedAt),
 	}
-	if !d.DecidedAt.IsZero() {
-		c.DecidedAt = formatTime(d.DecidedAt)
+	if s.commitURL != nil {
+		c.CommitURL = s.commitURL(d.CommitSHA)
 	}
 	return c
 }

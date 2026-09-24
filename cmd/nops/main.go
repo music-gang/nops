@@ -108,7 +108,8 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Trigger: watcher.Trigger,
+		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Log: log,
 	})
 	if err != nil {

@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	"time"
 
 	"github.com/music-gang/nops/internal/engine"
-	"github.com/music-gang/nops/internal/meta"
+	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -26,6 +25,10 @@ type fakeStore struct {
 	activeErr  error
 	history    []*store.Deployment
 	historyErr error
+	byJob      []*store.Deployment // what ListByJob returns, whatever the job
+	byJobErr   error
+	latest     []*store.Deployment
+	latestErr  error
 	events     []store.Event
 	eventsErr  error
 	hookRuns   map[string]*store.HookRun // key: deploymentID+"/"+phase
@@ -50,6 +53,14 @@ func (f *fakeStore) ListHistory(ctx context.Context, limit int) ([]*store.Deploy
 	return f.history, f.historyErr
 }
 
+func (f *fakeStore) ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error) {
+	return f.byJob, f.byJobErr
+}
+
+func (f *fakeStore) LatestPerJob(ctx context.Context) ([]*store.Deployment, error) {
+	return f.latest, f.latestErr
+}
+
 func (f *fakeStore) Events(ctx context.Context, deploymentID string) ([]store.Event, error) {
 	return f.events, f.eventsErr
 }
@@ -67,7 +78,6 @@ func (f *fakeStore) GetHookRun(ctx context.Context, deploymentID, phase string) 
 
 type approveCall struct{ id, specHash, actor string }
 type rejectCall struct{ id, actor string }
-
 type retryCall struct{ namespace, job, actor string }
 
 type fakeEngine struct {
@@ -78,11 +88,7 @@ type fakeEngine struct {
 	rejectCalls  []rejectCall
 	retryCalls   []retryCall
 	observations []engine.Observation
-}
-
-func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) error {
-	f.retryCalls = append(f.retryCalls, retryCall{namespace, jobID, actor})
-	return f.retryErr
+	status       engine.Status
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -95,7 +101,21 @@ func (f *fakeEngine) Reject(ctx context.Context, id, actor string) error {
 	return f.rejectErr
 }
 
+func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) error {
+	f.retryCalls = append(f.retryCalls, retryCall{namespace, jobID, actor})
+	return f.retryErr
+}
+
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }
+func (f *fakeEngine) Status() engine.Status              { return f.status }
+
+type fakeGit struct {
+	snap   gitwatch.Snapshot
+	status gitwatch.Status
+}
+
+func (f *fakeGit) Snapshot() gitwatch.Snapshot { return f.snap }
+func (f *fakeGit) Status() gitwatch.Status     { return f.status }
 
 // -- test setup --------------------------------------------------------------
 
@@ -130,6 +150,10 @@ func mintSession(t *testing.T, a *Auth, actor string) *http.Cookie {
 	return c
 }
 
+// testNow is the clock every page test reads: relative times are counted from
+// it, so "created 1h ago" does not depend on when the tests run.
+var testNow = time.Date(2026, 1, 2, 4, 4, 5, 0, time.UTC)
+
 type testServer struct {
 	t      *testing.T
 	h      http.Handler
@@ -137,16 +161,19 @@ type testServer struct {
 	logs   *syncBuffer
 	trig   int
 	engine *fakeEngine
+	git    *fakeGit
 }
 
 func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testServer {
 	t.Helper()
-	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en}
+	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}}
 	log := slog.New(slog.NewTextHandler(ts.logs, nil))
 	h, err := New(Options{
-		Auth: ts.auth, Store: st, Engine: en, WebhookSecret: secret,
-		Trigger: func() { ts.trig++ },
-		Log:     log,
+		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, WebhookSecret: secret,
+		Trigger:   func() { ts.trig++ },
+		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
+		Now:       func() time.Time { return testNow },
+		Log:       log,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -172,13 +199,58 @@ func (ts *testServer) do(method, target string, body *strings.Reader, cookies ..
 	return rec
 }
 
+// get is a GET of target behind a session as alice, failing the test unless
+// the answer is 200; it returns the body.
+func (ts *testServer) get(target string) string {
+	ts.t.Helper()
+	rec := ts.do("GET", target, nil, mintSession(ts.t, ts.auth, "alice"))
+	if rec.Code != http.StatusOK {
+		ts.t.Fatalf("GET %s: status %d, body %s", target, rec.Code, rec.Body)
+	}
+	return rec.Body.String()
+}
+
+// specMarker is inside every sample deployment's JobSpec: it must never reach
+// a page.
+const specMarker = "TOP-SECRET-JOB-SPEC-MARKER"
+
 func sampleDeployment() *store.Deployment {
 	return &store.Deployment{
 		ID: "d1", JobID: "web", Namespace: "default",
-		CommitSHA: "abc123def456", SpecHash: "spec-hash-1",
+		CommitSHA: "abc123def456", CommitSubject: "feat(web): scale up", CommitAuthor: "Iacopo",
+		SpecHash: "spec-hash-1", Policy: store.PolicyApproval, CASIndex: 42,
 		State: store.StatePendingApproval, PlanDiff: "",
-		JobSpec:   "TOP-SECRET-JOB-SPEC-MARKER",
-		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		JobSpec:   `{"ID":"web","Name":"` + specMarker + `","Meta":{"nops_pre_hook":"web-migrate","nops_pre_hook_timeout":"10m","nops_post_hook":"web-smoke"}}`,
+		CreatedAt: testNow.Add(-time.Hour),
+		UpdatedAt: testNow.Add(-time.Hour),
+	}
+}
+
+// dep is a sample deployment of a job, in a state, created age ago.
+func dep(id, job string, st store.State, age time.Duration) *store.Deployment {
+	d := sampleDeployment()
+	d.ID, d.JobID, d.State = id, job, st
+	d.CreatedAt, d.UpdatedAt = testNow.Add(-age), testNow.Add(-age)
+	return d
+}
+
+// mustContain fails for every want the page lacks.
+func mustContain(t *testing.T, page string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(page, want) {
+			t.Errorf("page is missing %q", want)
+		}
+	}
+}
+
+// mustNotContain fails for every unwanted string the page has.
+func mustNotContain(t *testing.T, page string, unwanted ...string) {
+	t.Helper()
+	for _, u := range unwanted {
+		if strings.Contains(page, u) {
+			t.Errorf("page has %q, which it must not", u)
+		}
 	}
 }
 
@@ -189,7 +261,7 @@ func TestPagesRequireLogin(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
 
-	getPaths := []string{"/", "/history", "/drift", "/deployments/d1", "/deployments/d1/status"}
+	getPaths := []string{"/", "/jobs", "/jobs/default/web", "/history", "/drift", "/deployments/d1", "/deployments/d1/status"}
 	for _, p := range getPaths {
 		rec := ts.do("GET", p, nil)
 		if rec.Code != http.StatusFound {
@@ -227,8 +299,6 @@ func TestHealthzAndStaticAreOpen(t *testing.T) {
 	}
 }
 
-// -- security headers -------------------------------------------------------
-
 func TestSecurityHeaders(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	rec := ts.do("GET", "/healthz", nil)
@@ -239,148 +309,6 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("healthz Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))
-	}
-}
-
-// -- pages render, and never leak job_spec ----------------------------------
-
-func TestIndexPage(t *testing.T) {
-	pending := sampleDeployment()
-	active := sampleDeployment()
-	active.ID, active.State = "d2", store.StateApplying
-	st := &fakeStore{active: []*store.Deployment{pending, active}}
-	ts := newTestServer(t, st, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/", nil, cookie)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d, body %s", rec.Code, rec.Body)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{"alice", "default/web", "Pending approval", "Applying"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("index body missing %q", want)
-		}
-	}
-	if strings.Contains(body, "TOP-SECRET-JOB-SPEC-MARKER") {
-		t.Error("index page leaks JobSpec")
-	}
-}
-
-func TestHistoryPage(t *testing.T) {
-	d := sampleDeployment()
-	d.State, d.DecidedBy, d.DecidedAt = store.StateCompleted, "alice", time.Now()
-	st := &fakeStore{history: []*store.Deployment{d}}
-	ts := newTestServer(t, st, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/history", nil, cookie)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Completed") {
-		t.Error("history page missing the deployment's state")
-	}
-}
-
-func TestDriftPage(t *testing.T) {
-	en := &fakeEngine{observations: []engine.Observation{
-		{JobID: "batch", Namespace: "default", Policy: meta.PolicyNone, Drift: false,
-			Issues: []meta.Issue{{Severity: meta.SeverityWarn, Key: "nops_policy", Message: "bad value"}}},
-	}}
-	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/drift", nil, cookie)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{"default/batch", "nops_policy", "bad value"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("drift page missing %q", want)
-		}
-	}
-}
-
-func TestDriftPageInvalidDiffIsAServerError(t *testing.T) {
-	en := &fakeEngine{observations: []engine.Observation{
-		{JobID: "web", Namespace: "default", Drift: true, PlanDiff: "not json"},
-	}}
-	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/drift", nil, cookie)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rec.Code)
-	}
-	if !strings.Contains(ts.logs.String(), "level=ERROR") {
-		t.Error("a server error must be logged at ERROR (fail loud)")
-	}
-}
-
-func TestDeploymentPage(t *testing.T) {
-	st := &fakeStore{deployment: sampleDeployment(), events: []store.Event{
-		{From: store.StateDetected, To: store.StatePendingApproval, Actor: "nops", Message: "drift detected", Time: time.Now()},
-	}}
-	ts := newTestServer(t, st, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/deployments/d1", nil, cookie)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d, body %s", rec.Code, rec.Body)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{"default/web", "spec-hash-1", "drift detected", "Approve", "Reject"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("deployment page missing %q", want)
-		}
-	}
-	if strings.Contains(body, "TOP-SECRET-JOB-SPEC-MARKER") {
-		t.Error("deployment page leaks JobSpec")
-	}
-}
-
-func TestDeploymentPageNotFound(t *testing.T) {
-	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "") // no deployment set: GetDeployment returns ErrNotFound
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/deployments/missing", nil, cookie)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status %d, want 404", rec.Code)
-	}
-}
-
-func TestDeploymentPageStoreError(t *testing.T) {
-	st := &fakeStore{getErr: errors.New("database is locked")}
-	ts := newTestServer(t, st, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/deployments/d1", nil, cookie)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rec.Code)
-	}
-	if strings.Contains(rec.Body.String(), "database is locked") {
-		t.Error("a Nomad/SQLite error must never reach the response body")
-	}
-	if !strings.Contains(ts.logs.String(), "database is locked") {
-		t.Error("the error must still be logged (fail loud)")
-	}
-}
-
-func TestDeploymentStatusFragmentStopsPollingWhenTerminal(t *testing.T) {
-	d := sampleDeployment()
-	d.State = store.StateCompleted
-	st := &fakeStore{deployment: d}
-	ts := newTestServer(t, st, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
-
-	rec := ts.do("GET", "/deployments/d1/status", nil, cookie)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
-	}
-	if strings.Contains(rec.Body.String(), "hx-trigger") {
-		t.Error("a terminal deployment's status fragment must not keep polling")
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/music-gang/nops/internal/engine"
+	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -37,6 +38,8 @@ type Store interface {
 	GetDeployment(ctx context.Context, id string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	ListHistory(ctx context.Context, limit int) ([]*store.Deployment, error)
+	ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error)
+	LatestPerJob(ctx context.Context) ([]*store.Deployment, error)
 	Events(ctx context.Context, deploymentID string) ([]store.Event, error)
 	GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error)
 }
@@ -48,6 +51,14 @@ type Engine interface {
 	Reject(ctx context.Context, id, actor string) error
 	Observations() []engine.Observation
 	Retry(ctx context.Context, namespace, jobID, actor string) error
+	Status() engine.Status
+}
+
+// Git is what the dashboard shows about the repository nops reads: the
+// commit it is on and how the last poll went. *gitwatch.Watcher implements it.
+type Git interface {
+	Snapshot() gitwatch.Snapshot
+	Status() gitwatch.Status
 }
 
 // Authenticator is what the dashboard needs from a login backend: NewAuth
@@ -71,6 +82,14 @@ type Options struct {
 	Auth   Authenticator
 	Store  Store
 	Engine Engine
+	Git    Git
+
+	// CommitURL returns the web address of a commit, or "" if there is none
+	// (the SHA is then shown without a link). Optional.
+	CommitURL func(sha string) string
+	// Now is the clock the relative times ("3m ago") are counted from.
+	// Optional: time.Now.
+	Now func() time.Time
 
 	// Trigger runs the git watcher's non-blocking poll after a webhook
 	// request passes its signature check, and for the dashboard's "fetch
@@ -86,23 +105,26 @@ type Options struct {
 
 // server holds the dependencies every handler needs.
 type server struct {
-	auth    Authenticator
-	store   Store
-	engine  Engine
-	trigger func()
-	secret  []byte
-	log     *slog.Logger
-	tmpl    *template.Template
-	static  fs.FS
-	started time.Time
+	auth      Authenticator
+	store     Store
+	engine    Engine
+	git       Git
+	trigger   func()
+	commitURL func(sha string) string
+	now       func() time.Time
+	secret    []byte
+	log       *slog.Logger
+	tmpl      *template.Template
+	static    fs.FS
+	started   time.Time
 }
 
 // New builds the dashboard and git webhook handler. It parses every template
 // once, so a broken one fails loud at startup rather than on the first
 // request.
 func New(o Options) (http.Handler, error) {
-	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Log == nil {
-		return nil, errors.New("web: Auth, Store, Engine and Log are required")
+	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Log == nil {
+		return nil, errors.New("web: Auth, Store, Engine, Git and Log are required")
 	}
 	if o.WebhookSecret != "" && o.Trigger == nil {
 		return nil, errors.New("web: Trigger is required when WebhookSecret is set")
@@ -115,16 +137,22 @@ func New(o Options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("web: static assets: %w", err)
 	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	s := &server{
-		auth:    o.Auth,
-		store:   o.Store,
-		engine:  o.Engine,
-		trigger: o.Trigger,
-		secret:  []byte(o.WebhookSecret),
-		log:     o.Log,
-		tmpl:    tmpl,
-		static:  staticDir,
-		started: time.Now(),
+		auth:      o.Auth,
+		store:     o.Store,
+		engine:    o.Engine,
+		git:       o.Git,
+		trigger:   o.Trigger,
+		commitURL: o.CommitURL,
+		now:       o.Now,
+		secret:    []byte(o.WebhookSecret),
+		log:       o.Log,
+		tmpl:      tmpl,
+		static:    staticDir,
+		started:   time.Now(),
 	}
 	return securityHeaders(s.routes()), nil
 }
@@ -153,6 +181,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("GET /static/", noStoreExempt(http.StripPrefix("/static/", static)))
 
 	mux.Handle("GET /{$}", s.auth.Require(http.HandlerFunc(s.index)))
+	mux.Handle("GET /jobs", s.auth.Require(http.HandlerFunc(s.jobs)))
+	mux.Handle("GET /jobs/{namespace}/{job}", s.auth.Require(http.HandlerFunc(s.job)))
 	mux.Handle("GET /history", s.auth.Require(http.HandlerFunc(s.history)))
 	mux.Handle("GET /drift", s.auth.Require(http.HandlerFunc(s.drift)))
 	mux.Handle("GET /deployments/{id}", s.auth.Require(http.HandlerFunc(s.deployment)))
