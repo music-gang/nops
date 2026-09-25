@@ -243,6 +243,12 @@ func TestOverviewGitAndCycle(t *testing.T) {
 	mustNotContain(t, page, "flash--error", "flash--warn", "degraded", "aborted")
 }
 
+func TestOverviewLivePolls(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	page := ts.get("/")
+	mustContain(t, page, `id="live"`, `hx-get="/"`, `hx-trigger="every 5s"`, `hx-select="#live"`, `hx-swap="outerHTML"`)
+}
+
 func TestOverviewFetchNowNeedsATrigger(t *testing.T) {
 	// A dashboard built with no trigger does not offer what it cannot do.
 	a := newTestAuth(t)
@@ -467,6 +473,13 @@ func TestJobsPageFilter(t *testing.T) {
 	mustContain(t, page, "No job matches this filter.", `is-active" href="?state=deploying"`)
 }
 
+func TestJobsPageLivePollsKeepItsFilter(t *testing.T) {
+	st, en := jobsFixture()
+	ts := newTestServer(t, st, en, "")
+	page := ts.get("/jobs?state=drift")
+	mustContain(t, page, `id="live"`, `hx-get="/jobs?state=drift"`, `hx-trigger="every 5s"`, `hx-select="#live"`)
+}
+
 func TestJobsPageEmptyAndErrors(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	mustContain(t, ts.get("/jobs"), "No managed job observed yet.")
@@ -507,6 +520,27 @@ func TestJobPage(t *testing.T) {
 	mustNotContain(t, page, specMarker, "Blocked.", "Retry", "layout--single") // it has its side column
 	if strings.Index(page, `href="/deployments/d1"`) > strings.Index(page, `href="/deployments/d0"`) {
 		t.Error("deployments are not listed newest first")
+	}
+}
+
+func TestJobPageLiveRegionsKeepTheDriftDiffStatic(t *testing.T) {
+	en := &fakeEngine{observations: []engine.Observation{{
+		JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, Drift: true, FilePath: "apps/web.nomad.hcl",
+		PlanDiff: diffJSON(t, sampleDiff()),
+	}}}
+	ts := newTestServer(t, &fakeStore{}, en, "")
+	page := ts.get("/jobs/default/web")
+
+	self := `hx-get="/jobs/default/web"`
+	mustContain(t, page,
+		`id="live-head"`, `id="live-deployments"`, `id="live-details"`, self,
+		`hx-trigger="every 5s"`, `hx-select="#live-head"`, `hx-select="#live-deployments"`, `hx-select="#live-details"`)
+
+	// The diff is between the head and the deployments region, in neither: a
+	// poll must not reset the <details> a person opened or closed in it.
+	head, drift, deployments := strings.Index(page, `id="live-head"`), strings.Index(page, "Priority"), strings.Index(page, `id="live-deployments"`)
+	if !(head < drift && drift < deployments) {
+		t.Error("the drift diff is not between the head and the deployments live regions, or is inside one of them")
 	}
 }
 
@@ -662,6 +696,14 @@ func TestActivityFilter(t *testing.T) {
 
 	page = ts.get("/history?state=rejected")
 	mustContain(t, page, "No deployment matches this filter.")
+}
+
+func TestActivityPageLivePollsKeepsItsFilter(t *testing.T) {
+	active := dep("a1", "web", store.StatePendingApproval, 30*time.Minute)
+	st := &fakeStore{active: []*store.Deployment{active}}
+	ts := newTestServer(t, st, &fakeEngine{}, "")
+	page := ts.get("/history?state=failed")
+	mustContain(t, page, `id="live"`, `hx-get="/history?state=failed"`, `hx-trigger="every 5s"`, `hx-select="#live"`)
 }
 
 func TestActivityEmptyLimitedAndErrors(t *testing.T) {

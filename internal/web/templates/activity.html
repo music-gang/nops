@@ -4,6 +4,7 @@
   <h1 class="pagehead__title">Activity</h1>
   <p class="pagehead__text">Every deployment, newest first.</p>
 </div>
+<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML">
 {{template "filters" .Filters}}
 {{if .Days}}
 {{range .Days}}
@@ -26,5 +27,6 @@
 {{else}}
 <p class="empty box">{{if .Total}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
 {{end}}
+</div>
 {{template "chrome_foot" .}}
 {{end}}

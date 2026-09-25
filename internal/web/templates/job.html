@@ -1,5 +1,6 @@
 {{define "job"}}
 {{template "chrome_head" .}}
+<div id="live-head" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-head" hx-swap="outerHTML">
 <div class="pagehead">
   <p class="crumbs"><a href="/jobs">Jobs</a></p>
   <h1 class="pagehead__title">{{.Title}} {{if or .InRepo .Orphan}}<span class="pill {{.SyncClass}}">{{.SyncLabel}}</span>{{end}}</h1>
@@ -36,6 +37,7 @@
   </form>
 </section>
 {{end}}
+</div>
 
 <div class="layout{{if not .InRepo}} layout--single{{end}}">
   <div class="layout__main">
@@ -68,6 +70,7 @@
     {{end}}
     {{end}}
 
+    <div id="live-deployments" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-deployments" hx-swap="outerHTML">
     <section class="box">
       <header class="box__header"><h2 class="box__title">Deployments</h2>{{if .Deployments}}<span class="box__count">{{len .Deployments}}</span>{{end}}</header>
       {{if .Deployments}}
@@ -76,10 +79,12 @@
       <p class="empty">This job never had a deployment.</p>
       {{end}}
     </section>
+    </div>
   </div>
 
   {{if .InRepo}}
   <aside class="layout__side">
+    <div id="live-details" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-details" hx-swap="outerHTML">
     <section class="box">
       <header class="box__header"><h2 class="box__title">Details</h2></header>
       <dl class="dl">
@@ -90,6 +95,7 @@
         <dt>Observed</dt><dd>{{template "time" .Observed}}</dd>
       </dl>
     </section>
+    </div>
   </aside>
   {{end}}
 </div>
