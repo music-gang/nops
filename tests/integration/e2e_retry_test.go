@@ -192,3 +192,32 @@ func TestE2EFetchNow(t *testing.T) {
 	}
 	e.waitNew(jobID, "", store.StateCompleted)
 }
+
+// What the pages say about a job comes from the last detection cycle, which is
+// from before the apply. With the drift tick set to an hour, only the cycle
+// that a deployment asks for when it ends can bring them up to date: In sync
+// after a completed one, Blocked after a failed one.
+func TestE2EJobPageFollowsADeploymentThatEnds(t *testing.T) {
+	e := newE2E(t, "NOPS_DRIFT_INTERVAL=1h")
+	dir := t.TempDir()
+	okJob := uniqueID(t, e.raw, "ends")
+	failJob := uniqueID(t, e.raw, "endsfail")
+	hookID := uniqueID(t, e.raw, "endshook")
+
+	e.repo.commit(t, "two jobs", map[string]string{
+		file(okJob):   e2eJob{id: okJob, policy: "approval", version: "1"}.hcl(),
+		file(failJob): e2eJob{id: failJob, policy: "auto", version: "1", preHook: hookID}.hcl(),
+		file(hookID):  hookCmdHCL(hookID, "test -f "+filepath.Join(dir, "never"), true),
+	})
+
+	d := e.waitNew(okJob, "", store.StatePendingApproval)
+	e.dash.waitBody(t, "/jobs/default/"+okJob, "Awaiting approval")
+	if status := e.dash.approve(t, d.ID, d.SpecHash); status != http.StatusSeeOther {
+		t.Fatalf("approve: status %d", status)
+	}
+	e.waitState(d.ID, store.StateCompleted)
+	e.dash.waitBody(t, "/jobs/default/"+okJob, "In sync with git.")
+
+	e.waitNew(failJob, "", store.StateFailed)
+	e.dash.waitBody(t, "/jobs/default/"+failJob, "Blocked.")
+}

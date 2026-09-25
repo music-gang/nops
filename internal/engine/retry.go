@@ -52,10 +52,7 @@ func (e *Engine) Retry(ctx context.Context, namespace, jobID, actor string) erro
 	}
 	e.log.InfoContext(ctx, "deployment retried", "deployment_id", latest.ID, "job", jobID, "actor", actor)
 
-	select {
-	case e.kick <- struct{}{}:
-	default: // a cycle is already queued
-	}
+	e.kickDetection()
 	return nil
 }
 

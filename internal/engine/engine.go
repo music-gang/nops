@@ -184,7 +184,8 @@ type Engine struct {
 	orphans      []Orphan
 	status       Status
 
-	// kick asks the detection loop for a cycle now (Retry).
+	// kick asks the detection loop for a cycle now (Retry, a deployment closed
+	// by apply or a human).
 	kick chan struct{}
 
 	applyMu  sync.Mutex
@@ -255,6 +256,15 @@ func (e *Engine) RunDetection(ctx context.Context) {
 		case <-e.kick:
 			e.runOnce(ctx)
 		}
+	}
+}
+
+// kickDetection asks the detection loop for a cycle now; a cycle already
+// queued is enough.
+func (e *Engine) kickDetection() {
+	select {
+	case e.kick <- struct{}{}:
+	default:
 	}
 }
 
