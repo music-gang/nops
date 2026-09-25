@@ -52,6 +52,6 @@ configurable.
 ## What nops does not do
 
 - It does not write to Git, and does not write meta into the live job.
-- It does not roll back automatically and does not deregister jobs (for now). The only thing it stops is a hook job that timed out.
+- It does not roll back automatically and does not deregister jobs (for now): a job removed from the repository is reported as an [orphan](design/engine-detection.md#orphan-jobs), never stopped. The only thing it stops is a hook job that timed out.
 - It does not resolve nodes for hooks: placement is decided by the scheduler
   (see [hooks](hooks.md#placement)).

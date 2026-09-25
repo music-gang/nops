@@ -24,7 +24,7 @@
         <td class="cell-ellipsis hide-sm">
           {{with .Last}}<a href="{{.Path}}">{{template "state_badge" .State}}</a> <span class="muted">{{template "time" .CreatedAt}}</span>{{else}}<span class="muted">never</span>{{end}}
         </td>
-        <td class="cell-ellipsis hide-sm mono muted" title="{{.File}}">{{.File}}</td>
+        <td class="cell-ellipsis hide-sm mono muted" title="{{.File}}">{{if .File}}{{.File}}{{else}}not in the repository{{end}}</td>
       </tr>
       {{end}}
     </tbody>

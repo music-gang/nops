@@ -42,6 +42,7 @@
   {{if .Cycle.Error}}<p class="flash flash--error flash--flat">The last cycle stopped: {{.Cycle.Error}}</p>{{end}}
   {{if .Cycle.Skipped}}<p class="flash flash--warn flash--flat">{{.Cycle.Skipped}} {{if eq .Cycle.Skipped 1}}job was{{else}}jobs were{{end}} skipped in the last cycle because Nomad failed on {{if eq .Cycle.Skipped 1}}it{{else}}them{{end}}: their state below may be out of date. The logs say why.</p>{{end}}
   {{if .Cycle.Unparsed}}<p class="flash flash--warn flash--flat">{{.Cycle.Unparsed}} {{if eq .Cycle.Unparsed 1}}file{{else}}files{{end}} in the repository could not be parsed by Nomad and {{if eq .Cycle.Unparsed 1}}is{{else}}are{{end}} ignored. The logs say which.</p>{{end}}
+  {{if .Cycle.OrphanCheckSkipped}}<p class="flash flash--warn flash--flat">Jobs removed from git are not being looked for while a file does not parse: a broken file looks exactly like a removed one. What was found before stays listed.</p>{{end}}
 </section>
 
 <section class="box">

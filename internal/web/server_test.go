@@ -99,10 +99,11 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			baseData: baseData{Actor: "alice", Nav: "overview"},
 			Git: gitView{Known: true, SHA: "abc", Short: "abc", URL: "https://git.test/c/abc", Subject: "s", Author: "me", CommittedAt: tv,
 				CheckedAt: tv, Error: "network is down", ErrorAt: tv, CanFetch: true},
-			Cycle: cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1},
+			Cycle: cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
 			Attention: []attentionItem{
 				{Kind: "pending", KindLabel: "Needs approval", KindClass: "state-pending", Title: "default/web", Path: "/deployments/d1", Detail: "d", When: tv},
 				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/jobs/default/web/retry"},
+				{Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: "default/old", Path: "/jobs/default/old", Detail: "d"},
 			},
 			InProgress: []deploymentCard{dc},
 		},
@@ -120,6 +121,12 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Deployments: []deploymentCard{dc},
 		},
 		"job (not in the repository)": jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "gone", Title: "default/gone"},
+		"job (an orphan)": jobData{
+			baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "old", Title: "default/old", Policy: meta.PolicyAuto,
+			Sync: syncOrphan, SyncLabel: "Not in git", SyncClass: "state-pending",
+			Orphan:      &orphanView{NomadStatus: "running", StopCommand: "nomad job stop -namespace default old"},
+			Deployments: []deploymentCard{dc},
+		},
 		"activity": activityData{
 			baseData: baseData{Nav: "history"}, Total: 1, Limited: true,
 			Days:    []activityDay{{Label: "Today", Rows: []deploymentCard{dc}}},

@@ -64,7 +64,8 @@ type fakeNomad struct {
 	parseErr       map[string]error
 	parseCalls     map[string]int
 
-	live map[string]*api.Job // absent: ErrJobNotFound
+	live   map[string]*api.Job // absent: ErrJobNotFound
+	jobErr map[string]error    // what Job returns instead of the live job
 
 	plan    map[string]planFixture    // jobID -> what Plan returns; absent: {Type: "None"}
 	lastTG  map[string]map[string]int // jobID -> group name -> Count Plan was called with
@@ -92,6 +93,7 @@ func newFakeNomad() *fakeNomad {
 		parseErr:       map[string]error{},
 		parseCalls:     map[string]int{},
 		live:           map[string]*api.Job{},
+		jobErr:         map[string]error{},
 		plan:           map[string]planFixture{},
 		lastTG:         map[string]map[string]int{},
 		planErr:        map[string]error{},
@@ -145,6 +147,9 @@ func (f *fakeNomad) ParseHCL(_ context.Context, content, _ string) (*api.Job, er
 func (f *fakeNomad) Job(_ context.Context, id string) (*api.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err, ok := f.jobErr[id]; ok {
+		return nil, err
+	}
 	j, ok := f.live[id]
 	if !ok {
 		return nil, fmt.Errorf("job %s: %w", id, nomadx.ErrJobNotFound)

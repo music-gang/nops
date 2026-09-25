@@ -123,6 +123,46 @@ deployment. Every "does the spec still hold" check compares `spec_hash`
 is informational (shown in the dashboard and in notifications), not part of
 the identity of what was approved.
 
+### Orphan jobs
+
+A job nops deployed and that is then removed from the repository stays live
+in Nomad: nops never deregisters a job it deploys. Rather than let that pass
+unseen, every cycle ends by looking for **orphans** and keeping them in
+memory (`Engine.Orphans()`, rebuilt every cycle like `Observations()`, with
+`Status.Orphans`). They are reported, never acted on: the operator stops the
+job in Nomad, or puts the file back, and the report clears by itself.
+
+A job is an orphan when all of these hold:
+
+- nops has a **`completed` deployment** for it in its namespace
+  (`Store.LatestCompletedPerJob`): only what nops put into production is its
+  business, the rest of the cluster is not;
+- it is **not among the jobs parsed from the snapshot**, whatever their
+  classification. A job still in the repository without `nops_managed` means
+  "hands off", not "removed"; two files with the same job ID are both still
+  in git; a renamed file is the same job;
+- in Nomad it **exists, is not stopped (`Stop`) and is not `dead`**. A purged
+  job (a 404) is not reported, nor is one stopped by hand (that is what the
+  report asks for), nor a batch job that has finished and, having no schedule,
+  will not run again.
+
+Two things keep it from lying:
+
+- **A file that does not parse suspends the check.** A broken file looks
+  exactly like a removed one, so a cycle with any file Nomad could not parse
+  does not look for orphans: `Status.OrphanCheckSkipped` is set, the Overview
+  says so, and the orphans of the last complete check stay listed as they
+  were (clearing them would read as "all fine" exactly when something is
+  wrong; the cost is that one stopped meanwhile stays listed until the file
+  is fixed).
+- **A Nomad failure on one candidate is an ERROR and skips that job**, not the
+  cycle; a store failure is returned like any other (never swallow a SQLite
+  error).
+
+The cost is one `GET /v1/job/<id>` per job that nops deployed, is not in git
+and is not yet purged, every cycle. It is not cached: the list is short and
+what matters is what Nomad says now.
+
 ### Not covered by a rule (accepted, documented)
 
 - **A job stopped by hand** (`nomad job stop`) plans as a difference from

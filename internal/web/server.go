@@ -50,6 +50,7 @@ type Engine interface {
 	Approve(ctx context.Context, id, specHash, actor string) error
 	Reject(ctx context.Context, id, actor string) error
 	Observations() []engine.Observation
+	Orphans() []engine.Orphan
 	Retry(ctx context.Context, namespace, jobID, actor string) error
 	Status() engine.Status
 }

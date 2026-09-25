@@ -25,13 +25,14 @@ type syncKey string
 const (
 	syncInvalid   syncKey = "invalid"   // its meta has an error: nops ignores its policy and hooks
 	syncBlocked   syncKey = "blocked"   // a failed or rejected deployment holds its drift back
+	syncOrphan    syncKey = "orphan"    // deployed by nops, gone from git, still running in Nomad
 	syncPending   syncKey = "pending"   // a deployment waits for a human decision
 	syncDeploying syncKey = "deploying" // a deployment is on its way (detected, hooks, apply)
 	syncDrift     syncKey = "drift"     // the cluster differs from git and nothing is being done
 	syncInSync    syncKey = "sync"      // the cluster is what git says
 )
 
-var syncOrder = []syncKey{syncInvalid, syncBlocked, syncPending, syncDeploying, syncDrift, syncInSync}
+var syncOrder = []syncKey{syncInvalid, syncBlocked, syncOrphan, syncPending, syncDeploying, syncDrift, syncInSync}
 
 // valid reports whether k is one of the sync states.
 func (k syncKey) valid() bool {
@@ -49,6 +50,8 @@ func (k syncKey) label() string {
 		return "Invalid meta"
 	case syncBlocked:
 		return "Blocked"
+	case syncOrphan:
+		return "Not in git"
 	case syncPending:
 		return "Awaiting approval"
 	case syncDeploying:
@@ -65,7 +68,7 @@ func (k syncKey) class() string {
 	switch k {
 	case syncInvalid, syncBlocked:
 		return "state-failed"
-	case syncPending, syncDrift:
+	case syncPending, syncDrift, syncOrphan:
 		return "state-pending"
 	case syncDeploying:
 		return "state-running"
@@ -149,6 +152,25 @@ func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 	return row
 }
 
+// orphanRow is the Jobs line of an orphan. It has no file and no observation:
+// what it has is what nops deployed, and what Nomad says about it.
+func (s *server) orphanRow(o engine.Orphan, latest *store.Deployment) jobRow {
+	row := jobRow{
+		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: jobPath(o.Namespace, o.JobID),
+		Policy: meta.Policy(o.Policy), Sync: syncOrphan, SyncLabel: syncOrphan.label(), SyncClass: syncOrphan.class(),
+		BlockedReason: orphanReason, Observed: s.when(o.ObservedAt),
+	}
+	if latest != nil {
+		c := s.card(latest)
+		row.Last = &c
+	}
+	return row
+}
+
+// orphanReason is what an orphan is, in a line: shown under its name on Jobs
+// and as the detail of its row on the Overview.
+const orphanReason = "removed from git, still running in Nomad"
+
 // filterLink is one choice of a page's filter: a link with the number of
 // rows it would show.
 type filterLink struct {
@@ -179,16 +201,25 @@ func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
 		filter = ""
 	}
 
-	data := jobsData{baseData: s.base(r, "jobs"), Total: len(obs), Filter: string(filter)}
+	orphans := s.engine.Orphans()
+	data := jobsData{baseData: s.base(r, "jobs"), Total: len(obs) + len(orphans), Filter: string(filter)}
 	counts := map[syncKey]int{}
+	rows := make([]jobRow, 0, data.Total)
 	for _, o := range obs {
-		row := s.jobRow(o, latest[jobKey(o.Namespace, o.JobID)])
+		rows = append(rows, s.jobRow(o, latest[jobKey(o.Namespace, o.JobID)]))
+	}
+	for _, o := range orphans {
+		rows = append(rows, s.orphanRow(o, latest[jobKey(o.Namespace, o.JobID)]))
+	}
+	// Observations are sorted by job ID and so are orphans: one list again.
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Title < rows[j].Title })
+	for _, row := range rows {
 		counts[row.Sync]++
 		if filter == "" || filter == row.Sync {
 			data.Rows = append(data.Rows, row)
 		}
 	}
-	data.Filters = append(data.Filters, filterLink{Label: "All", Count: len(obs), Active: filter == ""})
+	data.Filters = append(data.Filters, filterLink{Label: "All", Count: data.Total, Active: filter == ""})
 	for _, k := range syncOrder {
 		if counts[k] > 0 || k == filter {
 			data.Filters = append(data.Filters, filterLink{Key: string(k), Label: k.label(), Count: counts[k], Active: k == filter})
@@ -212,6 +243,13 @@ func hookOf(h *meta.Hook) *hookView {
 	return &hookView{JobID: h.JobID, Timeout: duration(h.Timeout)}
 }
 
+// orphanView is what the page of an orphan tells the operator to do. nops does
+// not do it for them.
+type orphanView struct {
+	NomadStatus string
+	StopCommand string
+}
+
 type jobData struct {
 	baseData
 	Namespace, JobID, Title string
@@ -222,6 +260,7 @@ type jobData struct {
 	File                    string
 	Observed                timeView
 	PreHook, PostHook       *hookView
+	Orphan                  *orphanView // set when the job is gone from git but still runs in Nomad
 	Blocked                 bool
 	BlockedReason           string
 	BlockedBy               string
@@ -244,12 +283,20 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	var orphan *engine.Orphan
+	for _, o := range s.engine.Orphans() {
+		if o.Namespace == ns && o.JobID == id {
+			o := o
+			orphan = &o
+			break
+		}
+	}
 	deps, err := s.store.ListByJob(r.Context(), ns, id, jobHistoryLimit)
 	if err != nil {
 		s.serverError(w, r, "list deployments of a job", err)
 		return
 	}
-	if obs == nil && len(deps) == 0 {
+	if obs == nil && orphan == nil && len(deps) == 0 {
 		s.notFoundMessage(w, r, "This job does not exist.")
 		return
 	}
@@ -257,6 +304,11 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	data := jobData{baseData: s.base(r, "jobs"), Namespace: ns, JobID: id, Title: ns + "/" + id}
 	for _, d := range deps {
 		data.Deployments = append(data.Deployments, s.card(d))
+	}
+	if orphan != nil {
+		data.Orphan = &orphanView{NomadStatus: orphan.NomadStatus, StopCommand: "nomad job stop -namespace " + orphan.Namespace + " " + orphan.JobID}
+		data.Sync, data.SyncLabel, data.SyncClass = syncOrphan, syncOrphan.label(), syncOrphan.class()
+		data.Policy = meta.Policy(orphan.Policy)
 	}
 	if obs != nil {
 		var latest *store.Deployment
@@ -367,6 +419,15 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 			})
 			break // one line per job: its page lists them all
 		}
+	}
+
+	// Least urgent: nothing is broken, a service nobody asked for keeps
+	// running. The operator decides; nops never stops it.
+	for _, o := range s.engine.Orphans() {
+		items = append(items, attentionItem{
+			Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
+			Path: jobPath(o.Namespace, o.JobID), Detail: "Removed from git, still running in Nomad",
+		})
 	}
 	return items
 }
