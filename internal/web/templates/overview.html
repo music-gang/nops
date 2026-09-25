@@ -2,7 +2,7 @@
 {{template "chrome_head" .}}
 <div class="pagehead"><h1 class="pagehead__title">Overview</h1></div>
 
-<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML">
+<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 <section class="box strip">
   <div class="strip__row">
     <span class="strip__label">Git</span>

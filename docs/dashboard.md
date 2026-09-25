@@ -90,6 +90,16 @@ the Deployment page's `/status` above. The Job page uses two such regions
 between them, whose `<details>` nodes a person may have opened or closed,
 is never re-rendered by the poll.
 
+Each of these regions carries `hx-disinherit="hx-select hx-swap"`: `hx-boost`
+turns every link and form inside it (a job's link, *Retry*, *Fetch now*) into
+its own boosted request, and htmx attributes are inherited by children unless
+told otherwise, so without it a boosted link would pick up the region's own
+`hx-select`/`hx-swap` and apply them to *its own* navigation — selecting
+`#live` out of whatever page it lands on (blank, if that page has no such
+element) and swapping it in with `outerHTML` over the whole body (dropping the
+header and the page's width). See the [decision log](design/decisions.md),
+2026-09-25.
+
 Static files are cached for a day, so the templates link them through the
 `asset` function, which adds a version taken from the file's own bytes
 (`/static/app.css?v=<10 hex digits of its SHA-256>`): a changed file has a new

@@ -246,7 +246,11 @@ func TestOverviewGitAndCycle(t *testing.T) {
 func TestOverviewLivePolls(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	page := ts.get("/")
-	mustContain(t, page, `id="live"`, `hx-get="/"`, `hx-trigger="every 5s"`, `hx-select="#live"`, `hx-swap="outerHTML"`)
+	mustContain(t, page, `id="live"`, `hx-get="/"`, `hx-trigger="every 5s"`, `hx-select="#live"`, `hx-swap="outerHTML"`,
+		// hx-select and hx-swap must not leak to a boosted link or form inside
+		// #live (a nav link, Fetch now, a Retry button): without this, following
+		// one picks #live out of the destination page instead of the whole body.
+		`hx-disinherit="hx-select hx-swap"`)
 }
 
 func TestOverviewFetchNowNeedsATrigger(t *testing.T) {
@@ -477,7 +481,7 @@ func TestJobsPageLivePollsKeepItsFilter(t *testing.T) {
 	st, en := jobsFixture()
 	ts := newTestServer(t, st, en, "")
 	page := ts.get("/jobs?state=drift")
-	mustContain(t, page, `id="live"`, `hx-get="/jobs?state=drift"`, `hx-trigger="every 5s"`, `hx-select="#live"`)
+	mustContain(t, page, `id="live"`, `hx-get="/jobs?state=drift"`, `hx-trigger="every 5s"`, `hx-select="#live"`, `hx-disinherit="hx-select hx-swap"`)
 }
 
 func TestJobsPageEmptyAndErrors(t *testing.T) {
@@ -535,6 +539,13 @@ func TestJobPageLiveRegionsKeepTheDriftDiffStatic(t *testing.T) {
 	mustContain(t, page,
 		`id="live-head"`, `id="live-deployments"`, `id="live-details"`, self,
 		`hx-trigger="every 5s"`, `hx-select="#live-head"`, `hx-select="#live-deployments"`, `hx-select="#live-details"`)
+	// Each region must stop hx-select/hx-swap from leaking to a boosted link or
+	// form inside it (Retry, a deployment row link): otherwise following one
+	// picks the wrong fragment out of the destination page and it renders blank
+	// or loses its chrome.
+	if n := strings.Count(page, `hx-disinherit="hx-select hx-swap"`); n != 3 {
+		t.Errorf("%d live regions disinherit hx-select/hx-swap, want 3", n)
+	}
 
 	// The diff is between the head and the deployments region, in neither: a
 	// poll must not reset the <details> a person opened or closed in it.
@@ -703,7 +714,7 @@ func TestActivityPageLivePollsKeepsItsFilter(t *testing.T) {
 	st := &fakeStore{active: []*store.Deployment{active}}
 	ts := newTestServer(t, st, &fakeEngine{}, "")
 	page := ts.get("/history?state=failed")
-	mustContain(t, page, `id="live"`, `hx-get="/history?state=failed"`, `hx-trigger="every 5s"`, `hx-select="#live"`)
+	mustContain(t, page, `id="live"`, `hx-get="/history?state=failed"`, `hx-trigger="every 5s"`, `hx-select="#live"`, `hx-disinherit="hx-select hx-swap"`)
 }
 
 func TestActivityEmptyLimitedAndErrors(t *testing.T) {
