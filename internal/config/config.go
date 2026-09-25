@@ -28,7 +28,7 @@ import (
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
 	NomadAddr          string
-	NomadNamespace     string
+	NomadNamespaces    []string // the namespaces nops manages, in the order given, without duplicates
 	NomadTokenFile     string
 	NomadToken         string // content of NomadTokenFile, read by Load
 	NomadCACert        string // paths to PEM files
@@ -117,8 +117,8 @@ func (o option) env() string {
 var options = []option{
 	{name: "nomad-addr", def: "http://127.0.0.1:4646", usage: "Nomad HTTP API address",
 		set: func(c *Config, v string) (err error) { c.NomadAddr, err = httpURL(v); return }},
-	{name: "nomad-namespace", def: api.DefaultNamespace, usage: "Nomad namespace of the managed jobs and hooks",
-		set: func(c *Config, v string) (err error) { c.NomadNamespace, err = required(v); return }},
+	{name: "nomad-namespaces", def: api.DefaultNamespace, usage: "comma-separated Nomad namespaces of the managed jobs and hooks",
+		set: func(c *Config, v string) (err error) { c.NomadNamespaces, err = namespaceList(v); return }},
 	{name: "nomad-token-file", usage: "file holding the Nomad ACL token (empty: no token)",
 		set: func(c *Config, v string) (err error) {
 			c.NomadTokenFile = v
@@ -312,6 +312,9 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 			errs = append(errs, fmt.Errorf("%s: %w", source, err))
 		}
 	}
+	if getenv("NOPS_NOMAD_NAMESPACE") != "" {
+		errs = append(errs, errors.New("NOPS_NOMAD_NAMESPACE was replaced by NOPS_NOMAD_NAMESPACES (a comma-separated list)"))
+	}
 	errs = append(errs, resolveSecretValues(c, getenv)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
@@ -448,12 +451,12 @@ func (c *Config) check() []error {
 // Nomad returns the Nomad client configuration. It is built field by field,
 // not from api.DefaultConfig, so no NOMAD_* variable of the process reaches
 // it: when nops runs as a Nomad job, Nomad sets NOMAD_NAMESPACE (and
-// NOMAD_TOKEN with workload identity) in its environment.
+// NOMAD_TOKEN with workload identity) in its environment. It carries no
+// namespace: nomadx sets one on every request.
 func (c *Config) Nomad() *api.Config {
 	return &api.Config{
-		Address:   c.NomadAddr,
-		Namespace: c.NomadNamespace,
-		SecretID:  c.NomadToken,
+		Address:  c.NomadAddr,
+		SecretID: c.NomadToken,
 		TLSConfig: &api.TLSConfig{
 			CACert:     c.NomadCACert,
 			ClientCert: c.NomadClientCert,
@@ -510,6 +513,23 @@ func csvList(v string) []string {
 		}
 	}
 	return out
+}
+
+// namespaceList parses -nomad-namespaces: a non-empty comma-separated list,
+// with a repeated name kept once (the order of the first occurrence stands).
+func namespaceList(v string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, ns := range csvList(v) {
+		if !seen[ns] {
+			seen[ns] = true
+			out = append(out, ns)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("required")
+	}
+	return out, nil
 }
 
 func positiveDuration(v string) (time.Duration, error) {

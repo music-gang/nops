@@ -18,7 +18,7 @@ option is listed here).
   Nomad job, Nomad sets `NOMAD_NAMESPACE` and `NOMAD_REGION` in its
   environment (and `NOMAD_TOKEN` with `identity { env = true }`). With the
   Nomad client's defaults nops would then work on the namespace it runs in,
-  not on the one you configured.
+  not on the ones you configured.
 - **Secrets are files, by flag.** Every secret has a `-X-file` flag (and its
   `NOPS_X_FILE` variable) that reads it from a file: tokens, and URLs that
   carry one (Discord and Slack webhooks), never appear in the command line
@@ -68,12 +68,32 @@ option is listed here).
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-nomad-addr` | `NOPS_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad HTTP API address (`http://` or `https://`). |
-| `-nomad-namespace` | `NOPS_NOMAD_NAMESPACE` | `default` | Namespace of the managed jobs and of the hook jobs. |
+| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
 | `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the Nomad ACL token. Unset: no token (ACLs disabled). |
 | `-nomad-ca-cert` | `NOPS_NOMAD_CA_CERT` | none | PEM file of the CA that signed the Nomad server certificate. |
 | `-nomad-client-cert` | `NOPS_NOMAD_CLIENT_CERT` | none | PEM client certificate for mTLS. Set together with the key. |
 | `-nomad-client-key` | `NOPS_NOMAD_CLIENT_KEY` | none | PEM client key for mTLS. Set together with the certificate. |
 | `-nomad-tls-skip-verify` | `NOPS_NOMAD_TLS_SKIP_VERIFY` | `false` | Do not verify the server certificate. Insecure: for testing only. |
+
+### Namespaces
+
+One nops instance manages every namespace of `-nomad-namespaces`, with one
+token. A job belongs to the namespace its HCL declares (`namespace = "apps"`;
+Nomad makes it `default` when there is none), and a hook is looked up in the
+namespace of the job that declares it ([hooks](hooks.md#namespace)). A job in a
+namespace that is not on the list is an ERROR in the log and is not managed;
+so a job with no `namespace` is refused unless `default` is listed.
+
+The list is explicit on purpose: the token's ACL says what nops *can* do, the
+list says what it *may* do, and pushing to git must not be enough to reach a
+namespace nobody named. Taking a namespace off the list leaves its deployments
+and its jobs in Nomad as they are: nops stops looking at them, it does not
+clean up.
+
+The token needs, in each listed namespace, `read-job`, `list-jobs`,
+`submit-job` (register and plan) and `dispatch-job` (hooks). The old
+`-nomad-namespace` / `NOPS_NOMAD_NAMESPACE` no longer exists: setting it is an
+error, not a silent default.
 
 ## Git
 

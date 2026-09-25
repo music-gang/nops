@@ -44,6 +44,15 @@ parameterized, the hook run is `failed` and nothing is dispatched.
 You do not register hooks yourself. If you have (a hook under its plain ID),
 nops leaves it alone and never runs it.
 
+## Namespace
+
+A hook lives in the namespace of the job that declares it: `nops_pre_hook =
+"backup"` on a job of namespace `apps` means the hook `backup` whose HCL says
+`namespace = "apps"`. Its revision is registered and dispatched there, so the
+ACL of that namespace applies to it. A hook declared only in another namespace
+counts as missing (`pre-hook "backup" not found in repo`). Two hooks with the
+same ID in two namespaces are two hooks, each used by the jobs of its own.
+
 ## Hook revisions
 
 A deployment runs the hooks **as they were when it was detected**, not as they

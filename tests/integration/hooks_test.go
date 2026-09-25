@@ -119,6 +119,7 @@ func dockerTarget() *api.Job {
 func (e *hookEnv) request(timeout time.Duration) hooks.Request {
 	return hooks.Request{
 		DeploymentID: e.depID,
+		Namespace:    "default",
 		Phase:        "pre",
 		HookJobID:    e.hookID,
 		Commit:       "abc123",
@@ -164,7 +165,7 @@ func TestHookRunSucceedsAndRerunDoesNotDispatch(t *testing.T) {
 
 	// The assumption the outcome logic rests on: a batch allocation that ended
 	// on its own is complete and still desired to run.
-	allocs, err := e.nomad.Allocations(context.Background(), res.DispatchedJobID)
+	allocs, err := e.nomad.Allocations(context.Background(), "default", res.DispatchedJobID)
 	if err != nil || len(allocs) != 1 {
 		t.Fatalf("allocations = %+v, %v", allocs, err)
 	}
@@ -211,7 +212,7 @@ func TestHookRunTimesOutAndStopsTheChild(t *testing.T) {
 		t.Errorf("took %s for a 3s timeout", elapsed)
 	}
 
-	child, err := e.nomad.Job(context.Background(), res.DispatchedJobID)
+	child, err := e.nomad.Job(context.Background(), "default", res.DispatchedJobID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestHookRunTimesOutAndStopsTheChild(t *testing.T) {
 	// failure when it retries after a failed save.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		allocs, err := e.nomad.Allocations(context.Background(), res.DispatchedJobID)
+		allocs, err := e.nomad.Allocations(context.Background(), "default", res.DispatchedJobID)
 		if err != nil || len(allocs) == 0 {
 			t.Fatalf("allocations = %+v, %v", allocs, err)
 		}
@@ -241,10 +242,10 @@ func TestHookRunTimesOutAndStopsTheChild(t *testing.T) {
 	}
 
 	// Stopping is idempotent, also for a job that does not exist.
-	if err := e.nomad.StopJob(context.Background(), res.DispatchedJobID); err != nil {
+	if err := e.nomad.StopJob(context.Background(), "default", res.DispatchedJobID); err != nil {
 		t.Errorf("second stop: %v", err)
 	}
-	if err := e.nomad.StopJob(context.Background(), "nops-it-no-such-job"); err != nil {
+	if err := e.nomad.StopJob(context.Background(), "default", "nops-it-no-such-job"); err != nil {
 		t.Errorf("stop of a missing job: %v", err)
 	}
 }
@@ -271,16 +272,16 @@ func TestHookRunAdoptsChildAfterCrashBeforeSavingItsID(t *testing.T) {
 	e := newHookEnv(t, "true", true)
 	ctx := context.Background()
 	run := e.markDispatchAttempted(t)
-	first, err := e.nomad.Dispatch(ctx, e.hookID, map[string]string{"nops_deployment_id": e.depID}, run.IdempotencyToken)
+	first, err := e.nomad.Dispatch(ctx, "default", e.hookID, map[string]string{"nops_deployment_id": e.depID}, run.IdempotencyToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	found, err := e.nomad.FindDispatched(ctx, e.hookID, run.IdempotencyToken)
+	found, err := e.nomad.FindDispatched(ctx, "default", e.hookID, run.IdempotencyToken)
 	if err != nil || found != first.JobID {
 		t.Fatalf("FindDispatched = %q, %v, want %s", found, err, first.JobID)
 	}
-	if other, err := e.nomad.FindDispatched(ctx, e.hookID, "someone-else:pre"); err != nil || other != "" {
+	if other, err := e.nomad.FindDispatched(ctx, "default", e.hookID, "someone-else:pre"); err != nil || other != "" {
 		t.Errorf("FindDispatched with another token = %q, %v, want empty", other, err)
 	}
 

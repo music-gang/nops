@@ -23,11 +23,11 @@ import (
 
 // Nomad is what the runner needs from Nomad. *nomadx.Client implements it.
 type Nomad interface {
-	Job(ctx context.Context, id string) (*api.Job, error)
-	Dispatch(ctx context.Context, parentID string, meta map[string]string, idempotencyToken string) (*nomadx.DispatchResult, error)
-	FindDispatched(ctx context.Context, parentID, idempotencyToken string) (string, error)
-	Allocations(ctx context.Context, jobID string) ([]nomadx.Alloc, error)
-	StopJob(ctx context.Context, id string) error
+	Job(ctx context.Context, ns, id string) (*api.Job, error)
+	Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*nomadx.DispatchResult, error)
+	FindDispatched(ctx context.Context, ns, parentID, idempotencyToken string) (string, error)
+	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
+	StopJob(ctx context.Context, ns, id string) error
 }
 
 // Store is what the runner needs from the store. *store.Store implements it.
@@ -39,6 +39,11 @@ type Store interface {
 // Request describes one hook run.
 type Request struct {
 	DeploymentID string
+	// Namespace is the Nomad namespace the hook job is dispatched in and its
+	// runs are read from: the deployment's own (a hook lives in the namespace of
+	// the job that declares it). The store does not keep it, so a resume passes
+	// it again.
+	Namespace string
 	// Phase is "pre" or "post".
 	Phase string
 	// Position is the place of the hook among those of its phase, from 0.
@@ -127,6 +132,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	if req.HookJobID == "" {
 		return Result{}, errors.New("run hook: HookJobID is required")
 	}
+	if req.Namespace == "" {
+		return Result{}, errors.New("run hook: Namespace is required")
+	}
 	if req.Timeout <= 0 {
 		return Result{}, fmt.Errorf("run hook: timeout %s must be positive", req.Timeout)
 	}
@@ -153,13 +161,13 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 			res, done, err = r.dispatch(ctx, log, req, run, deadline)
 		} else {
 			// running without a child ID: the dispatch may have been sent.
-			res, done, err = r.recoverChild(ctx, log, run)
+			res, done, err = r.recoverChild(ctx, log, req.Namespace, run)
 		}
 		if err != nil || done {
 			return res, err
 		}
 	}
-	return r.await(ctx, log, run, deadline)
+	return r.await(ctx, log, req.Namespace, run, deadline)
 }
 
 func resultOf(run *store.HookRun) Result {
@@ -198,7 +206,7 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 		return res, true, err
 	}
 
-	parent, err := r.nomad.Job(ctx, run.HookJobID)
+	parent, err := r.nomad.Job(ctx, req.Namespace, run.HookJobID)
 	if errors.Is(err, nomadx.ErrJobNotFound) {
 		return fail("hook job %q not found in Nomad: its revision is registered right before the dispatch, so it was removed in between", run.HookJobID)
 	}
@@ -227,7 +235,7 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 		return Result{}, false, err
 	}
 	run.State = store.HookRunning
-	child, err := r.nomad.Dispatch(ctx, run.HookJobID, dm, run.IdempotencyToken)
+	child, err := r.nomad.Dispatch(ctx, req.Namespace, run.HookJobID, dm, run.IdempotencyToken)
 	if err != nil {
 		return Result{}, false, err
 	}
@@ -253,8 +261,8 @@ func (r *Runner) saveChild(ctx context.Context, log *slog.Logger, run *store.Hoo
 // dispatch may never have been sent, or the child may have run and been
 // garbage-collected. Dispatching again could run the hook twice, so the run
 // fails instead.
-func (r *Runner) recoverChild(ctx context.Context, log *slog.Logger, run *store.HookRun) (Result, bool, error) {
-	id, err := r.nomad.FindDispatched(ctx, run.HookJobID, run.IdempotencyToken)
+func (r *Runner) recoverChild(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun) (Result, bool, error) {
+	id, err := r.nomad.FindDispatched(ctx, ns, run.HookJobID, run.IdempotencyToken)
 	if err != nil {
 		return Result{}, false, err
 	}
@@ -271,21 +279,21 @@ func (r *Runner) recoverChild(ctx context.Context, log *slog.Logger, run *store.
 }
 
 // await polls the dispatched child until it has an outcome or the deadline passes.
-func (r *Runner) await(ctx context.Context, log *slog.Logger, run *store.HookRun, deadline time.Time) (Result, error) {
+func (r *Runner) await(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun, deadline time.Time) (Result, error) {
 	gone := func() (Result, error) {
 		return r.finish(ctx, log, run, store.HookFailed, fmt.Sprintf(
 			"hook run %s disappeared from Nomad (garbage-collected or purged) before nops saw its outcome; the outcome is unknown, so it is not dispatched again",
 			run.DispatchedJobID))
 	}
 	for {
-		child, err := r.nomad.Job(ctx, run.DispatchedJobID)
+		child, err := r.nomad.Job(ctx, ns, run.DispatchedJobID)
 		if errors.Is(err, nomadx.ErrJobNotFound) {
 			return gone()
 		}
 		if err != nil {
 			return Result{}, err
 		}
-		allocs, err := r.nomad.Allocations(ctx, run.DispatchedJobID)
+		allocs, err := r.nomad.Allocations(ctx, ns, run.DispatchedJobID)
 		if errors.Is(err, nomadx.ErrJobNotFound) {
 			return gone()
 		}
@@ -305,7 +313,7 @@ func (r *Runner) await(ctx context.Context, log *slog.Logger, run *store.HookRun
 		case expired:
 			// A stopped verdict past the deadline is our own stop from an earlier
 			// attempt whose result could not be saved: stopping again is harmless.
-			if err := r.nomad.StopJob(ctx, run.DispatchedJobID); err != nil {
+			if err := r.nomad.StopJob(ctx, ns, run.DispatchedJobID); err != nil {
 				return Result{}, err
 			}
 			return r.finish(ctx, log, run, store.HookTimedOut, fmt.Sprintf(

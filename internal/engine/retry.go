@@ -29,11 +29,11 @@ func (e *Engine) Retry(ctx context.Context, namespace, jobID, actor string) erro
 	if actor == "" {
 		return errors.New("retry: actor is required")
 	}
-	if namespace != e.namespace {
+	if !e.managedNS[namespace] {
 		return fmt.Errorf("retry %s/%s: %w", namespace, jobID, store.ErrNotFound)
 	}
 
-	obs, ok := e.observation(jobID)
+	obs, ok := e.observation(jobKey{namespace, jobID})
 	if !ok || obs.BlockedBy == "" {
 		return fmt.Errorf("retry %s/%s: %w", namespace, jobID, ErrNotBlocked)
 	}
@@ -57,9 +57,9 @@ func (e *Engine) Retry(ctx context.Context, namespace, jobID, actor string) erro
 }
 
 // observation returns the last cycle's observation of one job.
-func (e *Engine) observation(jobID string) (Observation, bool) {
+func (e *Engine) observation(key jobKey) (Observation, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	o, ok := e.observations[jobID]
+	o, ok := e.observations[key]
 	return o, ok
 }

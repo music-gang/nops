@@ -34,34 +34,49 @@ var (
 //	Enforcing job modify index 5: job does not exist
 const casConflictMarker = "Enforcing job modify index"
 
-// Client is a Nomad client bound to one namespace.
+// Client is a Nomad client. It is not bound to a namespace: one client and one
+// token serve every namespace, and each call names the one it acts on (the
+// namespace is a per-request parameter of the Nomad API). Plan and RegisterCAS
+// take it from the job itself.
 type Client struct {
-	jobs      *api.Jobs
-	namespace string
+	jobs *api.Jobs
 }
 
 // New creates a Client. nops passes config.Config.Nomad(), which ignores the
-// NOMAD_* environment variables. An empty namespace means "default".
-func New(cfg *api.Config, namespace string) (*Client, error) {
+// NOMAD_* environment variables and carries no namespace.
+func New(cfg *api.Config) (*Client, error) {
 	c, err := api.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create nomad client: %w", err)
 	}
-	if namespace == "" {
-		namespace = api.DefaultNamespace
+	return &Client{jobs: c.Jobs()}, nil
+}
+
+// query and write build the options of a request in namespace ns. An empty ns
+// is a caller bug: Nomad would fall back to "default" and act on the wrong
+// namespace without a word, so it is refused.
+func (c *Client) query(ctx context.Context, ns string) (*api.QueryOptions, error) {
+	if ns == "" {
+		return nil, errNoNamespace
 	}
-	return &Client{jobs: c.Jobs(), namespace: namespace}, nil
+	return (&api.QueryOptions{Namespace: ns}).WithContext(ctx), nil
 }
 
-// Namespace returns the namespace the client operates in.
-func (c *Client) Namespace() string { return c.namespace }
-
-func (c *Client) query(ctx context.Context) *api.QueryOptions {
-	return (&api.QueryOptions{Namespace: c.namespace}).WithContext(ctx)
+func (c *Client) write(ctx context.Context, ns string) (*api.WriteOptions, error) {
+	if ns == "" {
+		return nil, errNoNamespace
+	}
+	return (&api.WriteOptions{Namespace: ns}).WithContext(ctx), nil
 }
 
-func (c *Client) write(ctx context.Context) *api.WriteOptions {
-	return (&api.WriteOptions{Namespace: c.namespace}).WithContext(ctx)
+var errNoNamespace = errors.New("no namespace given")
+
+// jobNamespace is the namespace a job says it belongs to.
+func jobNamespace(job *api.Job) string {
+	if job.Namespace == nil {
+		return ""
+	}
+	return *job.Namespace
 }
 
 // ParseHCL asks Nomad to parse and canonicalize a job. vars is the content of
@@ -85,9 +100,13 @@ func (c *Client) ParseHCL(ctx context.Context, hcl, vars string) (*api.Job, erro
 	return job, nil
 }
 
-// Job returns the live job, or ErrJobNotFound.
-func (c *Client) Job(ctx context.Context, id string) (*api.Job, error) {
-	job, _, err := c.jobs.Info(id, c.query(ctx))
+// Job returns the live job of namespace ns, or ErrJobNotFound.
+func (c *Client) Job(ctx context.Context, ns, id string) (*api.Job, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("get job %s: %w", id, err)
+	}
+	job, _, err := c.jobs.Info(id, q)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, fmt.Errorf("job %s: %w", id, ErrJobNotFound)
@@ -97,9 +116,15 @@ func (c *Client) Job(ctx context.Context, id string) (*api.Job, error) {
 	return job, nil
 }
 
-// Plan runs a dry-run registration with the diff included.
+// Plan runs a dry-run registration with the diff included, in the namespace the
+// job declares (a parsed job always has one: Nomad canonicalizes it to
+// "default").
 func (c *Client) Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error) {
-	resp, _, err := c.jobs.PlanOpts(job, &api.PlanOptions{Diff: true}, c.write(ctx))
+	w, err := c.write(ctx, jobNamespace(job))
+	if err != nil {
+		return nil, fmt.Errorf("plan job %s: %w", deref(job.ID), err)
+	}
+	resp, _, err := c.jobs.PlanOpts(job, &api.PlanOptions{Diff: true}, w)
 	if err != nil {
 		return nil, fmt.Errorf("plan job %s: %w", deref(job.ID), err)
 	}
@@ -120,13 +145,18 @@ type RegisterResult struct {
 // RegisterCAS registers job only if the live job's modify index equals
 // modifyIndex (0 means "the job must not exist"). There is deliberately no
 // variant without the check. preserveCounts keeps group counts owned by an
-// autoscaler. A failed check returns an error wrapping ErrCASConflict.
+// autoscaler. A failed check returns an error wrapping ErrCASConflict. The job
+// is registered in the namespace it declares.
 func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*RegisterResult, error) {
+	w, err := c.write(ctx, jobNamespace(job))
+	if err != nil {
+		return nil, fmt.Errorf("register job %s: %w", deref(job.ID), err)
+	}
 	resp, _, err := c.jobs.RegisterOpts(job, &api.RegisterOptions{
 		EnforceIndex:   true,
 		ModifyIndex:    modifyIndex,
 		PreserveCounts: preserveCounts,
-	}, c.write(ctx))
+	}, w)
 	if err != nil {
 		if isCASConflict(err) {
 			return nil, fmt.Errorf("register job %s at index %d: %w: %v", deref(job.ID), modifyIndex, ErrCASConflict, err)
@@ -149,12 +179,16 @@ type JobStub struct {
 	Meta map[string]string
 }
 
-// ListJobs lists every job of the namespace, children of parameterized and
+// ListJobs lists every job of namespace ns, children of parameterized and
 // periodic jobs included (they carry their parent's meta), ordered by ID.
 // Nomad leaves the meta out of a listing unless asked for it, verified on
 // 2.0.3.
-func (c *Client) ListJobs(ctx context.Context) ([]JobStub, error) {
-	stubs, _, err := c.jobs.ListOptions(&api.JobListOptions{Fields: &api.JobListFields{Meta: true}}, c.query(ctx))
+func (c *Client) ListJobs(ctx context.Context, ns string) ([]JobStub, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	stubs, _, err := c.jobs.ListOptions(&api.JobListOptions{Fields: &api.JobListFields{Meta: true}}, q)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -177,8 +211,11 @@ type DispatchResult struct {
 // Nomad return the existing child, without a new evaluation, if a child with
 // the same token already exists (verified on Nomad 2.0.3, also after the child
 // has finished). Nomad rejects meta keys the job does not declare.
-func (c *Client) Dispatch(ctx context.Context, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
-	wq := c.write(ctx)
+func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
+	wq, err := c.write(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch job %s: %w", parentID, err)
+	}
 	wq.IdempotencyToken = idempotencyToken
 	resp, _, err := c.jobs.DispatchOpts(&api.DispatchOptions{JobID: parentID, Meta: meta}, wq)
 	if err != nil {
@@ -205,8 +242,12 @@ type Alloc struct {
 }
 
 // Allocations lists every allocation of a job, including finished ones.
-func (c *Client) Allocations(ctx context.Context, jobID string) ([]Alloc, error) {
-	stubs, _, err := c.jobs.Allocations(jobID, true, c.query(ctx))
+func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("list allocations of job %s: %w", jobID, err)
+	}
+	stubs, _, err := c.jobs.Allocations(jobID, true, q)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, fmt.Errorf("allocations of job %s: %w", jobID, ErrJobNotFound)
@@ -229,8 +270,12 @@ func (c *Client) Allocations(ctx context.Context, jobID string) ([]Alloc, error)
 // LatestDeployment returns the Nomad deployment currently tracking jobID, or
 // nil if the job has none (a batch job, or an update stanza that produces
 // none): Nomad answers with an empty body rather than a 404 in that case.
-func (c *Client) LatestDeployment(ctx context.Context, jobID string) (*api.Deployment, error) {
-	d, _, err := c.jobs.LatestDeployment(jobID, c.query(ctx))
+func (c *Client) LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("latest deployment of job %s: %w", jobID, err)
+	}
+	d, _, err := c.jobs.LatestDeployment(jobID, q)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, fmt.Errorf("latest deployment of job %s: %w", jobID, ErrJobNotFound)
@@ -289,8 +334,11 @@ func failureEvent(events []*api.TaskEvent) *api.TaskEvent {
 // garbage-collected). It is how a resumed run finds a child whose ID was not
 // saved. It lists the children (dead ones included) and reads each one, as the
 // token is only on the full job.
-func (c *Client) FindDispatched(ctx context.Context, parentID, idempotencyToken string) (string, error) {
-	q := c.query(ctx)
+func (c *Client) FindDispatched(ctx context.Context, ns, parentID, idempotencyToken string) (string, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return "", fmt.Errorf("list children of job %s: %w", parentID, err)
+	}
 	q.Prefix = parentID + "/dispatch-"
 	stubs, _, err := c.jobs.List(q)
 	if err != nil {
@@ -300,7 +348,7 @@ func (c *Client) FindDispatched(ctx context.Context, parentID, idempotencyToken 
 		if s.ParentID != parentID {
 			continue
 		}
-		child, err := c.Job(ctx, s.ID)
+		child, err := c.Job(ctx, ns, s.ID)
 		if errors.Is(err, ErrJobNotFound) {
 			continue // garbage-collected between the list and the read
 		}
@@ -317,8 +365,12 @@ func (c *Client) FindDispatched(ctx context.Context, parentID, idempotencyToken 
 // StopJob deregisters a job without purging it, so it stays visible in Nomad
 // for debugging. A job that does not exist is not an error: stopping is
 // idempotent.
-func (c *Client) StopJob(ctx context.Context, id string) error {
-	if _, _, err := c.jobs.Deregister(id, false, c.write(ctx)); err != nil {
+func (c *Client) StopJob(ctx context.Context, ns, id string) error {
+	w, err := c.write(ctx, ns)
+	if err != nil {
+		return fmt.Errorf("stop job %s: %w", id, err)
+	}
+	if _, _, err := c.jobs.Deregister(id, false, w); err != nil {
 		if isNotFound(err) {
 			return nil
 		}

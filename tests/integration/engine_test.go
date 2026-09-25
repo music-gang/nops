@@ -71,8 +71,8 @@ func newEngine(t *testing.T, snap staticSnapshot) (*engine.Engine, *store.Store)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	e := engine.New(engine.Options{
 		Store: st, Nomad: c, Snapshots: snap, Notifier: noopNotifier{},
-		Hooks:     hooks.New(c, st, log, 200*time.Millisecond),
-		Namespace: "default", DriftInterval: time.Hour, EngineInterval: 200 * time.Millisecond, ApplyTimeout: time.Minute,
+		Hooks:      hooks.New(c, st, log, 200*time.Millisecond),
+		Namespaces: []string{"default"}, DriftInterval: time.Hour, EngineInterval: 200 * time.Millisecond, ApplyTimeout: time.Minute,
 		Log: log,
 	})
 	return e, st
@@ -232,7 +232,7 @@ func TestEngineApplyAgainstRealNomad(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	live, err := c.Job(ctx, jobID)
+	live, err := c.Job(ctx, "default", jobID)
 	if err != nil {
 		t.Fatal(err)
 	}

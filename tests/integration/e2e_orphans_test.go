@@ -74,7 +74,7 @@ func TestE2EOrphanJobIsShownAndNeverStopped(t *testing.T) {
 	if got := e.liveIndex(jobID); got != indexBefore {
 		t.Errorf("live index moved %d → %d: nops touched an orphan", indexBefore, got)
 	}
-	live, err := e.nomad.Job(context.Background(), jobID)
+	live, err := e.nomad.Job(context.Background(), "default", jobID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestE2EOrphanJobIsShownAndNeverStopped(t *testing.T) {
 	}
 
 	// The operator stops it: the alert goes away by itself.
-	if err := e.nomad.StopJob(context.Background(), jobID); err != nil {
+	if err := e.nomad.StopJob(context.Background(), "default", jobID); err != nil {
 		t.Fatal(err)
 	}
 	e.dash.waitNoBody(t, "/jobs", "Not in git")

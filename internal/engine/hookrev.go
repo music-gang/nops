@@ -136,13 +136,16 @@ func revisionJob(h store.DeploymentHook) (*api.Job, error) {
 // stopped shows as a difference, so it is registered again at its own index).
 // Two deployments registering the same revision at once are safe: the loser
 // gets a CAS conflict and, retried, finds nothing to do.
-func (e *Engine) registerRevision(ctx context.Context, log *slog.Logger, h store.DeploymentHook) error {
+func (e *Engine) registerRevision(ctx context.Context, log *slog.Logger, ns string, h store.DeploymentHook) error {
 	job, err := revisionJob(h)
 	if err != nil {
 		return err
 	}
+	// A hook lives in the namespace of the job that declares it: the
+	// deployment's, whatever the frozen spec says.
+	job.Namespace = &ns
 	var index uint64
-	live, err := e.nomad.Job(ctx, h.Revision)
+	live, err := e.nomad.Job(ctx, ns, h.Revision)
 	switch {
 	case errors.Is(err, nomadx.ErrJobNotFound):
 	case err != nil:
@@ -165,15 +168,24 @@ func (e *Engine) registerRevision(ctx context.Context, log *slog.Logger, h store
 }
 
 // gcHookRevisions deregisters, without purging, the hook revisions no
-// non-terminal deployment needs. It only touches jobs that are hooks
-// (nops_role = "hook"), whose ID has the shape of a revision and that are not
-// children of another job; a hook registered by hand under its plain ID is
-// never one. A Nomad failure is an ERROR, retried by the next cycle; a store
-// failure is returned.
+// non-terminal deployment needs, in every managed namespace. It only touches
+// jobs that are hooks (nops_role = "hook"), whose ID has the shape of a
+// revision and that are not children of another job; a hook registered by hand
+// under its plain ID is never one. A Nomad failure is an ERROR, retried by the
+// next cycle; a store failure is returned.
 func (e *Engine) gcHookRevisions(ctx context.Context) error {
-	stubs, err := e.nomad.ListJobs(ctx)
+	for _, ns := range e.namespaces {
+		if err := e.gcHookRevisionsIn(ctx, ns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) gcHookRevisionsIn(ctx context.Context, ns string) error {
+	stubs, err := e.nomad.ListJobs(ctx, ns)
 	if err != nil {
-		e.log.ErrorContext(ctx, "hook revision GC: list jobs", "error", err)
+		e.log.ErrorContext(ctx, "hook revision GC: list jobs", "namespace", ns, "error", err)
 		return nil
 	}
 	var candidates []string
@@ -187,7 +199,7 @@ func (e *Engine) gcHookRevisions(ctx context.Context) error {
 	}
 	// After the listing: a deployment created since only needs a revision that
 	// is registered again by its own step if this run stops it.
-	used, err := e.store.HookRevisionsInUse(ctx, e.namespace)
+	used, err := e.store.HookRevisionsInUse(ctx, ns)
 	if err != nil {
 		return err
 	}
@@ -199,11 +211,11 @@ func (e *Engine) gcHookRevisions(ctx context.Context) error {
 		if inUse[id] {
 			continue
 		}
-		if err := e.nomad.StopJob(ctx, id); err != nil {
-			e.log.ErrorContext(ctx, "hook revision GC: deregister", "job", id, "namespace", e.namespace, "error", err)
+		if err := e.nomad.StopJob(ctx, ns, id); err != nil {
+			e.log.ErrorContext(ctx, "hook revision GC: deregister", "job", id, "namespace", ns, "error", err)
 			continue
 		}
-		e.log.InfoContext(ctx, "hook revision deregistered", "job", id, "namespace", e.namespace)
+		e.log.InfoContext(ctx, "hook revision deregistered", "job", id, "namespace", ns)
 	}
 	return nil
 }
