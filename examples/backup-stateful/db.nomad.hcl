@@ -21,10 +21,9 @@ job "db" {
   type        = "service"
 
   meta {
-    nops_managed          = "true"
-    nops_policy           = "approval"
-    nops_pre_hook         = "db-backup"
-    nops_pre_hook_timeout = "30m"
+    nops_managed  = "true"
+    nops_policy   = "approval"
+    nops_pre_hook = "db-backup"
   }
 
   group "db" {

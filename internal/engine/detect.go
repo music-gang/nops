@@ -217,7 +217,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		log.ErrorContext(ctx, "compute spec hash", "error", err)
 		return Observation{}, false, nil
 	}
-	frozen, hash, missing, err := freezeHooks(mf.cfg, hooks, targetHash)
+	frozen, hash, problem, err := freezeHooks(mf.cfg, hooks, targetHash)
 	if err != nil {
 		log.ErrorContext(ctx, "freeze hooks", "error", err)
 		return Observation{}, false, nil
@@ -260,14 +260,14 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 
 	obs = Observation{
 		JobID: jobID, Namespace: e.namespace, FilePath: mf.path,
-		Policy: mf.cfg.Policy, PreHook: mf.cfg.PreHook, PostHook: mf.cfg.PostHook,
+		Policy: mf.cfg.Policy, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
 		Issues: mf.cfg.Issues, ObservedAt: e.now(),
 	}
 	if drift {
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, frozen, missing, liveIndex, drift, redacted, planJob)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob)
 	if err != nil {
 		return obs, true, err
 	}
@@ -284,7 +284,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID string, commit commitRef, cfg meta.Config,
-	hash string, frozen []store.DeploymentHook, missing string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job) (blockedBy, blockedReason string, err error) {
 
 	active, err := e.store.ActiveDeployment(ctx, e.namespace, jobID)
 	switch {
@@ -354,8 +354,8 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
 	}
 
-	if missing != "" {
-		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit.sha))
+	if problem != "" {
+		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, commit.sha))
 	}
 	if cfg.Policy == meta.PolicyApproval {
 		return "", "", e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")

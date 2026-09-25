@@ -103,15 +103,16 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   created, in the same transaction (invariant 7): the hook as it was in git,
   its hash and the ID of the Nomad job registered from it (a *hook revision*,
   see [hooks](hooks.md#hook-revisions)). `position` orders the hooks of a
-  phase; it is always `0` while a phase has a single hook.
+  phase, from 0, as they are listed in the meta.
   `PRIMARY KEY (deployment_id, phase, position)`. The `deployments.spec_hash`
   covers the target and these hooks. A deployment made before this table
   existed has none: if it reaches a hook step it fails, saying so.
-- `hook_runs`: id, deployment_id, phase, hook_job_id (the revision),
-  idempotency_token
-  (`<deployment_id>:<phase>`), dispatched_job_id, state
-  (`dispatching|running|succeeded|failed|timed_out`), timeout_s, error,
-  started_at, finished_at. `UNIQUE(deployment_id, phase)`.
+- `hook_runs`: id, deployment_id, phase, position, hook_job_id (the revision),
+  idempotency_token (`<deployment_id>:<phase>:<position>`; a row that predates
+  positions keeps `<deployment_id>:<phase>`, the token it was dispatched with),
+  dispatched_job_id, state (`dispatching|running|succeeded|failed|timed_out`),
+  timeout_s, error, started_at, finished_at.
+  `UNIQUE(deployment_id, phase, position)`.
 - `events`: append-only log (deployment_id, ts, from_state, to_state, actor,
   message). It feeds the history view in the dashboard. `Store.MarkRetried`
   appends one event whose `from_state` and `to_state` are both the

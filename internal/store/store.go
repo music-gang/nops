@@ -155,6 +155,7 @@ type HookRun struct {
 	ID               string
 	DeploymentID     string
 	Phase            string // "pre" or "post"
+	Position         int    // order within the phase, from 0
 	HookJobID        string
 	IdempotencyToken string
 	DispatchedJobID  string
@@ -768,33 +769,38 @@ func (s *Store) Events(ctx context.Context, deploymentID string) ([]Event, error
 	return out, rows.Err()
 }
 
-// EnsureHookRun creates the hook run for (deploymentID, phase) in state
-// dispatching, or returns the existing one. It is the idempotent entry point
-// used before dispatching, so a restarted controller finds the earlier run.
-// created is true if the row was just inserted.
-func (s *Store) EnsureHookRun(ctx context.Context, deploymentID, phase, hookJobID string, timeout time.Duration) (run *HookRun, created bool, err error) {
+// EnsureHookRun creates the hook run for (deploymentID, phase, position) in
+// state dispatching, or returns the existing one. It is the idempotent entry
+// point used before dispatching, so a restarted controller finds the earlier
+// run. created is true if the row was just inserted.
+func (s *Store) EnsureHookRun(ctx context.Context, deploymentID, phase string, position int, hookJobID string, timeout time.Duration) (run *HookRun, created bool, err error) {
 	if phase != "pre" && phase != "post" {
 		return nil, false, fmt.Errorf("ensure hook run: invalid phase %q", phase)
 	}
+	if position < 0 {
+		return nil, false, fmt.Errorf("ensure hook run: invalid position %d", position)
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO hook_runs
-		(id, deployment_id, phase, hook_job_id, idempotency_token, state, timeout_s, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (deployment_id, phase) DO NOTHING`,
-		s.newID(), deploymentID, phase, hookJobID, deploymentID+":"+phase, string(HookDispatching),
-		int64(timeout/time.Second), s.ts())
+		(id, deployment_id, phase, position, hook_job_id, idempotency_token, state, timeout_s, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (deployment_id, phase, position) DO NOTHING`,
+		s.newID(), deploymentID, phase, position, hookJobID, fmt.Sprintf("%s:%s:%d", deploymentID, phase, position),
+		string(HookDispatching), int64(timeout/time.Second), s.ts())
 	if err != nil {
-		return nil, false, fmt.Errorf("ensure hook run %s/%s: %w", deploymentID, phase, err)
+		return nil, false, fmt.Errorf("ensure hook run %s/%s/%d: %w", deploymentID, phase, position, err)
 	}
 	n, _ := res.RowsAffected()
-	run, err = s.GetHookRun(ctx, deploymentID, phase)
+	run, err = s.GetHookRun(ctx, deploymentID, phase, position)
 	if err != nil {
 		return nil, false, err
 	}
 	return run, n == 1, nil
 }
 
-// GetHookRun returns the hook run of a deployment phase, or ErrNotFound.
-func (s *Store) GetHookRun(ctx context.Context, deploymentID, phase string) (*HookRun, error) {
+const hookRunCols = `id, deployment_id, phase, position, hook_job_id, idempotency_token,
+	dispatched_job_id, state, timeout_s, error, started_at, finished_at`
+
+func scanHookRun(r scanner) (*HookRun, error) {
 	var (
 		h                  HookRun
 		dispatched, errMsg sql.NullString
@@ -802,17 +808,11 @@ func (s *Store) GetHookRun(ctx context.Context, deploymentID, phase string) (*Ho
 		state, started     string
 		timeoutS           int64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT id, deployment_id, phase, hook_job_id, idempotency_token,
-			dispatched_job_id, state, timeout_s, error, started_at, finished_at
-		FROM hook_runs WHERE deployment_id = ? AND phase = ?`, deploymentID, phase).
-		Scan(&h.ID, &h.DeploymentID, &h.Phase, &h.HookJobID, &h.IdempotencyToken,
-			&dispatched, &state, &timeoutS, &errMsg, &started, &finished)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("hook run %s/%s: %w", deploymentID, phase, ErrNotFound)
+	if err := r.Scan(&h.ID, &h.DeploymentID, &h.Phase, &h.Position, &h.HookJobID, &h.IdempotencyToken,
+		&dispatched, &state, &timeoutS, &errMsg, &started, &finished); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("get hook run %s/%s: %w", deploymentID, phase, err)
-	}
+	var err error
 	h.DispatchedJobID, h.Error, h.State = dispatched.String, errMsg.String, HookState(state)
 	h.Timeout = time.Duration(timeoutS) * time.Second
 	if h.StartedAt, err = parseTime(started); err != nil {
@@ -822,6 +822,43 @@ func (s *Store) GetHookRun(ctx context.Context, deploymentID, phase string) (*Ho
 		return nil, err
 	}
 	return &h, nil
+}
+
+// GetHookRun returns the hook run at a position of a deployment phase, or
+// ErrNotFound.
+func (s *Store) GetHookRun(ctx context.Context, deploymentID, phase string, position int) (*HookRun, error) {
+	h, err := scanHookRun(s.db.QueryRowContext(ctx, `SELECT `+hookRunCols+`
+		FROM hook_runs WHERE deployment_id = ? AND phase = ? AND position = ?`, deploymentID, phase, position))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("hook run %s/%s/%d: %w", deploymentID, phase, position, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get hook run %s/%s/%d: %w", deploymentID, phase, position, err)
+	}
+	return h, nil
+}
+
+// ListHookRuns returns the hook runs of a deployment, pre before post and by
+// position; none if no hook has run.
+func (s *Store) ListHookRuns(ctx context.Context, deploymentID string) ([]*HookRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+hookRunCols+` FROM hook_runs WHERE deployment_id = ?
+		ORDER BY CASE phase WHEN 'pre' THEN 0 ELSE 1 END, position`, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("list hook runs of deployment %s: %w", deploymentID, err)
+	}
+	defer rows.Close()
+	var out []*HookRun
+	for rows.Next() {
+		h, err := scanHookRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan hook run of deployment %s: %w", deploymentID, err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list hook runs of deployment %s: %w", deploymentID, err)
+	}
+	return out, nil
 }
 
 // HookUpdate changes a hook run. Optional fields are written only when non-zero.

@@ -15,21 +15,26 @@ const prefix = "nops_"
 
 // Meta keys.
 const (
-	KeyManaged         = "nops_managed"
-	KeyPolicy          = "nops_policy"
-	KeyPreHook         = "nops_pre_hook"
-	KeyPreHookTimeout  = "nops_pre_hook_timeout"
-	KeyPostHook        = "nops_post_hook"
-	KeyPostHookTimeout = "nops_post_hook_timeout"
-	KeyRole            = "nops_role"
+	KeyManaged  = "nops_managed"
+	KeyPolicy   = "nops_policy"
+	KeyPreHook  = "nops_pre_hook"
+	KeyPostHook = "nops_post_hook"
+	KeyRole     = "nops_role"
+	KeyTimeout  = "nops_timeout"
 )
 
-// DefaultHookTimeout applies when a hook is declared without an explicit timeout.
+// DefaultHookTimeout applies to a hook job that has no nops_timeout.
 const DefaultHookTimeout = 5 * time.Minute
 
 var knownKeys = map[string]struct{}{
-	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPreHookTimeout: {},
-	KeyPostHook: {}, KeyPostHookTimeout: {}, KeyRole: {},
+	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {},
+}
+
+// removedKeys are keys that used to exist, with what replaces them: still
+// warned about, in a message that says so, rather than as a typo.
+var removedKeys = map[string]string{
+	"nops_pre_hook_timeout":  "removed: set " + KeyTimeout + " on the hook job",
+	"nops_post_hook_timeout": "removed: set " + KeyTimeout + " on the hook job",
 }
 
 // Policy decides how a detected difference is applied.
@@ -58,12 +63,6 @@ type Issue struct {
 
 func (i Issue) String() string { return fmt.Sprintf("%s: %s", i.Key, i.Message) }
 
-// Hook is a declared deployment hook.
-type Hook struct {
-	JobID   string
-	Timeout time.Duration
-}
-
 // Config is the parsed nops configuration of one job.
 type Config struct {
 	// Managed is true only for nops_managed = "true".
@@ -71,11 +70,15 @@ type Config struct {
 	// Policy is the effective policy. It is PolicyNone whenever the job is not
 	// managed or any Error issue was found (conservative reading).
 	Policy Policy
-	// PreHook and PostHook are nil when not declared.
-	PreHook  *Hook
-	PostHook *Hook
+	// PreHooks and PostHooks are the IDs of the hook jobs the job declares, in
+	// the order they run; empty when not declared.
+	PreHooks  []string
+	PostHooks []string
 	// IsHook marks a job with nops_role = "hook".
 	IsHook bool
+	// Timeout is how long a hook job may run (nops_timeout, or
+	// DefaultHookTimeout); zero for a job that is not a hook.
+	Timeout time.Duration
 	// Issues lists every problem found, sorted by key.
 	Issues []Issue
 }
@@ -104,9 +107,14 @@ func Parse(m map[string]string) Config {
 		if !strings.HasPrefix(k, prefix) {
 			continue
 		}
-		if _, ok := knownKeys[k]; !ok {
-			add(SeverityWarn, k, "unknown key")
+		if _, ok := knownKeys[k]; ok {
+			continue
 		}
+		if msg, ok := removedKeys[k]; ok {
+			add(SeverityWarn, k, "%s", msg)
+			continue
+		}
+		add(SeverityWarn, k, "unknown key")
 	}
 
 	switch v, ok := m[KeyManaged]; {
@@ -139,8 +147,25 @@ func Parse(m map[string]string) Config {
 		}
 	}
 
-	c.PreHook = parseHook(m, KeyPreHook, KeyPreHookTimeout, add)
-	c.PostHook = parseHook(m, KeyPostHook, KeyPostHookTimeout, add)
+	if c.IsHook {
+		c.Timeout = DefaultHookTimeout
+	}
+	if v, ok := m[KeyTimeout]; ok {
+		d, err := time.ParseDuration(v)
+		switch {
+		case !c.IsHook:
+			add(SeverityWarn, KeyTimeout, "set but %s is not \"hook\": ignored", KeyRole)
+		case err != nil:
+			add(SeverityError, KeyTimeout, "invalid duration %q: %v", v, err)
+		case d <= 0:
+			add(SeverityError, KeyTimeout, "duration %q must be positive", v)
+		default:
+			c.Timeout = d
+		}
+	}
+
+	c.PreHooks = parseHooks(m, KeyPreHook, add)
+	c.PostHooks = parseHooks(m, KeyPostHook, add)
 
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Key < issues[j].Key })
 	c.Issues = issues
@@ -152,32 +177,31 @@ func Parse(m map[string]string) Config {
 	return c
 }
 
-func parseHook(m map[string]string, hookKey, timeoutKey string, add func(Severity, string, string, ...any)) *Hook {
-	id, hasID := m[hookKey]
-	tv, hasTimeout := m[timeoutKey]
-
-	if hasTimeout && (!hasID || id == "") {
-		add(SeverityWarn, timeoutKey, "set but %s is not declared: ignored", hookKey)
-	}
-	if hasID && id == "" {
-		add(SeverityError, hookKey, "empty hook job ID")
+// parseHooks reads a comma-separated list of hook job IDs, in the order they
+// run. An empty item (a stray comma, or an empty value) or the same hook twice
+// is an error for the whole key: the list is then not declared.
+func parseHooks(m map[string]string, key string, add func(Severity, string, string, ...any)) []string {
+	v, ok := m[key]
+	if !ok {
 		return nil
 	}
-	if !hasID {
-		return nil
-	}
-
-	h := &Hook{JobID: id, Timeout: DefaultHookTimeout}
-	if hasTimeout {
-		d, err := time.ParseDuration(tv)
+	var ids []string
+	seen := make(map[string]bool)
+	for _, item := range strings.Split(v, ",") {
+		id := strings.TrimSpace(item)
 		switch {
-		case err != nil:
-			add(SeverityError, timeoutKey, "invalid duration %q: %v", tv, err)
-		case d <= 0:
-			add(SeverityError, timeoutKey, "duration %q must be positive", tv)
-		default:
-			h.Timeout = d
+		case id == "" && strings.TrimSpace(v) == "":
+			add(SeverityError, key, "empty hook job ID")
+			return nil
+		case id == "":
+			add(SeverityError, key, "empty item in the list of hook job IDs %q", v)
+			return nil
+		case seen[id]:
+			add(SeverityError, key, "hook job %q is listed twice", id)
+			return nil
 		}
+		seen[id] = true
+		ids = append(ids, id)
 	}
-	return h
+	return ids
 }

@@ -2,10 +2,9 @@
 #
 # In the "myapp" job (a single write mount, so no canary):
 #   meta {
-#     nops_managed          = "true"
-#     nops_policy           = "approval"
-#     nops_pre_hook         = "myapp-prepull"
-#     nops_pre_hook_timeout = "15m"
+#     nops_managed  = "true"
+#     nops_policy   = "approval"
+#     nops_pre_hook = "myapp-prepull"
 #   }
 #   # and in the task: force_pull = false, so the start uses the node's cache.
 #
@@ -23,7 +22,8 @@ job "myapp-prepull" {
   type        = "batch"
 
   meta {
-    nops_role = "hook"
+    nops_role    = "hook"
+    nops_timeout = "15m"
   }
 
   parameterized {

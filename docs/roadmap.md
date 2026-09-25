@@ -48,6 +48,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `dashboard-ux` | The redesigned dashboard: Overview (what needs attention, git and cycle health), Jobs (sync state), Job, Deployment (a review page: what Approve will do, the diff summarized and folded once decided) and Activity, in a dense Primer look ([dashboard](dashboard.md), [decisions](design/decisions.md) 2026-09-24) | `internal/web`, `internal/engine` |
 | `orphan-jobs` | A job nops deployed that is gone from the repository but still runs in Nomad is reported (sync state **Not in git**, Needs attention, a notice on its page) and never stopped; the check is suspended while a file does not parse ([design](design/engine-detection.md#orphan-jobs)) | `internal/engine`, `internal/store`, `internal/web` |
 | `hook-revisions` | An approval covers the hooks that run: a deployment freezes its hooks (`deployment_hooks`), `spec_hash` covers them, each is registered in Nomad as `<hook-id>-<8 hex>` right before its dispatch and unused revisions are deregistered without purge; the per-cycle hook sync is gone ([hooks](hooks.md#hook-revisions), [design](design/engine-detection.md#hook-revisions)) | `internal/store`, `internal/engine`, `internal/nomadx`, `internal/web` |
+| `multi-hooks` | Several pre-hooks and post-hooks per job (`nops_pre_hook = "backup,migrate"`), run in order and stopping at the first failure; the timeout moves to `nops_timeout` on the hook job ([hooks](hooks.md#several-hooks)) | `internal/meta`, `internal/store`, `internal/hooks`, `internal/engine`, `internal/web`, `examples/` |
 | `e2e` | Simulated end-to-end integration tests in place of manual acceptance checklists: approval flow, self-heal under `auto`, the pre-hook scenarios (pre-pull, backup) with `raw_exec`, and `examples/` kept parsing ([development](development.md#integration)); the real check is using nops on the cluster ([first rollout](development.md#first-rollout-on-a-real-cluster)) | `tests/integration` |
 
 ## Todo
@@ -55,7 +56,6 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | Task | Depends on | Ready |
 |---|---|---|
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
-| [`multi-hooks`](#multi-hooks) | — | yes |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
@@ -75,56 +75,3 @@ wording, empty states. No new features; anything bigger becomes its own task.
   history of that commit.
 - **Done when:** the maintainer has used it for real and the list they gave is
   closed.
-
-### multi-hooks
-
-More than one pre-hook and post-hook per job (for example, backup then
-migrate).
-
-- **Read first:** [meta-keys.md](meta-keys.md), [hooks.md](hooks.md) (with
-  [hook revisions](hooks.md#hook-revisions)), the decision log (2026-09-25,
-  "Multiple hooks" and "Hook revisions built").
-- **What `hook-revisions` left ready:** `deployment_hooks` already has
-  `position` (always `0`), and `Store.DeploymentHooks` returns the hooks of a
-  deployment ordered by phase and position; `freezeHooks`
-  (`internal/engine/hookrev.go`) builds them from `PreHook`/`PostHook`, the
-  combined `spec_hash` takes them in order, and `stepHook`
-  (`internal/engine/apply.go`) reads the first frozen hook of its phase,
-  registers its revision (`registerRevision`) and calls `Hooks.Run` with it. The
-  timeout is still the target's `nops_pre_hook_timeout` /
-  `nops_post_hook_timeout`, read from the stored spec's meta in `stepHook`;
-  moving it to `nops_timeout` on the hook means reading it from the frozen hook
-  spec instead. `web.planSteps` already takes the frozen hooks; the GC needs
-  no change (a revision is a revision whatever its position).
-- **Decided** (with the maintainer, 2026-09-25):
-  - `nops_pre_hook` / `nops_post_hook` take a comma-separated list; one hook is
-    written as today.
-  - The hooks of a phase run in order, one after the other; the first failure
-    stops the phase (a pre-hook failure leaves the live job untouched, a
-    post-hook failure fails the deployment with the job already live, as
-    today). No parallel runs.
-  - The timeout moves onto the hook job: `nops_timeout` in its meta (default
-    5m), valid only with `nops_role = "hook"`, frozen with the revision.
-    `nops_pre_hook_timeout` and `nops_post_hook_timeout` are removed.
-  - The same hook twice in one phase is a meta error (policy `none` + ERROR).
-- **Scope:**
-  - `internal/meta` (source of truth, with `meta-keys.md`): `PreHooks` /
-    `PostHooks []Hook` in place of `PreHook` / `PostHook`, list parsing (trim,
-    no empty item, no duplicate), `nops_timeout`, the two old keys become
-    unknown.
-  - `internal/store`: migration adding `position` to `hook_runs`,
-    `UNIQUE(deployment_id, phase, position)`, idempotency token
-    `<deployment_id>:<phase>:<n>`.
-  - `internal/engine`: `stepHook` walks the phase's positions in order; a
-    finished run returns its stored result, so recovery resumes at the first
-    unfinished one; `nextAfterDecision` uses the length of the list. The state
-    machine does not change.
-  - `internal/web`: every hook of the plan in order; hook rows sorted by phase
-    and position.
-  - `examples/`: a scenario with two pre-hooks (`TestExamplesParse` covers it).
-  - Docs: `meta-keys.md`, `hooks.md`, `engine-apply.md`, `state-machine.md`,
-    decision log.
-- **Done when:** table tests for the meta (list, duplicates, `nops_timeout`,
-  removed keys), engine tests for order, stop at the first failure and recovery
-  in the middle of the list, the migration, and an e2e where two pre-hooks run
-  in order and a failing first one keeps the second from running.

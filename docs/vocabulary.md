@@ -80,11 +80,12 @@ Some words exist in both worlds and mean different things. Say which one.
 | **dispatch** | Asking Nomad to start a run of the hook job (`Jobs.Dispatch`). |
 | **dispatched job** | The job Nomad creates from a dispatch (`<hook job>/dispatch-<id>`), stored as `dispatched_job_id`. Nomad's API calls it a child (`ParentID`); code may say `child` for the parent/child link, docs say *dispatched job*. |
 | **dispatch meta** | The `nops_*` values passed at dispatch: `nops_deployment_id`, `nops_job_id`, `nops_commit`, `nops_phase`, `nops_image_<task>`. Only the ones the hook declares. |
-| **idempotency token** | `<deployment_id>:<phase>`. Makes a second dispatch return the same dispatched job. It lives as long as that job. |
-| **hook run** | The execution of one hook for one deployment and phase: a row in `hook_runs`, unique per `(deployment_id, phase)`. Run by `hooks.Runner`. |
+| **idempotency token** | `<deployment_id>:<phase>:<position>`. Makes a second dispatch return the same dispatched job. It lives as long as that job. |
+| **hook run** | The execution of one hook for one deployment: a row in `hook_runs`, unique per `(deployment_id, phase, position)`. Run by `hooks.Runner`. |
+| **position** | The place of a hook among those of its phase, from 0, in the order they are listed in `nops_pre_hook` / `nops_post_hook`. The hooks of a phase run in position order and stop at the first failure. |
 | **hook run states** | `dispatching` (row created, nothing sent), `running` (saved *before* the dispatch is sent), then `succeeded`, `failed`, `timed_out`. |
 | **outcome** | What the dispatched job and its allocations say about a run: success, failure, stopped from outside, or not decided yet. |
-| **timeout** | The configured duration (`nops_*_hook_timeout`), in whole seconds. |
+| **timeout** | The duration a hook may run (`nops_timeout` on the hook job, frozen with its revision), in whole seconds. |
 | **deadline** | `started_at + timeout`. It does not move when nops restarts. |
 | **outcome unknown** | A run that may have been dispatched but whose dispatched job cannot be found. It is `failed` and never dispatched again. |
 

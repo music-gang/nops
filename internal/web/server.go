@@ -41,7 +41,7 @@ type Store interface {
 	ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error)
 	LatestPerJob(ctx context.Context) ([]*store.Deployment, error)
 	Events(ctx context.Context, deploymentID string) ([]store.Event, error)
-	GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error)
+	ListHookRuns(ctx context.Context, deploymentID string) ([]*store.HookRun, error)
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 }
 

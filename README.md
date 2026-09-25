@@ -52,18 +52,17 @@ Policy and hooks live in the job's own HCL, as flat `meta` keys:
 ```hcl
 job "api" {
   meta {
-    nops_managed          = "true"
-    nops_policy           = "approval"      # auto | approval | none
-    nops_pre_hook         = "api-migrate"   # a parameterized batch job
-    nops_pre_hook_timeout = "10m"
-    nops_post_hook        = "api-smoke"
+    nops_managed   = "true"
+    nops_policy    = "approval"                # auto | approval | none
+    nops_pre_hook  = "api-backup,api-migrate"  # parameterized batch jobs, run in this order
+    nops_post_hook = "api-smoke"
   }
   # ...
 }
 ```
 
-If a pre-hook fails or times out, the deployment stops, the live job is left
-untouched and you get a notification. See the
+If a pre-hook fails or times out, the deployment stops (the hooks after it do
+not run), the live job is left untouched and you get a notification. See the
 [meta-keys reference](docs/meta-keys.md) and the [hooks guide](docs/hooks.md).
 
 ### Hook examples
@@ -73,6 +72,8 @@ runnable ones, each paired with the job it deploys:
 
 - [`examples/migrate/`](examples/migrate/): run database migrations before
   the new version starts.
+- [`examples/backup-then-migrate/`](examples/backup-then-migrate/): two
+  pre-hooks in a row, a database backup and then its migration.
 - [`examples/approval/`](examples/approval/): check that the service answers
   after the deploy.
 - [`examples/prepull-hostvolume/`](examples/prepull-hostvolume/): pre-pull a

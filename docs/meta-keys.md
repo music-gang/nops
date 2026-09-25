@@ -16,26 +16,37 @@ Keys are read **from the HCL in the repo** and nops never writes them.
 |---|---|---|---|
 | `nops_managed` | `"true"` / `"false"` | not managed | Opt-in for the job. Without it, nops ignores the job. |
 | `nops_policy` | `auto` / `approval` / `none` | `none` | See [policies](policies.md). |
-| `nops_pre_hook` | ID of a hook job | — | Runs after approval, before apply. If it fails, the live job is left untouched. See [hooks](hooks.md). |
-| `nops_pre_hook_timeout` | Go duration (`90s`, `10m`) | `5m` | On expiry: the dispatch is stopped, the deployment is `failed`. Must be > 0. |
-| `nops_post_hook` | ID of a hook job | — | Runs once the new version is healthy. |
-| `nops_post_hook_timeout` | Go duration | `5m` | Same as above. |
+| `nops_pre_hook` | ID of a hook job, or several separated by commas (`"backup,migrate"`) | — | Runs after approval, before apply, in the order listed, one after the other. If one fails, the ones after it do not run and the live job is left untouched. See [hooks](hooks.md). |
+| `nops_post_hook` | Same | — | Runs once the new version is healthy, in the order listed. |
 | `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and as something nops registers itself, as a [revision](hooks.md#hook-revisions), when a deployment needs it. |
+| `nops_timeout` | Go duration (`90s`, `10m`), on a hook job | `5m` | How long the hook may run; on expiry the dispatch is stopped and the deployment is `failed`. Must be > 0. Only with `nops_role = "hook"`. |
 
 Values are **case-sensitive** strings (`"True"` is not valid).
 
 ```hcl
 job "api" {
   meta {
-    nops_managed          = "true"
-    nops_policy           = "approval"
-    nops_pre_hook         = "api-migrate"
-    nops_pre_hook_timeout = "10m"
-    nops_post_hook        = "api-smoke"
+    nops_managed   = "true"
+    nops_policy    = "approval"
+    nops_pre_hook  = "api-backup, api-migrate"
+    nops_post_hook = "api-smoke"
+  }
+  # ...
+}
+
+job "api-backup" {
+  meta {
+    nops_role    = "hook"
+    nops_timeout = "30m"
   }
   # ...
 }
 ```
+
+The timeout is a property of the hook, not of the job that uses it: whoever
+writes the hook knows how long it takes, and every job that uses it gets the
+same limit. The old `nops_pre_hook_timeout` and `nops_post_hook_timeout` are
+gone; they are reported as unknown keys (WARN) that say what replaces them.
 
 ## Validation
 
@@ -43,8 +54,14 @@ job "api" {
   **WARN** log. It does not change behaviour.
 - An **invalid value** for a recognised key: an **ERROR** log and **policy
   `none` for the whole job**: no deployment until the HCL is fixed.
-- `nops_policy` without `nops_managed = "true"`, or a timeout without its
-  hook: WARN, the key is ignored.
+- `nops_policy` without `nops_managed = "true"`, or `nops_timeout` on a job
+  that is not a hook: WARN, the key is ignored.
+- A list of hooks with an **empty item** (`"backup,,migrate"`, a trailing
+  comma) or the **same hook twice** in one phase: ERROR, policy `none`. Spaces
+  around a name are ignored. The same hook may be in both phases.
+- An invalid `nops_timeout` (not a duration, or not positive) is an ERROR on
+  the hook job; a deployment that needs that hook fails at detection, saying
+  its meta is invalid, until it is fixed.
 - A hook that is declared but missing from the repo makes the deployment
   **fail**, rather than proceeding without the hook.
 

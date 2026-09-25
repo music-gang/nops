@@ -1,16 +1,10 @@
-# Pre-hook: database migration before deploying "api".
+# Second pre-hook of "orders": the migration, once the backup has succeeded.
 #
-# In the "api" job:
-#   meta {
-#     nops_managed  = "true"
-#     nops_policy   = "approval"
-#     nops_pre_hook = "api-migrate"
-#   }
-#
-# It uses the same image as the new version (nops_image_api). The command must
-# be idempotent: nops may dispatch the hook again after one of its own crashes.
+# It uses the same image as the new version (nops_image_orders). The command
+# must be idempotent: nops may dispatch the hook again after one of its own
+# crashes. Its timeout is its own: a migration is quicker than a dump.
 
-job "api-migrate" {
+job "orders-migrate" {
   datacenters = ["dc1"]
   type        = "batch"
 
@@ -20,7 +14,7 @@ job "api-migrate" {
   }
 
   parameterized {
-    meta_required = ["nops_deployment_id", "nops_image_api"]
+    meta_required = ["nops_deployment_id", "nops_image_orders"]
   }
 
   group "migrate" {
@@ -38,7 +32,7 @@ job "api-migrate" {
       driver = "docker"
 
       config {
-        image   = "${NOMAD_META_nops_image_api}"
+        image   = "${NOMAD_META_nops_image_orders}"
         command = "/app/migrate"
         args    = ["up"]
       }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -44,8 +45,10 @@ func (f *fakeStore) DeploymentHooks(ctx context.Context, deploymentID string) ([
 // sampleHooks are the hooks sampleDeployment froze: a pre-hook and a post-hook.
 func sampleHooks() []store.DeploymentHook {
 	return []store.DeploymentHook{
-		{Phase: "pre", HookID: "web-migrate", Revision: "web-migrate-0a1b2c3d"},
-		{Phase: "post", HookID: "web-smoke", Revision: "web-smoke-9f8e7d6c"},
+		{Phase: "pre", HookID: "web-migrate", Revision: "web-migrate-0a1b2c3d",
+			JobSpec: `{"ID":"web-migrate","Meta":{"nops_role":"hook","nops_timeout":"10m"}}`},
+		{Phase: "post", HookID: "web-smoke", Revision: "web-smoke-9f8e7d6c",
+			JobSpec: `{"ID":"web-smoke","Meta":{"nops_role":"hook"}}`},
 	}
 }
 
@@ -79,15 +82,25 @@ func (f *fakeStore) Events(ctx context.Context, deploymentID string) ([]store.Ev
 	return f.events, f.eventsErr
 }
 
-func (f *fakeStore) GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error) {
+// ListHookRuns returns the runs set for the deployment (keys "<id>/<phase>",
+// or "<id>/<phase>/<position>" to add more), pre before post and by position.
+func (f *fakeStore) ListHookRuns(ctx context.Context, deploymentID string) ([]*store.HookRun, error) {
 	if f.hookErr != nil {
 		return nil, f.hookErr
 	}
-	run, ok := f.hookRuns[deploymentID+"/"+phase]
-	if !ok {
-		return nil, store.ErrNotFound
+	var out []*store.HookRun
+	for k, run := range f.hookRuns {
+		if strings.HasPrefix(k, deploymentID+"/") {
+			out = append(out, run)
+		}
 	}
-	return run, nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Phase != out[j].Phase {
+			return out[i].Phase == "pre"
+		}
+		return out[i].Position < out[j].Position
+	})
+	return out, nil
 }
 
 type approveCall struct{ id, specHash, actor string }
@@ -236,7 +249,7 @@ func sampleDeployment() *store.Deployment {
 		CommitSHA: "abc123def456", CommitSubject: "feat(web): scale up", CommitAuthor: "Iacopo",
 		SpecHash: "spec-hash-1", Policy: store.PolicyApproval, CASIndex: 42,
 		State: store.StatePendingApproval, PlanDiff: "",
-		JobSpec:   `{"ID":"web","Name":"` + specMarker + `","Meta":{"nops_pre_hook":"web-migrate","nops_pre_hook_timeout":"10m","nops_post_hook":"web-smoke"}}`,
+		JobSpec:   `{"ID":"web","Name":"` + specMarker + `","Meta":{"nops_pre_hook":"web-migrate","nops_post_hook":"web-smoke"}}`,
 		CreatedAt: testNow.Add(-time.Hour),
 		UpdatedAt: testNow.Add(-time.Hour),
 	}
