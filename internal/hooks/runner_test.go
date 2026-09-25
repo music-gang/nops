@@ -41,6 +41,9 @@ func (c *clock) advance(d time.Duration) {
 
 // fakeNomad is an in-memory Nomad: jobs, allocations and idempotent dispatch.
 type fakeNomad struct {
+	// ns is the only namespace it serves: a call for any other fails, so a call
+	// that forgets to carry the request's namespace does not go unnoticed.
+	ns     string
 	jobs   map[string]*api.Job
 	allocs map[string][]nomadx.Alloc
 	tokens map[string]string // idempotency token -> child ID
@@ -58,16 +61,29 @@ type dispatchCall struct {
 	Token  string
 }
 
+const testNamespace = "apps"
+
+func (f *fakeNomad) check(ns string) error {
+	if ns != f.ns {
+		return fmt.Errorf("namespace %q: fake serves only %q", ns, f.ns)
+	}
+	return nil
+}
+
 func newFakeNomad() *fakeNomad {
 	return &fakeNomad{
+		ns:     testNamespace,
 		jobs:   map[string]*api.Job{},
 		allocs: map[string][]nomadx.Alloc{},
 		tokens: map[string]string{},
 	}
 }
 
-func (f *fakeNomad) Job(_ context.Context, id string) (*api.Job, error) {
+func (f *fakeNomad) Job(_ context.Context, ns, id string) (*api.Job, error) {
 	f.calls++
+	if err := f.check(ns); err != nil {
+		return nil, err
+	}
 	if f.jobErr != nil {
 		return nil, f.jobErr
 	}
@@ -78,8 +94,11 @@ func (f *fakeNomad) Job(_ context.Context, id string) (*api.Job, error) {
 	return j, nil
 }
 
-func (f *fakeNomad) Dispatch(_ context.Context, parent string, meta map[string]string, token string) (*nomadx.DispatchResult, error) {
+func (f *fakeNomad) Dispatch(_ context.Context, ns, parent string, meta map[string]string, token string) (*nomadx.DispatchResult, error) {
 	f.calls++
+	if err := f.check(ns); err != nil {
+		return nil, err
+	}
 	f.dispatches = append(f.dispatches, dispatchCall{parent, meta, token})
 	if f.dispatchErr != nil {
 		return nil, f.dispatchErr
@@ -93,8 +112,11 @@ func (f *fakeNomad) Dispatch(_ context.Context, parent string, meta map[string]s
 	return &nomadx.DispatchResult{JobID: id}, nil
 }
 
-func (f *fakeNomad) FindDispatched(_ context.Context, _ string, token string) (string, error) {
+func (f *fakeNomad) FindDispatched(_ context.Context, ns, _ string, token string) (string, error) {
 	f.calls++
+	if err := f.check(ns); err != nil {
+		return "", err
+	}
 	if f.findErr != nil {
 		return "", f.findErr
 	}
@@ -113,8 +135,11 @@ func (f *fakeNomad) gc(childID string) {
 	}
 }
 
-func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
+func (f *fakeNomad) Allocations(_ context.Context, ns, jobID string) ([]nomadx.Alloc, error) {
 	f.calls++
+	if err := f.check(ns); err != nil {
+		return nil, err
+	}
 	if f.allocsErr != nil {
 		return nil, f.allocsErr
 	}
@@ -122,8 +147,11 @@ func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc
 }
 
 // StopJob marks the child dead and its allocations complete but not desired to run.
-func (f *fakeNomad) StopJob(_ context.Context, id string) error {
+func (f *fakeNomad) StopJob(_ context.Context, ns, id string) error {
 	f.calls++
+	if err := f.check(ns); err != nil {
+		return err
+	}
 	if f.stopErr != nil {
 		return f.stopErr
 	}
@@ -207,6 +235,7 @@ func (h *harness) addHook(id string, required, optional []string) {
 func (h *harness) request(hookID string, timeout time.Duration) Request {
 	return Request{
 		DeploymentID: h.depID,
+		Namespace:    testNamespace,
 		Phase:        "pre",
 		HookJobID:    hookID,
 		Commit:       "abc123",
@@ -346,7 +375,7 @@ func TestRunTimeoutCountsFromStartedAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := h.nomad.Dispatch(ctx, "hook", nil, run.IdempotencyToken)
+	child, err := h.nomad.Dispatch(ctx, testNamespace, "hook", nil, run.IdempotencyToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +436,7 @@ func TestRunResumesWithoutDispatching(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, _ := h.nomad.Dispatch(ctx, "hook", nil, run.IdempotencyToken)
+	child, _ := h.nomad.Dispatch(ctx, testNamespace, "hook", nil, run.IdempotencyToken)
 	if err := h.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookRunning, DispatchedJobID: child.JobID}); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +472,7 @@ func TestRunAdoptsChildAfterCrashBeforeSavingItsID(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	run := h.markDispatchAttempted()
-	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
+	first, _ := h.nomad.Dispatch(context.Background(), testNamespace, "hook", nil, run.IdempotencyToken)
 	h.nomad.finish(first.JobID, "complete", "")
 	h.nomad.dispatches = nil
 
@@ -465,7 +494,7 @@ func TestRunFailsWhenDispatchedChildIsGone(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	run := h.markDispatchAttempted()
-	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
+	first, _ := h.nomad.Dispatch(context.Background(), testNamespace, "hook", nil, run.IdempotencyToken)
 	h.nomad.gc(first.JobID)
 	h.nomad.dispatches = nil
 
@@ -487,7 +516,7 @@ func TestRunStopsAdoptedChildPastDeadline(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	run := h.markDispatchAttempted()
-	first, _ := h.nomad.Dispatch(context.Background(), "hook", nil, run.IdempotencyToken)
+	first, _ := h.nomad.Dispatch(context.Background(), testNamespace, "hook", nil, run.IdempotencyToken)
 	h.nomad.allocs[first.JobID] = []nomadx.Alloc{{ID: "a1", ClientStatus: "running", DesiredStatus: "run"}}
 	h.clk.advance(5 * time.Minute)
 
@@ -897,5 +926,19 @@ func TestRunsAtDifferentPositionsAreIndependent(t *testing.T) {
 	}
 	if len(h.nomad.dispatches) != before {
 		t.Errorf("a finished run was dispatched again: %+v", h.nomad.dispatches)
+	}
+}
+
+// A run without a namespace is refused before anything is recorded or sent: it
+// would act on a namespace nobody chose.
+func TestRunRequiresNamespace(t *testing.T) {
+	h := newHarness(t)
+	req := h.request("hook", time.Minute)
+	req.Namespace = ""
+	if _, err := h.runner.Run(context.Background(), req); err == nil || !strings.Contains(err.Error(), "Namespace is required") {
+		t.Fatalf("err = %v, want one about the namespace", err)
+	}
+	if h.nomad.calls != 0 {
+		t.Errorf("Nomad was called %d times", h.nomad.calls)
 	}
 }

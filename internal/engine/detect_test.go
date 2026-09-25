@@ -24,8 +24,11 @@ import (
 
 // -- test job builders -------------------------------------------------
 
+// job builds what Nomad's parse returns: a canonicalized job, which always has
+// a namespace.
 func job(id string, meta map[string]string, groups ...*api.TaskGroup) *api.Job {
-	return &api.Job{ID: &id, Meta: meta, TaskGroups: groups}
+	ns := testNamespace
+	return &api.Job{ID: &id, Namespace: &ns, Meta: meta, TaskGroups: groups}
 }
 
 func hookJob(id string) *api.Job {
@@ -88,9 +91,29 @@ type fakeNomad struct {
 }
 
 type registerCall struct {
-	id       string
-	index    uint64
-	preserve bool
+	id        string
+	namespace string
+	index     uint64
+	preserve  bool
+}
+
+// nsKey is how the fake's tables are keyed: the job ID alone in the default
+// namespace, which nearly every test uses, and "namespace/ID" in any other.
+// A test that sets a fixture for a job of another namespace (setDrift,
+// setAllocs, ...) passes that key.
+func nsKey(ns, id string) string {
+	if ns == "" || ns == testNamespace {
+		return id
+	}
+	return ns + "/" + id
+}
+
+// nsOf is the namespace of a job, "default" when it names none.
+func nsOf(j *api.Job) string {
+	if j.Namespace == nil || *j.Namespace == "" {
+		return testNamespace
+	}
+	return *j.Namespace
 }
 
 func newFakeNomad() *fakeNomad {
@@ -115,7 +138,7 @@ func newFakeNomad() *fakeNomad {
 
 func (f *fakeNomad) setFile(content string, j *api.Job)    { f.parseByContent[content] = j }
 func (f *fakeNomad) setParseErr(content string, err error) { f.parseErr[content] = err }
-func (f *fakeNomad) setLive(j *api.Job)                    { f.live[*j.ID] = j }
+func (f *fakeNomad) setLive(j *api.Job)                    { f.live[nsKey(nsOf(j), *j.ID)] = j }
 func (f *fakeNomad) setDrift(id string, diff *api.JobDiff) { f.plan[id] = planFixture{diff: diff} }
 
 func (f *fakeNomad) setAllocs(jobID string, allocs ...nomadx.Alloc) {
@@ -151,9 +174,10 @@ func (f *fakeNomad) ParseHCL(_ context.Context, content, _ string) (*api.Job, er
 	return deepCopyJob(j)
 }
 
-func (f *fakeNomad) Job(_ context.Context, id string) (*api.Job, error) {
+func (f *fakeNomad) Job(_ context.Context, ns, id string) (*api.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	id = nsKey(ns, id)
 	if err, ok := f.jobErr[id]; ok {
 		return nil, err
 	}
@@ -168,7 +192,7 @@ func (f *fakeNomad) Plan(_ context.Context, j *api.Job) (*api.JobPlanResponse, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	id := *j.ID
+	id := nsKey(nsOf(j), *j.ID)
 	tg := make(map[string]int, len(j.TaskGroups))
 	for _, g := range j.TaskGroups {
 		if g != nil && g.Name != nil && g.Count != nil {
@@ -203,14 +227,14 @@ func (f *fakeNomad) Plan(_ context.Context, j *api.Job) (*api.JobPlanResponse, e
 func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, preserve bool) (*nomadx.RegisterResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	id := *j.ID
+	id := nsKey(nsOf(j), *j.ID)
 	if err, ok := f.registerErr[id]; ok {
 		return nil, err
 	}
 	if live, ok := f.live[id]; ok && derefUint64(live.JobModifyIndex) != index {
 		return nil, fmt.Errorf("register job %s at index %d: %w: live index is %d", id, index, nomadx.ErrCASConflict, derefUint64(live.JobModifyIndex))
 	}
-	f.registerCalls = append(f.registerCalls, registerCall{id, index, preserve})
+	f.registerCalls = append(f.registerCalls, registerCall{id: *j.ID, namespace: nsOf(j), index: index, preserve: preserve})
 	cp, err := deepCopyJob(j)
 	if err != nil {
 		return nil, err
@@ -224,15 +248,18 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	return &nomadx.RegisterResult{EvalID: "eval-" + id, JobModifyIndex: newIndex}, nil
 }
 
-func (f *fakeNomad) ListJobs(_ context.Context) ([]nomadx.JobStub, error) {
+func (f *fakeNomad) ListJobs(_ context.Context, ns string) ([]nomadx.JobStub, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	out := make([]nomadx.JobStub, 0, len(f.live))
-	for id, j := range f.live {
-		stub := nomadx.JobStub{ID: id, Meta: j.Meta, Stop: j.Stop != nil && *j.Stop}
+	for _, j := range f.live {
+		if nsOf(j) != ns {
+			continue
+		}
+		stub := nomadx.JobStub{ID: *j.ID, Meta: j.Meta, Stop: j.Stop != nil && *j.Stop}
 		if j.ParentID != nil {
 			stub.ParentID = *j.ParentID
 		}
@@ -242,9 +269,10 @@ func (f *fakeNomad) ListJobs(_ context.Context) ([]nomadx.JobStub, error) {
 	return out, nil
 }
 
-func (f *fakeNomad) StopJob(_ context.Context, id string) error {
+func (f *fakeNomad) StopJob(_ context.Context, ns, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	id = nsKey(ns, id)
 	if err, ok := f.stopErr[id]; ok {
 		return err
 	}
@@ -262,18 +290,20 @@ func isRevisionJob(j *api.Job) bool {
 	return j.ID != nil && revisionRe.MatchString(*j.ID) && j.Meta["nops_role"] == "hook"
 }
 
-func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
+func (f *fakeNomad) Allocations(_ context.Context, ns, jobID string) ([]nomadx.Alloc, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	jobID = nsKey(ns, jobID)
 	if err, ok := f.allocsErr[jobID]; ok {
 		return nil, err
 	}
 	return append([]nomadx.Alloc(nil), f.allocs[jobID]...), nil
 }
 
-func (f *fakeNomad) LatestDeployment(_ context.Context, jobID string) (*api.Deployment, error) {
+func (f *fakeNomad) LatestDeployment(_ context.Context, ns, jobID string) (*api.Deployment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	jobID = nsKey(ns, jobID)
 	if err, ok := f.deployErr[jobID]; ok {
 		return nil, err
 	}
@@ -384,6 +414,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessIn(t, testNamespace)
+}
+
+// newHarnessIn is newHarness for an engine that manages the given namespaces.
+func newHarnessIn(t *testing.T, namespaces ...string) *harness {
+	t.Helper()
 	clock := newFakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"), store.WithClock(clock.Now))
 	if err != nil {
@@ -402,7 +438,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.engine = New(Options{
 		Store: st, Nomad: h.nomad, Snapshots: h.snap, Notifier: h.notifier, Hooks: h.hooks,
-		Namespace: testNamespace, DriftInterval: time.Hour, EngineInterval: time.Hour, ApplyTimeout: time.Hour,
+		Namespaces: namespaces, DriftInterval: time.Hour, EngineInterval: time.Hour, ApplyTimeout: time.Hour,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	h.engine.now = clock.Now

@@ -60,7 +60,7 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	want := &Config{
 		NomadAddr:        "http://127.0.0.1:4646",
-		NomadNamespace:   "default",
+		NomadNamespaces:  []string{"default"},
 		GitURL:           repo,
 		GitBranch:        "main",
 		GitUsername:      "git",
@@ -141,7 +141,7 @@ func TestLoadEveryOption(t *testing.T) {
 	// Every option shared by both auth modes.
 	common := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
-		"nomad-namespace":           "apps",
+		"nomad-namespaces":          "apps,infra, apps",
 		"nomad-token-file":          nomadTok,
 		"nomad-ca-cert":             ca,
 		"nomad-client-cert":         cert,
@@ -174,7 +174,7 @@ func TestLoadEveryOption(t *testing.T) {
 	}
 	commonWant := Config{
 		NomadAddr:              "https://nomad.example.com:4646",
-		NomadNamespace:         "apps",
+		NomadNamespaces:        []string{"apps", "infra"},
 		NomadTokenFile:         nomadTok,
 		NomadToken:             "nomad-secret",
 		NomadCACert:            ca,
@@ -324,7 +324,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"nomad-addr", "ftp://nomad", "not an http"},
 		{"nomad-addr", "http://", "not an http"},
 		{"nomad-addr", "http://bad host", "invalid character"},
-		{"nomad-namespace", "", "required"},
+		{"nomad-namespaces", "", "required"},
+		{"nomad-namespaces", " , ", "required"},
 		{"nomad-token-file", missing, "no such file"},
 		{"nomad-token-file", empty, "is empty"},
 		{"nomad-ca-cert", missing, "no such file"},
@@ -735,7 +736,6 @@ func TestNomadIgnoresNomadEnv(t *testing.T) {
 	cfg := c.Nomad()
 	want := &api.Config{
 		Address:   "http://127.0.0.1:4646",
-		Namespace: "default",
 		TLSConfig: &api.TLSConfig{},
 	}
 	if !reflect.DeepEqual(cfg, want) {
@@ -750,10 +750,20 @@ func TestNomadIgnoresNomadEnv(t *testing.T) {
 	}
 }
 
+func TestOldNamespaceVariableIsRejected(t *testing.T) {
+	_, err := Load([]string{"-git-url", repo}, envOf(map[string]string{"NOPS_NOMAD_NAMESPACE": "apps"}), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "NOPS_NOMAD_NAMESPACES") {
+		t.Fatalf("err = %v, want one naming NOPS_NOMAD_NAMESPACES", err)
+	}
+	if _, err := Load([]string{"-git-url", repo, "-nomad-namespace", "apps"}, envOf(nil), io.Discard); err == nil {
+		t.Error("the old -nomad-namespace flag was accepted")
+	}
+}
+
 func TestNomadCarriesSettings(t *testing.T) {
 	c := &Config{
 		NomadAddr:          "https://nomad.example.com:4646",
-		NomadNamespace:     "apps",
+		NomadNamespaces:    []string{"apps", "infra"},
 		NomadToken:         "secret",
 		NomadCACert:        "/ca.pem",
 		NomadClientCert:    "/cert.pem",
@@ -762,7 +772,6 @@ func TestNomadCarriesSettings(t *testing.T) {
 	}
 	want := &api.Config{
 		Address:   "https://nomad.example.com:4646",
-		Namespace: "apps",
 		SecretID:  "secret",
 		TLSConfig: &api.TLSConfig{CACert: "/ca.pem", ClientCert: "/cert.pem", ClientKey: "/key.pem", Insecure: true},
 	}

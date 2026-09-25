@@ -51,7 +51,7 @@ func (e *Engine) applyCycle(ctx context.Context) {
 		return
 	}
 	for _, d := range active {
-		if d.Namespace != e.namespace || !e.startApply(d.ID) {
+		if !e.managedNS[d.Namespace] || !e.startApply(d.ID) {
 			continue
 		}
 		go func(d *store.Deployment) {
@@ -113,11 +113,15 @@ func (e *Engine) applyTransition(ctx context.Context, log *slog.Logger, d *store
 
 // parseJobSpec decodes the exact job nops will register, as stored at
 // detection time (docs/design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
+//
+// The job goes where its deployment says: the deployment's namespace is the
+// one its CAS index was read in, and Plan and RegisterCAS act on the job's own.
 func parseJobSpec(d *store.Deployment) (*api.Job, error) {
 	var job api.Job
 	if err := json.Unmarshal([]byte(d.JobSpec), &job); err != nil {
 		return nil, fmt.Errorf("decode job spec of %s: %w", d.ID, err)
 	}
+	job.Namespace = &d.Namespace
 	return &job, nil
 }
 
@@ -184,7 +188,7 @@ func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deploy
 
 	for i, hook := range phaseHooks {
 		timeout := frozenTimeout(hook)
-		if err := e.registerRevision(ctx, log, hook); err != nil {
+		if err := e.registerRevision(ctx, log, d.Namespace, hook); err != nil {
 			log.ErrorContext(ctx, "register hook revision", "phase", phase, "hook", hook.HookID, "revision", hook.Revision, "error", err)
 			if e.now().Sub(e.hookStart(ctx, log, d, phase, phaseHooks, i)) >= timeout {
 				e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase,
@@ -194,7 +198,7 @@ func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deploy
 		}
 
 		res, err := e.hooks.Run(ctx, hooks.Request{
-			DeploymentID: d.ID, Phase: phase, Position: hook.Position, HookJobID: hook.Revision,
+			DeploymentID: d.ID, Namespace: d.Namespace, Phase: phase, Position: hook.Position, HookJobID: hook.Revision,
 			Commit: d.CommitSHA, Timeout: timeout, Target: job,
 		})
 		if err != nil {
@@ -267,7 +271,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		return
 	}
 
-	live, err := e.nomad.Job(ctx, d.JobID)
+	live, err := e.nomad.Job(ctx, d.Namespace, d.JobID)
 	var liveIndex uint64
 	switch {
 	case errors.Is(err, nomadx.ErrJobNotFound):
@@ -316,7 +320,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		// Already applied: evalID stays empty, nothing more to register.
 	}
 
-	applied, err := e.nomad.Job(ctx, d.JobID)
+	applied, err := e.nomad.Job(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		log.ErrorContext(ctx, "re-read live job after register", "error", err)
 		return
@@ -373,7 +377,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 // that produces no Nomad deployment). Neither healthy nor failed means still
 // waiting.
 func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy, failed bool, reason string, err error) {
-	dep, err := e.nomad.LatestDeployment(ctx, d.JobID)
+	dep, err := e.nomad.LatestDeployment(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return false, false, "", err
 	}
@@ -388,7 +392,7 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 		}
 	}
 
-	live, err := e.nomad.Job(ctx, d.JobID)
+	live, err := e.nomad.Job(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return false, false, "", err
 	}
@@ -400,7 +404,7 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 			liveIndex, d.AppliedIndex), nil
 	}
 	version := derefUint64(live.Version)
-	allocs, err := e.nomad.Allocations(ctx, d.JobID)
+	allocs, err := e.nomad.Allocations(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return false, false, "", err
 	}

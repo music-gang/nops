@@ -125,7 +125,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
 		"NOPS_NOMAD_ADDR="+addr,
-		"NOPS_NOMAD_NAMESPACE=default",
+		"NOPS_NOMAD_NAMESPACES=default",
 		"NOPS_GIT_URL="+repoURL,
 		"NOPS_GIT_BRANCH=main",
 		"NOPS_DB_PATH="+dbPath,
@@ -432,15 +432,22 @@ func newE2E(t *testing.T, env ...string) *e2eEnv {
 	return &e2eEnv{t: t, nomad: c, raw: raw, repo: repo, proc: proc, st: st, dash: dash}
 }
 
-// latest returns the newest deployment of jobID, or nil if it has none yet.
+// latest returns the newest deployment of jobID in the default namespace, or
+// nil if it has none yet.
 func (e *e2eEnv) latest(jobID string) *store.Deployment {
 	e.t.Helper()
-	d, err := e.st.LatestDeployment(context.Background(), "default", jobID)
+	return e.latestIn("default", jobID)
+}
+
+// latestIn is latest for a job of namespace ns.
+func (e *e2eEnv) latestIn(ns, jobID string) *store.Deployment {
+	e.t.Helper()
+	d, err := e.st.LatestDeployment(context.Background(), ns, jobID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
-		e.t.Fatalf("LatestDeployment(%s): %v", jobID, err)
+		e.t.Fatalf("LatestDeployment(%s/%s): %v", ns, jobID, err)
 	}
 	return d
 }
@@ -458,10 +465,16 @@ func (e *e2eEnv) deployment(id string) *store.Deployment {
 // is in state want, and returns it.
 func (e *e2eEnv) waitNew(jobID, prevID string, want store.State) *store.Deployment {
 	e.t.Helper()
+	return e.waitNewIn("default", jobID, prevID, want)
+}
+
+// waitNewIn is waitNew for a job of namespace ns.
+func (e *e2eEnv) waitNewIn(ns, jobID, prevID string, want store.State) *store.Deployment {
+	e.t.Helper()
 	var last *store.Deployment
 	deadline := time.Now().Add(e2eWait)
 	for time.Now().Before(deadline) {
-		last = e.latest(jobID)
+		last = e.latestIn(ns, jobID)
 		if last != nil && last.ID != prevID && last.State == want {
 			return last
 		}
@@ -536,7 +549,7 @@ func (e *e2eEnv) deploymentsOf(jobID string) int {
 // liveIndex is the JobModifyIndex of jobID in Nomad, 0 if it is not registered.
 func (e *e2eEnv) liveIndex(jobID string) uint64 {
 	e.t.Helper()
-	job, err := e.nomad.Job(context.Background(), jobID)
+	job, err := e.nomad.Job(context.Background(), "default", jobID)
 	if errors.Is(err, nomadx.ErrJobNotFound) {
 		return 0
 	}
@@ -550,7 +563,7 @@ func (e *e2eEnv) liveIndex(jobID string) uint64 {
 // the field the e2e jobs change between commits.
 func (e *e2eEnv) liveVersion(jobID string) string {
 	e.t.Helper()
-	job, err := e.nomad.Job(context.Background(), jobID)
+	job, err := e.nomad.Job(context.Background(), "default", jobID)
 	if errors.Is(err, nomadx.ErrJobNotFound) {
 		return ""
 	}
@@ -580,7 +593,10 @@ func (e *e2eEnv) editOutsideNops(jobID, jobHCL string) {
 // it between commits is the "change" nops has to deploy.
 type e2eJob struct {
 	id, policy, version string
-	preHook, postHook   string
+	// namespace is the job's namespace; empty leaves it out of the HCL, so it
+	// is Nomad's "default".
+	namespace         string
+	preHook, postHook string
 	// cmd is the target's shell command; empty means "exit 0".
 	cmd string
 }
@@ -598,9 +614,13 @@ func (j e2eJob) hcl() string {
 	if j.postHook != "" {
 		fmt.Fprintf(&meta, "    nops_post_hook = %q\n", j.postHook)
 	}
+	ns := ""
+	if j.namespace != "" {
+		ns = fmt.Sprintf("  namespace = %q\n", j.namespace)
+	}
 	return fmt.Sprintf(`
 job %q {
-  type = "batch"
+%s  type = "batch"
   meta {
 %s  }
   group "g" {
@@ -613,7 +633,7 @@ job %q {
     }
   }
 }
-`, j.id, meta.String(), cmd)
+`, j.id, ns, meta.String(), cmd)
 }
 
 // file is the repository path of a job or hook.

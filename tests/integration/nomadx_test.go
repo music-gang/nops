@@ -43,7 +43,7 @@ func newClient(t *testing.T) (*nomadx.Client, *api.Client) {
 	// processes of the end-to-end tests alongside, a long run or -count=N gets
 	// there), so close them when the test is done.
 	t.Cleanup(cfg.HttpClient.CloseIdleConnections)
-	c, err := nomadx.New(cfg, "")
+	c, err := nomadx.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ job "x" {
 
 func TestJobNotFound(t *testing.T) {
 	c, _ := newClient(t)
-	if _, err := c.Job(context.Background(), "nops-it-does-not-exist"); !errors.Is(err, nomadx.ErrJobNotFound) {
+	if _, err := c.Job(context.Background(), "default", "nops-it-does-not-exist"); !errors.Is(err, nomadx.ErrJobNotFound) {
 		t.Errorf("err = %v, want ErrJobNotFound", err)
 	}
 }
@@ -189,7 +189,7 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	}
 	liveIndex := func() uint64 {
 		t.Helper()
-		j, err := c.Job(ctx, id)
+		j, err := c.Job(ctx, "default", id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -278,7 +278,7 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	live, err := c.Job(ctx, id)
+	live, err := c.Job(ctx, "default", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identical register at the live index: %v", err)
 	}
-	live, err = c.Job(ctx, id)
+	live, err = c.Job(ctx, "default", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestDispatch(t *testing.T) {
 
 	meta := map[string]string{"nops_deployment_id": "d1", "nops_phase": "pre"}
 
-	first, err := c.Dispatch(ctx, id, meta, "d1:pre")
+	first, err := c.Dispatch(ctx, "default", id, meta, "d1:pre")
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
@@ -322,12 +322,12 @@ func TestDispatch(t *testing.T) {
 	}
 
 	// Same token: same child, no second dispatch.
-	again, err := c.Dispatch(ctx, id, meta, "d1:pre")
+	again, err := c.Dispatch(ctx, "default", id, meta, "d1:pre")
 	if err != nil || again.JobID != first.JobID {
 		t.Errorf("same token: %+v, %v (want child %s)", again, err, first.JobID)
 	}
 	// Different token: a new child.
-	other, err := c.Dispatch(ctx, id, meta, "d2:pre")
+	other, err := c.Dispatch(ctx, "default", id, meta, "d2:pre")
 	if err != nil || other.JobID == first.JobID {
 		t.Errorf("different token: %+v, %v", other, err)
 	}
@@ -336,7 +336,7 @@ func TestDispatch(t *testing.T) {
 	// makes re-dispatching after a nops crash safe.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		child, err := c.Job(ctx, first.JobID)
+		child, err := c.Job(ctx, "default", first.JobID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,21 +348,21 @@ func TestDispatch(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	afterDone, err := c.Dispatch(ctx, id, meta, "d1:pre")
+	afterDone, err := c.Dispatch(ctx, "default", id, meta, "d1:pre")
 	if err != nil || afterDone.JobID != first.JobID {
 		t.Errorf("token after the child finished: %+v, %v (want child %s)", afterDone, err, first.JobID)
 	}
 
 	// Meta the hook does not declare, or a missing required one, is refused.
-	if _, err := c.Dispatch(ctx, id, map[string]string{"nops_deployment_id": "d3", "nops_undeclared": "x"}, "d3:pre"); err == nil ||
+	if _, err := c.Dispatch(ctx, "default", id, map[string]string{"nops_deployment_id": "d3", "nops_undeclared": "x"}, "d3:pre"); err == nil ||
 		!strings.Contains(err.Error(), "unpermitted metadata keys") {
 		t.Errorf("undeclared meta: err = %v", err)
 	}
-	if _, err := c.Dispatch(ctx, id, nil, "d4:pre"); err == nil || !strings.Contains(err.Error(), "required meta keys") {
+	if _, err := c.Dispatch(ctx, "default", id, nil, "d4:pre"); err == nil || !strings.Contains(err.Error(), "required meta keys") {
 		t.Errorf("missing required meta: err = %v", err)
 	}
 
-	if _, err := c.Dispatch(ctx, "nops-it-no-such-job", meta, "x"); err == nil {
+	if _, err := c.Dispatch(ctx, "default", "nops-it-no-such-job", meta, "x"); err == nil {
 		t.Error("dispatch of a missing job succeeded")
 	}
 }
@@ -383,13 +383,13 @@ func TestListJobsCarriesMetaAndStop(t *testing.T) {
 	if _, err := c.RegisterCAS(ctx, hook, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	child, err := c.Dispatch(ctx, id, map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
+	child, err := c.Dispatch(ctx, "default", id, map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	find := func() map[string]nomadx.JobStub {
-		stubs, err := c.ListJobs(ctx)
+		stubs, err := c.ListJobs(ctx, "default")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -413,13 +413,13 @@ func TestListJobsCarriesMetaAndStop(t *testing.T) {
 	}
 
 	// Stopped without a purge: still listed, and its dispatched run untouched.
-	if err := c.StopJob(ctx, id); err != nil {
+	if err := c.StopJob(ctx, "default", id); err != nil {
 		t.Fatal(err)
 	}
 	if after := find(); !after[id].Stop || after[child.JobID].ParentID != id {
 		t.Errorf("after StopJob: parent %+v, child %+v; want the parent listed as stopped and its run still there", after[id], after[child.JobID])
 	}
-	if _, err := c.Job(ctx, child.JobID); err != nil {
+	if _, err := c.Job(ctx, "default", child.JobID); err != nil {
 		t.Errorf("the dispatched run is gone after its parent was stopped: %v", err)
 	}
 }
@@ -449,7 +449,7 @@ func TestHookRevisionRegistration(t *testing.T) {
 	if _, err := c.RegisterCAS(ctx, &job, 0, false); err != nil {
 		t.Fatalf("register under another ID than the name: %v", err)
 	}
-	live, err := c.Job(ctx, revision)
+	live, err := c.Job(ctx, "default", revision)
 	if err != nil || live.Name == nil || *live.Name != hookID {
 		t.Fatalf("live = %+v, %v; want the revision ID with the hook's name %q", live, err, hookID)
 	}
@@ -457,7 +457,7 @@ func TestHookRevisionRegistration(t *testing.T) {
 		t.Errorf("plan of what is registered = %+v, %v; want None", plan, err)
 	}
 
-	if err := c.StopJob(ctx, revision); err != nil {
+	if err := c.StopJob(ctx, "default", revision); err != nil {
 		t.Fatal(err)
 	}
 	if plan, err := c.Plan(ctx, &job); err != nil || plan.Diff == nil || plan.Diff.Type == "None" {
@@ -466,14 +466,84 @@ func TestHookRevisionRegistration(t *testing.T) {
 	if _, err := c.RegisterCAS(ctx, &job, 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("register of a stopped revision at index 0: %v; want a CAS conflict, the job exists", err)
 	}
-	stopped, err := c.Job(ctx, revision)
+	stopped, err := c.Job(ctx, "default", revision)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.RegisterCAS(ctx, &job, *stopped.JobModifyIndex, false); err != nil {
 		t.Fatalf("register of a stopped revision at its own index: %v", err)
 	}
-	if again, err := c.Job(ctx, revision); err != nil || again.Stop != nil && *again.Stop {
+	if again, err := c.Job(ctx, "default", revision); err != nil || again.Stop != nil && *again.Stop {
 		t.Errorf("revision after registering again = %+v, %v; want it running", again, err)
+	}
+}
+
+// One client acts on any namespace, call by call: the same job ID is planned,
+// registered, listed and stopped in each namespace on its own, and a job
+// without a namespace is parsed into "default" and registered there.
+func TestSameJobIDInTwoNamespaces(t *testing.T) {
+	c, raw := newClient(t)
+	ctx := context.Background()
+	nsA, nsB := newNamespace(t, raw, "nsx"), newNamespace(t, raw, "nsy")
+	id := uniqueID(t, raw, "twons")
+
+	inNS := func(ns, tag string) *api.Job {
+		t.Helper()
+		j, err := c.ParseHCL(ctx, inNamespace(batchHCL(id, tag), ns), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Namespace == nil || *j.Namespace != ns {
+			t.Fatalf("parsed namespace = %v, want %s", j.Namespace, ns)
+		}
+		return j
+	}
+
+	// Registered in A only: B and default do not have it.
+	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a"), 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Job(ctx, nsA, id); err != nil {
+		t.Errorf("job in %s: %v", nsA, err)
+	}
+	for _, ns := range []string{nsB, "default"} {
+		if _, err := c.Job(ctx, ns, id); !errors.Is(err, nomadx.ErrJobNotFound) {
+			t.Errorf("job in %s: err = %v, want ErrJobNotFound", ns, err)
+		}
+	}
+
+	// A plan for B says "new job", whatever A holds; a CAS at 0 succeeds in B
+	// although the job already exists in A, and fails in A.
+	if p, err := c.Plan(ctx, inNS(nsB, "b")); err != nil || p.Diff == nil || p.Diff.Type != "Added" {
+		t.Errorf("plan in %s = %+v, %v, want Added", nsB, p, err)
+	}
+	if _, err := c.RegisterCAS(ctx, inNS(nsB, "b"), 0, false); err != nil {
+		t.Errorf("register in %s: %v", nsB, err)
+	}
+	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a2"), 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
+		t.Errorf("register in %s at 0: err = %v, want ErrCASConflict", nsA, err)
+	}
+
+	// Each namespace lists its own; stopping in one leaves the other running.
+	for _, ns := range []string{nsA, nsB} {
+		stubs, err := c.ListJobs(ctx, ns)
+		if err != nil || len(stubs) != 1 || stubs[0].ID != id {
+			t.Errorf("jobs of %s = %+v, %v, want just %s", ns, stubs, err, id)
+		}
+	}
+	if err := c.StopJob(ctx, nsA, id); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := c.Job(ctx, nsB, id); err != nil || (b.Stop != nil && *b.Stop) {
+		t.Errorf("job in %s = %+v, %v, want it untouched by the stop in %s", nsB, b, err, nsA)
+	}
+
+	// A job with no namespace goes to "default".
+	def, err := c.ParseHCL(ctx, batchHCL(id, "d"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Namespace == nil || *def.Namespace != "default" {
+		t.Errorf("parsed namespace = %v, want default", def.Namespace)
 	}
 }

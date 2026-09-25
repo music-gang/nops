@@ -23,19 +23,22 @@ import (
 )
 
 // Nomad is what the engine needs from Nomad. *nomadx.Client implements it.
+//
+// Every call but ParseHCL names the namespace it acts on; Plan and RegisterCAS
+// take it from the job.
 type Nomad interface {
 	ParseHCL(ctx context.Context, hcl, vars string) (*api.Job, error)
-	Job(ctx context.Context, id string) (*api.Job, error)
+	Job(ctx context.Context, ns, id string) (*api.Job, error)
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
 	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)
 	// ListJobs and StopJob are used to deregister hook revisions nothing needs
 	// any more (see docs/design/engine-detection.md#hook-revisions).
-	ListJobs(ctx context.Context) ([]nomadx.JobStub, error)
-	StopJob(ctx context.Context, id string) error
+	ListJobs(ctx context.Context, ns string) ([]nomadx.JobStub, error)
+	StopJob(ctx context.Context, ns, id string) error
 	// Allocations and LatestDeployment are used by apply to decide whether the
 	// applied job version is healthy (see docs/design/engine-apply.md).
-	Allocations(ctx context.Context, jobID string) ([]nomadx.Alloc, error)
-	LatestDeployment(ctx context.Context, jobID string) (*api.Deployment, error)
+	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
+	LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error)
 }
 
 // Store is what the engine needs from the store. *store.Store implements it.
@@ -80,6 +83,11 @@ type Snapshots interface {
 type Notifier interface {
 	Notify(ctx context.Context, d *store.Deployment)
 }
+
+// jobKey identifies a job: the same ID in two namespaces is two jobs.
+type jobKey struct{ namespace, id string }
+
+func keyOf(job *api.Job) jobKey { return jobKey{namespace: *job.Namespace, id: *job.ID} }
 
 // Observation is the last known drift of one managed job, kept only in
 // memory: it is not persisted, since it can always be recomputed from git and
@@ -152,7 +160,8 @@ type Status struct {
 	// Managed is how many managed jobs the cycle found. Skipped is how many of
 	// them it could not plan because of a Nomad failure scoped to the job
 	// (they have no observation this cycle). Unparsed is how many files Nomad
-	// could not parse (or that name a namespace nops does not manage).
+	// could not parse (or that name a namespace nops does not manage, see
+	// Options.Namespaces).
 	Managed, Skipped, Unparsed int
 	// Orphans is how many orphan jobs are reported. OrphanCheckSkipped is true
 	// when the cycle did not look for them because a file did not parse (a
@@ -172,7 +181,8 @@ type Engine struct {
 	notifier       Notifier
 	hooks          Hooks
 	log            *slog.Logger
-	namespace      string
+	namespaces     []string        // the managed namespaces, in the order configured
+	managedNS      map[string]bool // the same, for lookups
 	driftInterval  time.Duration
 	engineInterval time.Duration
 	applyTimeout   time.Duration
@@ -180,7 +190,7 @@ type Engine struct {
 
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
-	observations map[string]Observation
+	observations map[jobKey]Observation
 	orphans      []Orphan
 	status       Status
 
@@ -200,8 +210,10 @@ type Options struct {
 	Notifier  Notifier
 	// Hooks runs a deployment's pre/post hooks (used by apply).
 	Hooks Hooks
-	// Namespace is the single Nomad namespace nops manages (config.Config.NomadNamespace).
-	Namespace string
+	// Namespaces are the Nomad namespaces nops manages (config.Config.NomadNamespaces):
+	// a job that declares any other is an error, and the deployments of any
+	// other are left alone.
+	Namespaces []string
 	// DriftInterval is how often a detection cycle runs when there is no new commit.
 	DriftInterval time.Duration
 	// EngineInterval is how often the apply loop advances non-terminal deployments.
@@ -219,6 +231,10 @@ func New(o Options) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
+	managedNS := make(map[string]bool, len(o.Namespaces))
+	for _, ns := range o.Namespaces {
+		managedNS[ns] = true
+	}
 	return &Engine{
 		store:          o.Store,
 		nomad:          o.Nomad,
@@ -226,13 +242,14 @@ func New(o Options) *Engine {
 		notifier:       o.Notifier,
 		hooks:          o.Hooks,
 		log:            log,
-		namespace:      o.Namespace,
+		namespaces:     o.Namespaces,
+		managedNS:      managedNS,
 		driftInterval:  o.DriftInterval,
 		engineInterval: o.EngineInterval,
 		applyTimeout:   o.ApplyTimeout,
 		now:            time.Now,
 		parseCache:     map[string]parseEntry{},
-		observations:   map[string]Observation{},
+		observations:   map[jobKey]Observation{},
 		inFlight:       map[string]struct{}{},
 		kick:           make(chan struct{}, 1),
 	}
@@ -275,7 +292,7 @@ func (e *Engine) runOnce(ctx context.Context) {
 }
 
 // Observations returns the last cycle's drift, one entry per managed job,
-// sorted by job ID. It is rebuilt from scratch on every cycle, so a job that
+// sorted by namespace, then job ID. It is rebuilt from scratch on every cycle, so a job that
 // leaves the repository disappears from it on the next call.
 func (e *Engine) Observations() []Observation {
 	e.mu.RLock()
@@ -284,7 +301,12 @@ func (e *Engine) Observations() []Observation {
 	for _, o := range e.observations {
 		out = append(out, o)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].JobID < out[j].JobID })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].JobID < out[j].JobID
+	})
 	return out
 }
 
@@ -302,7 +324,7 @@ func (e *Engine) setStatus(st Status) {
 }
 
 // Orphans returns the jobs nops deployed that are gone from the repository but
-// still run in Nomad, sorted by job ID. See Orphan.
+// still run in Nomad, sorted by namespace, then job ID. See Orphan.
 func (e *Engine) Orphans() []Orphan {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

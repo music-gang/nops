@@ -71,7 +71,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	nomadClient, err := nomadx.New(cfg.Nomad(), cfg.NomadNamespace)
+	nomadClient, err := nomadx.New(cfg.Nomad())
 	if err != nil {
 		return fmt.Errorf("nomad client: %w", err)
 	}
@@ -98,7 +98,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	eng := engine.New(engine.Options{
 		Store: st, Nomad: nomadClient, Snapshots: watcher, Notifier: notifier, Hooks: hooksRunner,
-		Namespace: cfg.NomadNamespace, DriftInterval: cfg.DriftInterval,
+		Namespaces: cfg.NomadNamespaces, DriftInterval: cfg.DriftInterval,
 		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, Log: log,
 	})
 

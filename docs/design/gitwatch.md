@@ -49,9 +49,11 @@ gitwatch returns files, not jobs. The engine parses each one through Nomad
 | neither | ignored |
 
 A hook named by `nops_pre_hook` / `nops_post_hook` is looked up by its
-**parsed job ID** in the same snapshot, never by file name. Two files that
-parse to the same job ID are both ignored, with an ERROR: the conservative
-reading, since nops cannot tell which one is meant.
+**parsed job ID** in the same snapshot, among the hooks of the namespace of the
+job that declares it, never by file name. Two files that parse to the same job
+(same namespace and ID) are both ignored, with an ERROR: the conservative
+reading, since nops cannot tell which one is meant. The same ID in two
+namespaces is two jobs.
 
 ## Interface
 

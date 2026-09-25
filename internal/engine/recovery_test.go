@@ -25,7 +25,7 @@ func (h *harness) restart(hk Hooks) *Engine {
 	h.t.Helper()
 	e := New(Options{
 		Store: h.store, Nomad: h.nomad, Snapshots: h.snap, Notifier: h.notifier, Hooks: hk,
-		Namespace: testNamespace, DriftInterval: time.Hour, EngineInterval: time.Hour,
+		Namespaces: []string{testNamespace}, DriftInterval: time.Hour, EngineInterval: time.Hour,
 		ApplyTimeout: h.engine.applyTimeout,
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -297,7 +297,7 @@ type fakeHookNomad struct {
 	childStatus string // client status of the child's allocation
 }
 
-func (f *fakeHookNomad) Job(_ context.Context, id string) (*api.Job, error) {
+func (f *fakeHookNomad) Job(_ context.Context, _, id string) (*api.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.child != "" && id == f.child {
@@ -307,14 +307,14 @@ func (f *fakeHookNomad) Job(_ context.Context, id string) (*api.Job, error) {
 	return nil, fmt.Errorf("job %s: %w", id, nomadx.ErrJobNotFound)
 }
 
-func (f *fakeHookNomad) Dispatch(context.Context, string, map[string]string, string) (*nomadx.DispatchResult, error) {
+func (f *fakeHookNomad) Dispatch(context.Context, string, string, map[string]string, string) (*nomadx.DispatchResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.dispatches++
 	return nil, fmt.Errorf("unexpected dispatch after the crash")
 }
 
-func (f *fakeHookNomad) FindDispatched(_ context.Context, _, token string) (string, error) {
+func (f *fakeHookNomad) FindDispatched(_ context.Context, _, _, token string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.child != "" && token == f.token {
@@ -323,7 +323,7 @@ func (f *fakeHookNomad) FindDispatched(_ context.Context, _, token string) (stri
 	return "", nil
 }
 
-func (f *fakeHookNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
+func (f *fakeHookNomad) Allocations(_ context.Context, _, jobID string) ([]nomadx.Alloc, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if jobID != f.child {
@@ -332,7 +332,7 @@ func (f *fakeHookNomad) Allocations(_ context.Context, jobID string) ([]nomadx.A
 	return []nomadx.Alloc{{ID: "alloc-1", ClientStatus: f.childStatus, DesiredStatus: "run"}}, nil
 }
 
-func (f *fakeHookNomad) StopJob(context.Context, string) error { return nil }
+func (f *fakeHookNomad) StopJob(context.Context, string, string) error { return nil }
 
 // A pre-hook whose run was saved as running, but whose dispatched job ID never
 // made it to the store: the real hooks.Runner adopts the child through the

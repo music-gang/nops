@@ -52,7 +52,7 @@ func (e *Engine) replaceParseCache(next map[string]parseEntry) {
 
 // replaceObservations swaps in the observations built by the cycle that just
 // ran, for the same reason: a job removed from the repo disappears from it.
-func (e *Engine) replaceObservations(next map[string]Observation) {
+func (e *Engine) replaceObservations(next map[jobKey]Observation) {
 	e.mu.Lock()
 	e.observations = next
 	e.mu.Unlock()

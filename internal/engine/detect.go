@@ -61,23 +61,28 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	hookFiles, managed := e.classify(ctx, commit, parsed)
 	st.Managed = len(managed)
 
-	hooks := make(map[string]parsedFile, len(hookFiles))
+	// A hook is found among the hooks of its job's own namespace only.
+	hooks := make(map[string]map[string]parsedFile)
 	for _, h := range hookFiles {
-		hooks[*h.job.ID] = h
+		ns := *h.job.Namespace
+		if hooks[ns] == nil {
+			hooks[ns] = map[string]parsedFile{}
+		}
+		hooks[ns][*h.job.ID] = h
 	}
 
-	seen := make(map[string]bool, len(managed))
-	observations := make(map[string]Observation, len(managed))
+	seen := make(map[jobKey]bool, len(managed))
+	observations := make(map[jobKey]Observation, len(managed))
 	for _, mf := range managed {
-		jobID := *mf.job.ID
-		seen[jobID] = true // classified as managed: never "removed from repo" this cycle
+		key := keyOf(mf.job)
+		seen[key] = true // classified as managed: never "removed from repo" this cycle
 
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks)
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace])
 		if err != nil {
 			return st, err
 		}
 		if ok {
-			observations[jobID] = obs
+			observations[key] = obs
 		} else {
 			st.Skipped++
 		}
@@ -98,9 +103,9 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		st.Orphans = len(e.Orphans())
 		return st, nil
 	}
-	present := make(map[string]bool, len(parsed))
+	present := make(map[jobKey]bool, len(parsed))
 	for _, pf := range parsed {
-		present[*pf.job.ID] = true
+		present[keyOf(pf.job)] = true
 	}
 	orphans, err := e.findOrphans(ctx, present)
 	if err != nil {
@@ -128,6 +133,9 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed
 		entry, ok := e.cachedParse(prev, key)
 		if !ok {
 			job, err := e.nomad.ParseHCL(ctx, f.Content, f.Vars)
+			if err == nil && job != nil {
+				defaultNamespace(job)
+			}
 			entry = parseEntry{job: job, err: err}
 		}
 		next[key] = entry
@@ -142,9 +150,9 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed
 			unparsed++
 			continue
 		}
-		if ns := entry.job.Namespace; ns != nil && *ns != "" && *ns != e.namespace {
+		if ns := *entry.job.Namespace; !e.managedNS[ns] {
 			e.log.ErrorContext(ctx, "job declares a namespace nops does not manage", "file", f.Path,
-				"job", *entry.job.ID, "declared_namespace", *ns, "namespace", e.namespace)
+				"job", *entry.job.ID, "declared_namespace", ns, "managed_namespaces", e.namespaces)
 			unparsed++
 			continue
 		}
@@ -153,37 +161,52 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed
 	return parsed, next, unparsed
 }
 
-// classify groups parsed files by job ID: two files parsing to the same ID
-// are both ignored, with an ERROR (the conservative reading, since nops
+// defaultNamespace gives a parsed job that has no namespace the "default" one,
+// as Nomad does when it registers it. Nomad's own canonicalization already
+// does, so this only makes sure the rest of nops can rely on it.
+func defaultNamespace(job *api.Job) {
+	if job.Namespace == nil || *job.Namespace == "" {
+		ns := api.DefaultNamespace
+		job.Namespace = &ns
+	}
+}
+
+// classify groups parsed files by job, (namespace, ID): two files parsing to
+// the same job are both ignored, with an ERROR (the conservative reading, since nops
 // cannot tell which one is meant). Every issue found by meta.Parse is logged
 // here, whatever the file turns out to be. A job with nops_role = "hook"
 // takes precedence over nops_managed on the same file.
 func (e *Engine) classify(ctx context.Context, commit string, parsed []parsedFile) (hooks, managed []parsedFile) {
-	byID := make(map[string][]parsedFile, len(parsed))
+	byKey := make(map[jobKey][]parsedFile, len(parsed))
 	for _, pf := range parsed {
-		id := *pf.job.ID
-		byID[id] = append(byID[id], pf)
+		key := keyOf(pf.job)
+		byKey[key] = append(byKey[key], pf)
 	}
-	ids := make([]string, 0, len(byID))
-	for id := range byID {
-		ids = append(ids, id)
+	keys := make([]jobKey, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
 	}
-	sort.Strings(ids)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].namespace != keys[j].namespace {
+			return keys[i].namespace < keys[j].namespace
+		}
+		return keys[i].id < keys[j].id
+	})
 
-	for _, id := range ids {
-		group := byID[id]
+	for _, key := range keys {
+		group := byKey[key]
 		if len(group) > 1 {
 			paths := make([]string, len(group))
 			for i, pf := range group {
 				paths[i] = pf.path
 			}
 			e.log.ErrorContext(ctx, "two files parse to the same job ID: both ignored",
-				"job", id, "files", paths, "commit", commit)
+				"job", key.id, "namespace", key.namespace, "files", paths, "commit", commit)
 			continue
 		}
 		pf := group[0]
 		for _, iss := range pf.cfg.Issues {
-			logIssue(ctx, e.log, id, pf.path, commit, iss)
+			logIssue(ctx, e.log, key.id, pf.path, commit, iss)
 		}
 		switch {
 		case pf.cfg.IsHook:
@@ -205,12 +228,13 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 }
 
 // reconcileJob computes the drift of one managed job and reconciles its
-// deployment. ok is false when the job was skipped because of a Nomad
+// deployment. hooks are the hook jobs of the job's own namespace, by ID. ok is false when the job was skipped because of a Nomad
 // failure scoped to it (already logged): the caller keeps no observation for
 // it this cycle rather than showing stale data.
 func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile) (obs Observation, ok bool, err error) {
-	jobID := *mf.job.ID
-	log := e.log.With("job", jobID, "namespace", e.namespace, "commit", commit.sha)
+	key := keyOf(mf.job)
+	jobID, ns := key.id, key.namespace
+	log := e.log.With("job", jobID, "namespace", ns, "commit", commit.sha)
 
 	targetHash, err := specHash(mf.job)
 	if err != nil {
@@ -227,7 +251,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		live      *api.Job
 		liveIndex uint64
 	)
-	live, err = e.nomad.Job(ctx, jobID)
+	live, err = e.nomad.Job(ctx, ns, jobID)
 	switch {
 	case errors.Is(err, nomadx.ErrJobNotFound):
 		live = nil
@@ -259,7 +283,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	}
 
 	obs = Observation{
-		JobID: jobID, Namespace: e.namespace, FilePath: mf.path,
+		JobID: jobID, Namespace: ns, FilePath: mf.path,
 		Policy: mf.cfg.Policy, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
 		Issues: mf.cfg.Issues, ObservedAt: e.now(),
 	}
@@ -267,7 +291,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob)
 	if err != nil {
 		return obs, true, err
 	}
@@ -283,10 +307,11 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // of the deployment whose retry rule is suppressing a new deployment for
 // this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
-func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID string, commit commitRef, cfg meta.Config,
+func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
 	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job) (blockedBy, blockedReason string, err error) {
 
-	active, err := e.store.ActiveDeployment(ctx, e.namespace, jobID)
+	jobID := key.id
+	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		active = nil
@@ -326,7 +351,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 		return "", "", nil
 	}
 
-	latest, err := e.store.LatestDeployment(ctx, e.namespace, jobID)
+	latest, err := e.store.LatestDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
@@ -342,7 +367,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 		return "", "", fmt.Errorf("marshal job spec of %s: %w", jobID, err)
 	}
 	d := &store.Deployment{
-		JobID: jobID, Namespace: e.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
+		JobID: jobID, Namespace: key.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen,
 	}
@@ -398,20 +423,21 @@ func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (bloc
 
 // supersedeRemoved supersedes every detected/pending_approval deployment
 // whose job is no longer in the repo's snapshot. A deployment already being
-// applied (pre_hook/applying/post_hook) is left alone.
-func (e *Engine) supersedeRemoved(ctx context.Context, seen map[string]bool) error {
+// applied (pre_hook/applying/post_hook) is left alone, and so is one of a
+// namespace nops does not manage.
+func (e *Engine) supersedeRemoved(ctx context.Context, seen map[jobKey]bool) error {
 	active, err := e.store.ListActive(ctx)
 	if err != nil {
 		return fmt.Errorf("list active deployments: %w", err)
 	}
 	for _, d := range active {
-		if d.Namespace != e.namespace || seen[d.JobID] {
+		if !e.managedNS[d.Namespace] || seen[jobKey{d.Namespace, d.JobID}] {
 			continue
 		}
 		if d.State != store.StateDetected && d.State != store.StatePendingApproval {
 			continue
 		}
-		log := e.log.With("job", d.JobID, "namespace", e.namespace)
+		log := e.log.With("job", d.JobID, "namespace", d.Namespace)
 		if err := e.transition(ctx, log, d, store.StateSuperseded, "job removed from repo"); err != nil {
 			return err
 		}

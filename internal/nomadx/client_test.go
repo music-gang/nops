@@ -36,7 +36,7 @@ func newStub(t *testing.T, status int, response string) (*stub, *Client) {
 
 	cfg := api.DefaultConfig()
 	cfg.Address = s.srv.URL
-	c, err := New(cfg, "")
+	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,19 +44,69 @@ func newStub(t *testing.T, status int, response string) (*stub, *Client) {
 }
 
 func testJob(id string) *api.Job {
-	return &api.Job{ID: &id, Name: &id}
+	return testJobIn("default", id)
 }
 
-func TestNewDefaultsNamespace(t *testing.T) {
-	_, c := newStub(t, 200, `{}`)
-	if c.Namespace() != "default" {
-		t.Errorf("Namespace() = %q, want default", c.Namespace())
+func testJobIn(ns, id string) *api.Job {
+	return &api.Job{ID: &id, Name: &id, Namespace: &ns}
+}
+
+// The namespace is per call: one client acts on any of them, and every kind of
+// request says which. Plan and Register take it from the job.
+func TestNamespaceIsPerCall(t *testing.T) {
+	ctx := context.Background()
+	calls := map[string]func(c *Client) error{
+		"job":         func(c *Client) error { _, err := c.Job(ctx, "apps", "web"); return err },
+		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, "apps"); return err },
+		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "apps", "web"); return err },
+		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "apps", "web"); return err },
+		"stop":        func(c *Client) error { return c.StopJob(ctx, "apps", "web") },
+		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "apps", "hook", nil, ""); return err },
+		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "apps", "hook", "t"); return err },
+		"plan":        func(c *Client) error { _, err := c.Plan(ctx, testJobIn("apps", "web")); return err },
+		"register":    func(c *Client) error { _, err := c.RegisterCAS(ctx, testJobIn("apps", "web"), 1, false); return err },
 	}
-	cfg := api.DefaultConfig()
-	cfg.Address = "http://127.0.0.1:1"
-	c2, err := New(cfg, "prod")
-	if err != nil || c2.Namespace() != "prod" {
-		t.Errorf("New with namespace: %v, %v", c2, err)
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			s, c := newStub(t, 200, `[]`)
+			_ = call(c) // the stub's answer may not fit the call: only the request matters
+			if got := s.query["namespace"]; len(got) != 1 || got[0] != "apps" {
+				t.Errorf("namespace param = %v, want [apps] (%s %s)", got, s.method, s.path)
+			}
+		})
+	}
+}
+
+// A call with no namespace is refused before any request: Nomad would answer
+// for "default", and nops would act on the wrong namespace without a word.
+func TestEmptyNamespaceIsRefused(t *testing.T) {
+	ctx := context.Background()
+	noNS := "web"
+	unset := &api.Job{ID: &noNS}
+	empty := ""
+	blank := &api.Job{ID: &noNS, Namespace: &empty}
+	calls := map[string]func(c *Client) error{
+		"job":         func(c *Client) error { _, err := c.Job(ctx, "", "web"); return err },
+		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, ""); return err },
+		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "", "web"); return err },
+		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "", "web"); return err },
+		"stop":        func(c *Client) error { return c.StopJob(ctx, "", "web") },
+		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "", "hook", nil, ""); return err },
+		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "", "hook", "t"); return err },
+		"plan nil":    func(c *Client) error { _, err := c.Plan(ctx, unset); return err },
+		"plan empty":  func(c *Client) error { _, err := c.Plan(ctx, blank); return err },
+		"register":    func(c *Client) error { _, err := c.RegisterCAS(ctx, unset, 1, false); return err },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			s, c := newStub(t, 200, `[]`)
+			if err := call(c); !errors.Is(err, errNoNamespace) {
+				t.Errorf("err = %v, want errNoNamespace", err)
+			}
+			if s.path != "" {
+				t.Errorf("a request was sent: %s %s", s.method, s.path)
+			}
+		})
 	}
 }
 
@@ -115,7 +165,7 @@ func TestRegisterCASConflict(t *testing.T) {
 
 func TestJob(t *testing.T) {
 	s, c := newStub(t, 200, `{"ID":"web","JobModifyIndex":11}`)
-	job, err := c.Job(context.Background(), "web")
+	job, err := c.Job(context.Background(), "default", "web")
 	if err != nil || job.JobModifyIndex == nil || *job.JobModifyIndex != 11 {
 		t.Fatalf("Job = %+v, %v", job, err)
 	}
@@ -124,12 +174,12 @@ func TestJob(t *testing.T) {
 	}
 
 	_, c = newStub(t, 404, "job not found")
-	if _, err := c.Job(context.Background(), "web"); !errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Job(context.Background(), "default", "web"); !errors.Is(err, ErrJobNotFound) {
 		t.Errorf("404: err = %v, want ErrJobNotFound", err)
 	}
 
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.Job(context.Background(), "web"); err == nil || errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Job(context.Background(), "default", "web"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }
@@ -156,7 +206,7 @@ func TestPlanRequestsDiff(t *testing.T) {
 
 func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	s, c := newStub(t, 200, `{"DispatchedJobID":"hook/dispatch-1","EvalID":"e2"}`)
-	res, err := c.Dispatch(context.Background(), "hook", map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
+	res, err := c.Dispatch(context.Background(), "default", "hook", map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +226,7 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 
 	// No token: the parameter must be absent, not empty.
 	s, c = newStub(t, 200, `{"DispatchedJobID":"hook/dispatch-2"}`)
-	if _, err := c.Dispatch(context.Background(), "hook", nil, ""); err != nil {
+	if _, err := c.Dispatch(context.Background(), "default", "hook", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := s.query["idempotency_token"]; ok {
@@ -184,7 +234,7 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	}
 
 	_, c = newStub(t, 500, "Dispatch request included unpermitted metadata keys: [x]")
-	if _, err := c.Dispatch(context.Background(), "hook", nil, ""); err == nil || !strings.Contains(err.Error(), "unpermitted metadata keys") {
+	if _, err := c.Dispatch(context.Background(), "default", "hook", nil, ""); err == nil || !strings.Contains(err.Error(), "unpermitted metadata keys") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -204,7 +254,7 @@ func TestAllocations(t *testing.T) {
 	  {"ID":"a3","ClientStatus":"lost","DesiredStatus":"stop","ClientDescription":"Client lost"}
 	]`
 	s, c := newStub(t, 200, body)
-	got, err := c.Allocations(context.Background(), "hook/dispatch-1")
+	got, err := c.Allocations(context.Background(), "default", "hook/dispatch-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +276,11 @@ func TestAllocations(t *testing.T) {
 	}
 
 	_, c = newStub(t, 404, "job not found")
-	if _, err := c.Allocations(context.Background(), "x"); !errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Allocations(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
 		t.Errorf("404: err = %v, want ErrJobNotFound", err)
 	}
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.Allocations(context.Background(), "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Allocations(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }
@@ -238,7 +288,7 @@ func TestAllocations(t *testing.T) {
 func TestLatestDeployment(t *testing.T) {
 	body := `{"ID":"dep-1","JobModifyIndex":8,"Status":"running","StatusDescription":"Deployment is running"}`
 	s, c := newStub(t, 200, body)
-	got, err := c.LatestDeployment(context.Background(), "web")
+	got, err := c.LatestDeployment(context.Background(), "default", "web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,17 +302,17 @@ func TestLatestDeployment(t *testing.T) {
 	// A job with no deployment (a batch job, or an update stanza that
 	// produces none) answers with an empty body, not a 404.
 	_, c = newStub(t, 200, `{}`)
-	got, err = c.LatestDeployment(context.Background(), "batch-job")
+	got, err = c.LatestDeployment(context.Background(), "default", "batch-job")
 	if err != nil || got != nil {
 		t.Errorf("LatestDeployment = %+v, %v, want nil, nil", got, err)
 	}
 
 	_, c = newStub(t, 404, "job not found")
-	if _, err := c.LatestDeployment(context.Background(), "x"); !errors.Is(err, ErrJobNotFound) {
+	if _, err := c.LatestDeployment(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
 		t.Errorf("404: err = %v, want ErrJobNotFound", err)
 	}
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.LatestDeployment(context.Background(), "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+	if _, err := c.LatestDeployment(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }
@@ -299,13 +349,13 @@ func TestFindDispatched(t *testing.T) {
 	t.Cleanup(srv.Close)
 	cfg := api.DefaultConfig()
 	cfg.Address = srv.URL
-	c, err := New(cfg, "")
+	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
 
-	got, err := c.FindDispatched(ctx, "hook", "d2:pre")
+	got, err := c.FindDispatched(ctx, "default", "hook", "d2:pre")
 	if err != nil || got != "hook/dispatch-4" {
 		t.Fatalf("FindDispatched = %q, %v, want hook/dispatch-4", got, err)
 	}
@@ -316,19 +366,19 @@ func TestFindDispatched(t *testing.T) {
 		t.Errorf("children read = %v: the child of another parent must not be read", read)
 	}
 
-	if got, err := c.FindDispatched(ctx, "hook", "nobody:pre"); err != nil || got != "" {
+	if got, err := c.FindDispatched(ctx, "default", "hook", "nobody:pre"); err != nil || got != "" {
 		t.Errorf("unknown token: %q, %v, want empty", got, err)
 	}
 
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.FindDispatched(ctx, "hook", "x"); err == nil || !strings.Contains(err.Error(), "list children of job hook") {
+	if _, err := c.FindDispatched(ctx, "default", "hook", "x"); err == nil || !strings.Contains(err.Error(), "list children of job hook") {
 		t.Errorf("list failure: err = %v", err)
 	}
 }
 
 func TestStopJob(t *testing.T) {
 	s, c := newStub(t, 200, `{"EvalID":"e1"}`)
-	if err := c.StopJob(context.Background(), "hook/dispatch-1"); err != nil {
+	if err := c.StopJob(context.Background(), "default", "hook/dispatch-1"); err != nil {
 		t.Fatal(err)
 	}
 	if s.method != http.MethodDelete || s.path != "/v1/job/hook/dispatch-1" {
@@ -340,11 +390,11 @@ func TestStopJob(t *testing.T) {
 
 	// A job that is already gone is fine.
 	_, c = newStub(t, 404, "job not found")
-	if err := c.StopJob(context.Background(), "x"); err != nil {
+	if err := c.StopJob(context.Background(), "default", "x"); err != nil {
 		t.Errorf("404: err = %v, want nil", err)
 	}
 	_, c = newStub(t, 500, "boom")
-	if err := c.StopJob(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "stop job x") {
+	if err := c.StopJob(context.Background(), "default", "x"); err == nil || !strings.Contains(err.Error(), "stop job x") {
 		t.Errorf("500: err = %v", err)
 	}
 }
@@ -356,7 +406,7 @@ func TestListJobs(t *testing.T) {
 		{"ID":"a-hook-0a1b2c3d","Status":"dead","Stop":true,"Meta":{"nops_role":"hook"}},
 		{"ID":"plain","Status":"running"}]`)
 
-	got, err := c.ListJobs(context.Background())
+	got, err := c.ListJobs(context.Background(), "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +429,7 @@ func TestListJobs(t *testing.T) {
 	}
 
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.ListJobs(context.Background()); err == nil || !strings.Contains(err.Error(), "list jobs") {
+	if _, err := c.ListJobs(context.Background(), "default"); err == nil || !strings.Contains(err.Error(), "list jobs") {
 		t.Errorf("500: err = %v", err)
 	}
 }

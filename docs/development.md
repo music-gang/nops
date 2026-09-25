@@ -44,8 +44,11 @@
   `TestE2EPreHook*` tests the hook scenarios above; `TestE2ESeveralHooksRunInOrderAroundTheApply` and `TestE2EAFailingFirstPreHookKeepsTheSecondFromRunning` several hooks per phase (in order, and a failure stopping the phase); `TestE2EHookRevisionLifecycle` and `TestE2EChangedHookMustBeApprovedAgain` the hook revisions (not in Nomad before approval, registered and dispatched after it, deregistered once unused, a changed hook approved again); `TestE2EOrphan*` a deployed job removed from git (shown, never stopped, gone
   once stopped or restored); `TestE2ERetry*` the retry of
   a blocked job (a failed pre-hook fixed without a commit, and under `approval`
-  the retry still waiting for a decision) and `TestE2EFetchNow` the "fetch now"
-  button with a one-hour poll interval. The hooks write to a
+  the retry still waiting for a decision), `TestE2EFetchNow` the "fetch now"
+  button with a one-hour poll interval and `TestE2EOneInstanceManagesSeveralNamespaces`
+  one instance over two namespaces created on the agent (the same job ID in
+  both, one `auto` with a hook and one `approval`, and a job in the unlisted
+  `default` refused). The hooks write to a
   test directory, so they need the Nomad agent on the same host as the tests
   (true for `nomad agent -dev`).
 - `TestNopsBinaryStartsAndShutsDown` is the smoke test of the same harness:

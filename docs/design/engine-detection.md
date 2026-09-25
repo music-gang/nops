@@ -21,10 +21,12 @@ default) and one that has just failed reads Drift instead of Blocked. A cycle:
 
 1. Parses every file of the current `gitwatch.Snapshot` through Nomad
    (`nomadx.ParseHCL`), with a cache keyed by the hash of `(Content, Vars)` so
-   an unchanged file is not re-sent on every drift tick.
+   an unchanged file is not re-sent on every drift tick. A job in a namespace
+   that is not managed is refused here (see [Namespaces](#namespaces)).
 2. Classifies each parsed job with `meta.Parse`: `nops_role = "hook"` is a
    hook, `nops_managed = "true"` is a managed job, anything else is ignored.
-   Two files parsing to the same job ID are both ignored, with an ERROR (see
+   Two files parsing to the same job (same namespace and ID) are both ignored,
+   with an ERROR (see
    [gitwatch](gitwatch.md#job-hook-or-neither-decided-by-content)). Every
    `meta.Issue` found is logged at its severity, whatever the file turns out
    to be.
@@ -43,7 +45,9 @@ default) and one that has just failed reads Drift instead of Blocked. A cycle:
 [architecture.md](../architecture.md)):
 
 - `Nomad`: `ParseHCL`, `Job`, `Plan`, `RegisterCAS`, `ListJobs`, `StopJob` (and,
-  for apply, `Allocations` and `LatestDeployment`). `*nomadx.Client` implements it.
+  for apply, `Allocations` and `LatestDeployment`). `*nomadx.Client` implements
+  it. Every call but `ParseHCL` names the namespace it acts on; `Plan` and
+  `RegisterCAS` take it from the job.
 - `Store`: `CreateDeployment`, `Transition`, `GetDeployment`,
   `ActiveDeployment`, `ListActive`, `LatestDeployment`, `DeploymentHooks`,
   `HookRevisionsInUse` (and a few more for apply and retry). `*store.Store`
@@ -55,6 +59,36 @@ default) and one that has just failed reads Drift instead of Blocked. A cycle:
 
 These are recorded in the [decision log](decisions.md); the reasoning is
 expanded here.
+
+### Namespaces
+
+nops manages the namespaces of `-nomad-namespaces` (`Options.Namespaces`) from
+one instance and one token: `nomadx.Client` is not bound to a namespace, each
+request carries its own (a per-request parameter of Nomad's API).
+
+- **A job's namespace is the one Nomad parses from its HCL**, `default` when
+  the HCL names none (Nomad's own canonicalization; detection also fills it in
+  if a parse ever returned none, so nothing downstream sees a job without one).
+  A job whose namespace is not on the list is an ERROR (`job declares a
+  namespace nops does not manage`) and counts in `Status.Unparsed`, like a file
+  that does not parse: in particular the orphan check is suspended for the
+  cycle. It is not silently managed under another namespace, and nothing about
+  it reaches Nomad.
+- **A job is `(namespace, ID)`** everywhere: classification, the duplicate-file
+  rule, observations, orphans, the store's keys (they already were) and the
+  dashboard's URLs. The same ID in two namespaces is two jobs, each with its
+  own policy, deployments and live job.
+- **A hook is looked up among the hooks of its job's namespace.** One declared
+  only in another namespace is "not found in repo" like any missing hook. Its
+  revision is registered, dispatched and deregistered in the job's namespace
+  (`hooks.Request.Namespace`, the deployment's), and the garbage collection of
+  revisions goes through each managed namespace on its own.
+- **An apply acts in the deployment's namespace**, whatever the stored spec
+  says: the deployment's namespace is the one its CAS index was read in.
+- **A namespace taken off the list is left alone**: apply, supersede, orphan
+  check and revision GC only look at managed namespaces, so a deployment of
+  another one stays where it was (`pending_approval` included) and its jobs
+  stay in Nomad. There is no cleanup and no migration.
 
 ### `job_spec` keeps the full, unredacted spec
 
@@ -202,12 +236,13 @@ job in Nomad, or puts the file back, and the report clears by itself.
 A job is an orphan when all of these hold:
 
 - nops has a **`completed` deployment** for it in its namespace
-  (`Store.LatestCompletedPerJob`): only what nops put into production is its
-  business, the rest of the cluster is not;
+  (`Store.LatestCompletedPerJob`, asked once per managed namespace): only what
+  nops put into production is its business, the rest of the cluster is not;
 - it is **not among the jobs parsed from the snapshot**, whatever their
   classification. A job still in the repository without `nops_managed` means
   "hands off", not "removed"; two files with the same job ID are both still
-  in git; a renamed file is the same job;
+  in git; a renamed file is the same job. The match is on `(namespace, ID)`:
+  the same ID still in git in another namespace does not shield it;
 - in Nomad it **exists, is not stopped (`Stop`) and is not `dead`**. A purged
   job (a 404) is not reported, nor is one stopped by hand (that is what the
   report asks for), nor a batch job that has finished and, having no schedule,
@@ -226,7 +261,7 @@ Two things keep it from lying:
   cycle; a store failure is returned like any other (never swallow a SQLite
   error).
 
-The cost is one `GET /v1/job/<id>` per job that nops deployed, is not in git
+The cost is one `GET /v1/job/<id>?namespace=<ns>` per job that nops deployed, is not in git
 and is not yet purged, every cycle. It is not cached: the list is short and
 what matters is what Nomad says now.
 
