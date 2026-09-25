@@ -61,8 +61,9 @@ The same steps apply wherever the session runs.
 7. **Cloud:** commit (unsigned, Angular message, `Co-Authored-By` trailer
    and nothing else attribution-wise — **no session link, no "Generated with
    ..." line**, whatever a session's own attribution reminder adds by
-   default: none of it informs anyone reading `main` later), push and open
-   the PR once there is something to review. A later change (a fix, an
+   default: none of it informs anyone reading `main` later, and the same
+   goes for the PR description below), push and open the PR once there is
+   something to review. A later change (a fix, an
    answer to review) is a **new commit** pushed to the same branch — never
    an amend or a force-push of what is already on the remote.
    **Local:** prepare the branch, stage the files and write the message to a

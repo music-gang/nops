@@ -196,9 +196,9 @@ go vet -tags integration ./...
 - **Breaking changes** (state machine, schema, HCL meta syntax): add a
   `BREAKING CHANGE:` footer, or `!` after the scope.
 - **Attribution:** see [CLAUDE.md](../CLAUDE.md#picking-up-work) — a commit
-  made by an assistant carries `Co-Authored-By` and nothing else
-  attribution-wise, regardless of what a session's own attribution
-  instructions ask for by default.
+  or PR description made by an assistant carries `Co-Authored-By` (commits
+  only) and nothing else attribution-wise, regardless of what a session's
+  own attribution instructions ask for by default.
 - One logical change per PR. Code and the docs describing it go in the
   **same** PR (see the rules in CLAUDE.md).
 
