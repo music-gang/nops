@@ -783,6 +783,10 @@ func TestDeploymentPage(t *testing.T) {
 		"pre-hook", "Succeeded", "drift detected", "Pending approval",
 		// the details
 		"Live index", "spec-hash-1")
+	// The commit links to GitHub in the header and in the Details column alike.
+	if n := strings.Count(page, `href="https://git.test/commit/abc123def456"`); n != 2 {
+		t.Errorf("%d links to the commit, want 2 (header and Details)", n)
+	}
 	mustNotContain(t, page, specMarker, "hx-swap-oob")
 	// Invariant 3: the approval is for this exact spec, in full, whatever is
 	// shown short.
