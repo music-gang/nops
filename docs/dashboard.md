@@ -85,7 +85,7 @@ only the region a full re-render of the same page would show
 sync state or the result of *Fetch now* shows up without a reload. Rendering
 the whole page again costs nothing here (local SQLite and the engine's
 in-memory state), so there is no dedicated fragment endpoint for them, unlike
-the Deployment page's `/status` above. The Job page uses two such regions
+the Deployment page's `/status` above. The Job page uses three such regions
 (`#live-head`, `#live-deployments` and `#live-details`) so the drift diff
 between them, whose `<details>` nodes a person may have opened or closed,
 is never re-rendered by the poll.
