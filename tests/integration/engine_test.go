@@ -79,8 +79,8 @@ func newEngine(t *testing.T, snap staticSnapshot) (*engine.Engine, *store.Store)
 }
 
 // TestEngineDetectionAgainstRealNomad drives one detection cycle against a
-// real Nomad: the hook gets synced, a deployment is created for the managed
-// job with its diff redacted (but the full, unredacted spec kept for apply),
+// real Nomad: a deployment is created for the managed job, freezing the hook
+// it runs without registering anything of it, with its diff redacted (but the full, unredacted spec kept for apply),
 // and a second cycle revalidates it once the live job changes outside nops.
 func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 	c, raw := newClient(t)
@@ -102,14 +102,18 @@ func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 		t.Fatalf("Detect: %v", err)
 	}
 
-	// The hook was registered in Nomad, ready to be dispatched later.
-	if _, err := c.Job(ctx, hookID); err != nil {
-		t.Fatalf("hook job was not synced: %v", err)
-	}
-
 	d, err := st.ActiveDeployment(ctx, "default", jobID)
 	if err != nil {
 		t.Fatalf("ActiveDeployment: %v", err)
+	}
+	// The hook is frozen with the deployment, and nothing of it is in Nomad:
+	// it is registered right before it is dispatched, once approved.
+	frozen, err := st.DeploymentHooks(ctx, d.ID)
+	if err != nil || len(frozen) != 1 || frozen[0].HookID != hookID || !strings.HasPrefix(frozen[0].Revision, hookID+"-") {
+		t.Fatalf("frozen hooks = %+v, err %v; want the hook and a revision id-<hash>", frozen, err)
+	}
+	if stubs, _, err := raw.Jobs().PrefixList(hookID); err != nil || len(stubs) != 0 {
+		t.Fatalf("Nomad has %d jobs for the hook before approval (err %v), want none", len(stubs), err)
 	}
 	if d.State != store.StatePendingApproval {
 		t.Fatalf("deployment = %+v, want pending_approval", d)

@@ -136,6 +136,36 @@ func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint
 	return &RegisterResult{EvalID: resp.EvalID, JobModifyIndex: resp.JobModifyIndex}, nil
 }
 
+// JobStub is a job as the job listing describes it: enough to tell what a job
+// is (its meta) and whether it is still there to act on.
+type JobStub struct {
+	ID string
+	// ParentID is the parameterized or periodic parent of a dispatched or
+	// launched child, "" for any other job.
+	ParentID string
+	Status   string
+	// Stop is true for a job that has been deregistered without a purge.
+	Stop bool
+	Meta map[string]string
+}
+
+// ListJobs lists every job of the namespace, children of parameterized and
+// periodic jobs included (they carry their parent's meta), ordered by ID.
+// Nomad leaves the meta out of a listing unless asked for it, verified on
+// 2.0.3.
+func (c *Client) ListJobs(ctx context.Context) ([]JobStub, error) {
+	stubs, _, err := c.jobs.ListOptions(&api.JobListOptions{Fields: &api.JobListFields{Meta: true}}, c.query(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	out := make([]JobStub, 0, len(stubs))
+	for _, s := range stubs {
+		out = append(out, JobStub{ID: s.ID, ParentID: s.ParentID, Status: s.Status, Stop: s.Stop, Meta: s.Meta})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 // DispatchResult is the outcome of a dispatch.
 type DispatchResult struct {
 	// JobID is the ID of the dispatched child job.

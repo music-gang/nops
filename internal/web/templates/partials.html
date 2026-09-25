@@ -222,10 +222,10 @@
       <p class="decision__intro">Approving runs, in order:</p>
       <ol class="steps">
         {{range .Steps}}
-        <li>{{if eq .Kind "pre"}}Run the pre-hook <span class="mono">{{.Job}}</span> (timeout {{.Timeout}}). If it fails, the live job is left untouched.
+        <li>{{if eq .Kind "pre"}}Run the pre-hook <span class="mono">{{.Job}}</span> <span class="muted mono" title="Revision of the hook this deployment froze">@{{.Revision}}</span> (timeout {{.Timeout}}). If it fails, the live job is left untouched.
         {{else if eq .Kind "register"}}{{.Text}}
         {{else if eq .Kind "health"}}Wait for the new version to become healthy.
-        {{else}}Run the post-hook <span class="mono">{{.Job}}</span> (timeout {{.Timeout}}).{{end}}</li>
+        {{else}}Run the post-hook <span class="mono">{{.Job}}</span> <span class="muted mono" title="Revision of the hook this deployment froze">@{{.Revision}}</span> (timeout {{.Timeout}}).{{end}}</li>
         {{end}}
       </ol>
       <div class="decision__actions">

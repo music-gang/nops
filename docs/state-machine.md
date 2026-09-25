@@ -98,7 +98,17 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   set by `Store.MarkRetried`, only on a `failed` or `rejected` deployment.
   `UNIQUE INDEX (namespace, job_id) WHERE state IN (detected,
   pending_approval, pre_hook, applying, post_hook)` is the per-job lock.
-- `hook_runs`: id, deployment_id, phase, hook_job_id, idempotency_token
+- `deployment_hooks`: deployment_id, phase, position, hook_id, revision,
+  spec_hash, job_spec (JSON). The hooks a deployment runs, frozen when it is
+  created, in the same transaction (invariant 7): the hook as it was in git,
+  its hash and the ID of the Nomad job registered from it (a *hook revision*,
+  see [hooks](hooks.md#hook-revisions)). `position` orders the hooks of a
+  phase; it is always `0` while a phase has a single hook.
+  `PRIMARY KEY (deployment_id, phase, position)`. The `deployments.spec_hash`
+  covers the target and these hooks. A deployment made before this table
+  existed has none: if it reaches a hook step it fails, saying so.
+- `hook_runs`: id, deployment_id, phase, hook_job_id (the revision),
+  idempotency_token
   (`<deployment_id>:<phase>`), dispatched_job_id, state
   (`dispatching|running|succeeded|failed|timed_out`), timeout_s, error,
   started_at, finished_at. `UNIQUE(deployment_id, phase)`.

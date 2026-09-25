@@ -20,13 +20,13 @@ every `gitwatch.Watcher.Changed()` signal and on every `-drift-interval` tick
    [gitwatch](gitwatch.md#job-hook-or-neither-decided-by-content)). Every
    `meta.Issue` found is logged at its severity, whatever the file turns out
    to be.
-3. Syncs every hook job (register or update with plan + CAS), whatever the
-   policy of the job it serves.
-4. For every managed job: plans it, revalidates or supersedes its existing
+3. For every managed job: plans it, freezes the hooks it declares (see
+   [Hook revisions](#hook-revisions)), revalidates or supersedes its existing
    deployment if there is one, and creates a new one if there is still drift
    to apply.
-5. Supersedes the deployment of any managed job that left the repository
+4. Supersedes the deployment of any managed job that left the repository
    entirely.
+5. Deregisters the hook revisions no deployment in progress needs.
 
 ## Interfaces
 
@@ -34,9 +34,12 @@ every `gitwatch.Watcher.Changed()` signal and on every `-drift-interval` tick
 (the pattern used everywhere else in nops, see
 [architecture.md](../architecture.md)):
 
-- `Nomad`: `ParseHCL`, `Job`, `Plan`, `RegisterCAS`. `*nomadx.Client` implements it.
+- `Nomad`: `ParseHCL`, `Job`, `Plan`, `RegisterCAS`, `ListJobs`, `StopJob` (and,
+  for apply, `Allocations` and `LatestDeployment`). `*nomadx.Client` implements it.
 - `Store`: `CreateDeployment`, `Transition`, `GetDeployment`,
-  `ActiveDeployment`, `ListActive`, `LatestDeployment`. `*store.Store` implements it.
+  `ActiveDeployment`, `ListActive`, `LatestDeployment`, `DeploymentHooks`,
+  `HookRevisionsInUse` (and a few more for apply and retry). `*store.Store`
+  implements it.
 - `Snapshots`: `Snapshot`, `Changed`. `*gitwatch.Watcher` implements it.
 - `Notifier`: `Notify`. `*notify.Notifier` implements it.
 
@@ -84,14 +87,66 @@ always a function of the current git head and the current live job).
 ### A hook declared but missing from the repo fails at detection
 
 If `nops_pre_hook` or `nops_post_hook` names a job ID that is not a hook file
-in the current snapshot, the deployment is created and immediately moved
-`detected → failed`, with a notification, rather than waiting for approval
-first. Asking a human to approve a deployment that is guaranteed to fail at
+in the current snapshot, the deployment is created (freezing the hooks that do
+exist) and immediately moved `detected → failed`, with a notification, rather
+than waiting for approval first. Asking a human to approve a deployment that is guaranteed to fail at
 the hook step serves nobody; the fix (add the hook file, or fix its meta) is
 the same either way. This is in addition to, not instead of, the runtime
-check `hooks.Runner` already does at dispatch time (the hook job must also
-still be registered, of type `batch`, and parameterized) — that one stays,
-since git can change between detection and apply.
+check `hooks.Runner` already does at dispatch time (the revision must be
+registered, a hook, of type `batch` and parameterized), which stays: a hook can
+be valid HCL and still not be a valid hook. The missing hook is part of the
+deployment's `spec_hash` (as an absence), so the file appearing changes it and
+unblocks the job by itself.
+
+### Hook revisions
+
+`spec_hash` must cover what runs, and what runs includes the hooks. For every
+hook a managed job declares and that is in the snapshot, detection computes the
+hash of the hook's spec (`specHash`, the same function as for the target, on the
+job as parsed from git) and freezes, in `deployment_hooks`, next to the
+deployment (same transaction, invariant 7): the hook ID, the hash, the spec and
+the **revision** `<hook-id>-<first 8 hex of the hash>`. The deployment's
+`spec_hash` is then the SHA-256 of the target's hash followed by one line
+`phase:hook-id:hash` per declared hook, pre before post, with `missing` in place
+of the hash of a hook that is not in the snapshot; with no hooks declared it is the target's own hash,
+so a job without hooks does not change. Everything that compares `spec_hash`
+(revalidation, the retry rule and the anti-loop rule) therefore also compares
+the hooks, with three consequences that are the point of it:
+
+- a hook changed in git **supersedes** a deployment waiting for approval, which
+  has to be approved again: what was approved is not what would run;
+- a job blocked by a failed deployment is **unblocked** by fixing its hook,
+  without a retry;
+- a hook changed while the target is in sync creates **no** deployment: a
+  deployment needs drift on the target (invariant 1 is about the target, and
+  the hooks only run around an apply).
+
+Detection registers **nothing** of a hook: the revision is registered by apply,
+right before the hook is dispatched (see
+[engine-apply](engine-apply.md#registering-a-hook-revision)), so a hook that was
+never approved never reaches the cluster, and what Nomad holds is not decided by
+whichever commit was last seen. This replaces the per-cycle sync of every hook
+job, which had two flaws: the approval did not cover the hook (whatever was
+registered under its fixed ID at dispatch time ran), and two deployments sharing
+a hook could overwrite each other's version between register and dispatch (Nomad
+has no CAS on dispatch).
+
+The end of every cycle **garbage collects** revisions (`gcHookRevisions`): the
+jobs Nomad lists that have `nops_role = "hook"`, an ID matching
+`^.+-[0-9a-f]{8}$` and no parent (a dispatched run has the ID of its revision
+plus `/dispatch-…`, and inherits its meta, so it would otherwise match) and are
+not already stopped, minus the revisions of `deployment_hooks` of non-terminal
+deployments (`Store.HookRevisionsInUse`), are stopped **without purge**. The
+list of jobs asks for the meta (Nomad leaves it out otherwise). The store is
+read after Nomad: a deployment created in between and needing a revision that
+this pass stops registers it again by itself at its hook step. A Nomad failure is
+an ERROR on that job (or on the listing), retried next cycle; a store failure
+aborts the cycle. Verified on Nomad 2.0.3: deregistering a parameterized parent
+without purge leaves its dispatched runs and their logs readable, even one still
+running; a stopped parent cannot be dispatched, shows as a plan difference and is
+registered again at its own index; a job registers under an ID different from its
+`Name`; and an ID of several hundred characters is accepted, so the suffix hits no
+limit.
 
 ### Retry rule after a `failed` or `rejected` deployment
 
@@ -168,12 +223,12 @@ what matters is what Nomad says now.
 - **A job stopped by hand** (`nomad job stop`) plans as a difference from
   git. Under `auto` nops restarts it: git is the source of truth (invariant
   4). Use `approval` or `none` for a job you intend to stop by hand.
-- **Hook sync happens independently of any one deployment's phase.** A hook
-  updated by a newer commit is registered as soon as it is seen, even while
-  an older deployment is still `pre_hook` or `post_hook` for the previous
-  version. Hooks must already be idempotent and tolerate being dispatched
-  again (see [hooks.md](../hooks.md#rules-for-hook-authors)); this adds "and
-  possibly a newer version of themselves" to that requirement.
+- **A hook registered by hand under an ID that looks like a revision** (a
+  hook file named `backup-1a2b3c4d`, registered in Nomad by someone) is
+  stopped by the GC; it would only be dispatched by nops as a revision, and it
+  never registers hooks under their plain ID. Name hooks otherwise.
+- **A deployment made before hook revisions existed** and already in a hook
+  phase has no frozen hook: it fails at its hook step, saying so.
 - **A Nomad parse failure on a file that used to parse** does not, by
   itself, supersede that job's pending deployment: the job simply does not
   appear in this cycle's "seen" set, which only matters once nothing at all
@@ -200,7 +255,8 @@ For each managed job, in order:
    the full spec and the live index as `cas_index`. If a declared hook is
    missing from the repo it is immediately moved to `failed` (with a
    notification); otherwise `approval` moves it to `pending_approval` (with a
-   notification) and `auto` is left in `detected` for `engine-apply`.
+   notification) and `auto` is left in `detected` for `engine-apply`. The
+   hooks the job declares are frozen with it.
 
 Finally, every deployment still in `detected` or `pending_approval` whose job
 is no longer seen anywhere in the snapshot is `superseded` ("job removed from
@@ -209,7 +265,7 @@ repository"): nops never deregisters a job on its own.
 A store failure aborts the whole cycle (invariant 7: never act on Nomad with
 unpersisted state); a `redact.Diff` failure aborts it too (never store an
 unredacted diff). Every other failure — a bad file, a job Nomad cannot plan,
-a hook that cannot be synced — is scoped to the one file or job it came from:
+a revision the GC cannot stop — is scoped to the one file or job it came from:
 logged, and the cycle continues with the rest.
 
 ### The commit is recorded on the deployment; the cycle status lives in memory
@@ -232,6 +288,10 @@ cluster with nothing to do.
 and scenario-driven over the cases in [Decisions](#decisions) and
 [Per-job reconciliation](#per-job-reconciliation) above, plus the parse cache
 and the observation map never growing across cycles. `tests/integration`:
-one cycle against a real `nomad agent -dev` — real parse, plan and hook sync,
-a redacted diff with the secret confirmed absent, and revalidation once the
-live job changes outside nops.
+one cycle against a real `nomad agent -dev` — real parse and plan, the hook
+frozen and nothing of it in Nomad, a redacted diff with the secret confirmed
+absent, and revalidation once the live job changes outside nops; the hook
+revision lifecycle end to end (`e2e_hookrev_test.go`: not in Nomad before
+approval, registered and dispatched after it, deregistered without purge once
+unused, a changed hook superseding a pending deployment) and the Nomad
+behaviours the revisions rely on (`nomadx_test.go`).

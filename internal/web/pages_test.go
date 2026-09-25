@@ -33,6 +33,20 @@ type fakeStore struct {
 	eventsErr  error
 	hookRuns   map[string]*store.HookRun // key: deploymentID+"/"+phase
 	hookErr    error
+	hooks      []store.DeploymentHook // what DeploymentHooks returns, whatever the deployment
+	hooksErr   error
+}
+
+func (f *fakeStore) DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error) {
+	return f.hooks, f.hooksErr
+}
+
+// sampleHooks are the hooks sampleDeployment froze: a pre-hook and a post-hook.
+func sampleHooks() []store.DeploymentHook {
+	return []store.DeploymentHook{
+		{Phase: "pre", HookID: "web-migrate", Revision: "web-migrate-0a1b2c3d"},
+		{Phase: "post", HookID: "web-smoke", Revision: "web-smoke-9f8e7d6c"},
+	}
 }
 
 func (f *fakeStore) GetDeployment(ctx context.Context, id string) (*store.Deployment, error) {

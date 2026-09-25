@@ -73,4 +73,4 @@ these patterns.
 
 **Deliberately dropped:** the stateless design (nops needs state for approvals
 and hooks), the `image-only` policy, flap guard and active rollback,
-deregister (for now), Prometheus metrics (for now `slog` is enough).
+deregister of jobs (for now: the only thing nops stops is a hook run that timed out and the hook revisions no deployment needs), Prometheus metrics (for now `slog` is enough).

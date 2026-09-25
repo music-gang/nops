@@ -73,9 +73,15 @@ CAS conflict actually closes the deployment.
   below): read `nops_pre_hook` from `meta.Parse` on the stored `job_spec`'s
   meta. Declared → `Transition` to `pre_hook`. Not declared → `Transition`
   straight to `applying`.
-- **`pre_hook`**: `Hooks.Run(ctx, hooks.Request{DeploymentID, Phase: "pre",
-  HookJobID, Commit, Timeout, Target: job_spec})`. An error from `Run` (Nomad
-  or SQLite) is retried next tick, unchanged. A terminal `Result`:
+- **`pre_hook`**: read the frozen hook of the phase (`Store.DeploymentHooks`;
+  none means a deployment made before hooks were frozen, which is `failed` with
+  a message saying so), register its revision (below), then
+  `Hooks.Run(ctx, hooks.Request{DeploymentID, Phase: "pre",
+  HookJobID: <revision>, Commit, Timeout, Target: job_spec})`. An error from
+  registering or from `Run` (Nomad or SQLite) is retried next tick, unchanged;
+  a registration that keeps failing for the hook's timeout, counted from when
+  the deployment entered the phase, fails the deployment like a hook that timed
+  out. A terminal `Result`:
   `succeeded` → `Transition` to `applying`; `failed`/`timed_out` → `Transition`
   to `failed` (message from `Result.Error`) — the live job is never touched
   (`state-machine.md`'s "a pre-hook leaves the live job untouched").
@@ -109,6 +115,21 @@ CAS conflict actually closes the deployment.
 - **`post_hook`**: same as `pre_hook`, but a `failed`/`timed_out` result's
   message notes explicitly that the apply is already live and is not undone
   (`state-machine.md`: "a post-hook failure does not undo the apply").
+
+### Registering a hook revision
+
+Right before `Hooks.Run`, and on every tick that reaches it, the step makes
+sure the frozen hook is a running job in Nomad under its revision ID
+([hooks](../hooks.md#hook-revisions)): it reads the job (`Nomad.Job`), plans
+the frozen spec with the revision as ID (invariant 1) and, if the plan shows a
+difference, registers it with `RegisterCAS` at the index it just read, `0` when
+there is no such job (invariant 2). A revision that is there and identical costs
+no register; one that GC stopped shows as a difference (`Stop`) and is
+registered again at its own index, since a stopped job still exists. Two
+deployments registering the same revision at once are safe: one gets a CAS
+conflict, is retried and finds nothing to do. It is deliberately not part of
+`hooks.Runner`, which keeps validating the job it is given at dispatch and
+stays unaware of where it came from.
 
 ### Races with detection
 

@@ -49,7 +49,7 @@ func (h *harness) newDeployment(jobID string, job *api.Job, policy store.Policy,
 	h.t.Helper()
 	d := &store.Deployment{
 		JobID: jobID, Namespace: testNamespace, CommitSHA: "c1", SpecHash: "hash-" + jobID,
-		JobSpec: mustMarshal(h.t, job), Policy: policy, CASIndex: casIndex,
+		JobSpec: mustMarshal(h.t, job), Hooks: frozenFromSpec(mustMarshal(h.t, job)), Policy: policy, CASIndex: casIndex,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		h.t.Fatalf("CreateDeployment: %v", err)
@@ -111,7 +111,7 @@ func TestRecoveryAfterRestart(t *testing.T) {
 			},
 			done: func(d *store.Deployment) bool { return d.State == store.StateApplying },
 			verify: func(t *testing.T, h *harness, d *store.Deployment) {
-				if calls := h.hooks.calls; len(calls) != 1 || calls[0].Phase != "pre" || calls[0].HookJobID != "web-migrate" {
+				if calls := h.hooks.calls; len(calls) != 1 || calls[0].Phase != "pre" || calls[0].HookJobID != revisionOfPlainHook("web-migrate") {
 					t.Errorf("hook calls = %+v, want one pre run of web-migrate", calls)
 				}
 			},
@@ -220,7 +220,7 @@ func TestRecoveryAfterRestart(t *testing.T) {
 			},
 			done: func(d *store.Deployment) bool { return d.State == store.StateCompleted },
 			verify: func(t *testing.T, h *harness, d *store.Deployment) {
-				if calls := h.hooks.calls; len(calls) != 1 || calls[0].Phase != "post" || calls[0].HookJobID != "web-smoke" {
+				if calls := h.hooks.calls; len(calls) != 1 || calls[0].Phase != "post" || calls[0].HookJobID != revisionOfPlainHook("web-smoke") {
 					t.Errorf("hook calls = %+v, want one post run of web-smoke", calls)
 				}
 			},

@@ -197,7 +197,7 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 
 	parent, err := r.nomad.Job(ctx, run.HookJobID)
 	if errors.Is(err, nomadx.ErrJobNotFound) {
-		return fail("hook job %q not found in Nomad: it must be in the repo and synced before the deployment", run.HookJobID)
+		return fail("hook job %q not found in Nomad: its revision is registered right before the dispatch, so it was removed in between", run.HookJobID)
 	}
 	if err != nil {
 		return Result{}, false, err

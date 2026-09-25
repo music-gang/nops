@@ -122,6 +122,21 @@ type Deployment struct {
 	RetriedAt time.Time // zero if not retried
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Hooks are the hooks the deployment runs, frozen with it. CreateDeployment
+	// writes them; reading a deployment does not load them, see DeploymentHooks.
+	Hooks []DeploymentHook
+}
+
+// DeploymentHook is one hook a deployment runs, frozen when the deployment is
+// created so that approving it covers what will run.
+type DeploymentHook struct {
+	Phase    string // "pre" or "post"
+	Position int    // order within the phase
+	// HookID is the hook job's ID in the repository; Revision is the ID of the
+	// Nomad job registered from JobSpec.
+	HookID, Revision string
+	SpecHash         string
+	JobSpec          string // JSON of the parsed hook job, as read from git
 }
 
 // HookState is the state of a hook run.
@@ -338,6 +353,17 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
 		}
 		return fmt.Errorf("create deployment: %w", err)
+	}
+	for _, h := range d.Hooks {
+		if h.Revision == "" || h.HookID == "" || h.SpecHash == "" || h.JobSpec == "" || (h.Phase != "pre" && h.Phase != "post") {
+			return fmt.Errorf("create deployment: invalid hook %+v", h)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_hooks
+			(deployment_id, phase, position, hook_id, revision, spec_hash, job_spec)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, h.Phase, h.Position, h.HookID, h.Revision, h.SpecHash, h.JobSpec); err != nil {
+			return fmt.Errorf("create deployment: hook %s/%d: %w", h.Phase, h.Position, err)
+		}
 	}
 	if err := insertEvent(ctx, tx, id, now, "", StateDetected, "nops", fmt.Sprintf("detected at commit %s", d.CommitSHA)); err != nil {
 		return err
@@ -605,6 +631,57 @@ func (s *Store) LatestCompletedPerJob(ctx context.Context, namespace string) ([]
 			WHERE x.namespace = deployments.namespace AND x.job_id = deployments.job_id AND x.state = 'completed'
 			ORDER BY x.created_at DESC, x.id DESC LIMIT 1)
 		ORDER BY job_id`, namespace)
+}
+
+// DeploymentHooks returns the hooks a deployment froze, pre before post and by
+// position; none for a deployment with no hooks.
+func (s *Store) DeploymentHooks(ctx context.Context, deploymentID string) ([]DeploymentHook, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT phase, position, hook_id, revision, spec_hash, job_spec
+		FROM deployment_hooks WHERE deployment_id = ?
+		ORDER BY CASE phase WHEN 'pre' THEN 0 ELSE 1 END, position`, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("list hooks of deployment %s: %w", deploymentID, err)
+	}
+	defer rows.Close()
+	var out []DeploymentHook
+	for rows.Next() {
+		var h DeploymentHook
+		if err := rows.Scan(&h.Phase, &h.Position, &h.HookID, &h.Revision, &h.SpecHash, &h.JobSpec); err != nil {
+			return nil, fmt.Errorf("scan hook of deployment %s: %w", deploymentID, err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list hooks of deployment %s: %w", deploymentID, err)
+	}
+	return out, nil
+}
+
+// HookRevisionsInUse returns the revisions (Nomad job IDs) the hooks of the
+// non-terminal deployments of a namespace need: the ones that must stay
+// registered. It is a set, sorted.
+func (s *Store) HookRevisionsInUse(ctx context.Context, namespace string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT h.revision
+		FROM deployment_hooks h JOIN deployments d ON d.id = h.deployment_id
+		WHERE d.namespace = ?
+		  AND d.state IN ('detected', 'pending_approval', 'pre_hook', 'applying', 'post_hook')
+		ORDER BY h.revision`, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("list hook revisions in use: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var r string
+		if err := rows.Scan(&r); err != nil {
+			return nil, fmt.Errorf("scan hook revision: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list hook revisions in use: %w", err)
+	}
+	return out, nil
 }
 
 // MarkRetried records that actor asked to retry a failed or rejected

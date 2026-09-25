@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -455,8 +456,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
-		t.Errorf("user_version = %d, %v; want 2", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 3 {
+		t.Errorf("user_version = %d, %v; want 3", v, err)
 	}
 }
 
@@ -842,5 +843,146 @@ func TestLatestCompletedPerJob(t *testing.T) {
 	staging, err := s.LatestCompletedPerJob(ctx, "staging")
 	if err != nil || len(staging) != 1 || staging[0].Namespace != "staging" {
 		t.Errorf("LatestCompletedPerJob(staging) = %+v, %v, want only the staging deployment", staging, err)
+	}
+}
+
+func hookRow(phase string, pos int, id string) DeploymentHook {
+	return DeploymentHook{Phase: phase, Position: pos, HookID: id, Revision: id + "-0a1b2c3d", SpecHash: "hash-" + id, JobSpec: `{"ID":"` + id + `"}`}
+}
+
+func TestCreateDeploymentFreezesItsHooks(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if got, err := s.DeploymentHooks(ctx, mustCreate(t, s, newDep("plain")).ID); err != nil || len(got) != 0 {
+		t.Fatalf("a deployment with no hooks: %+v, %v; want none", got, err)
+	}
+
+	d := newDep("web")
+	d.Hooks = []DeploymentHook{hookRow("post", 0, "smoke"), hookRow("pre", 1, "second"), hookRow("pre", 0, "first")}
+	mustCreate(t, s, d)
+
+	got, err := s.DeploymentHooks(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, h := range got {
+		order = append(order, h.Phase+"/"+strconv.Itoa(h.Position)+"/"+h.HookID)
+	}
+	if want := "pre/0/first pre/1/second post/0/smoke"; strings.Join(order, " ") != want {
+		t.Errorf("hooks = %v, want pre before post and by position: %s", order, want)
+	}
+	if got[0].Revision != "first-0a1b2c3d" || got[0].SpecHash != "hash-first" || got[0].JobSpec != `{"ID":"first"}` {
+		t.Errorf("the frozen hook lost something: %+v", got[0])
+	}
+}
+
+func TestCreateDeploymentWithABadHookCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	bad := []DeploymentHook{
+		{Phase: "pre", HookID: "h", Revision: "h-0a1b2c3d", SpecHash: "x"},                   // no spec
+		{Phase: "during", HookID: "h", Revision: "h-0a1b2c3d", SpecHash: "x", JobSpec: "{}"}, // no such phase
+		{Phase: "pre", HookID: "h", SpecHash: "x", JobSpec: "{}"},                            // no revision
+		{Phase: "pre", HookID: "h", Revision: "h-0a1b2c3d", JobSpec: "{}"},                   // no hash
+		{Phase: "pre", Revision: "h-0a1b2c3d", SpecHash: "x", JobSpec: "{}"},                 // no hook
+	}
+	for i, h := range bad {
+		d := newDep("web")
+		d.Hooks = []DeploymentHook{h}
+		if err := s.CreateDeployment(ctx, d); err == nil {
+			t.Errorf("bad hook %d: the deployment was created", i)
+		}
+	}
+	dup := newDep("web")
+	dup.Hooks = []DeploymentHook{hookRow("pre", 0, "a"), hookRow("pre", 0, "b")} // same (phase, position)
+	if err := s.CreateDeployment(ctx, dup); err == nil {
+		t.Error("two hooks at the same position were accepted")
+	}
+
+	// A failed hook insert rolls the deployment back with it: the job is not
+	// locked by a deployment nobody can see, and no event was logged.
+	if _, err := s.ActiveDeployment(ctx, "default", "web"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deployment survived its failed hooks: %v", err)
+	}
+	if err := s.CreateDeployment(ctx, newDep("web")); err != nil {
+		t.Errorf("the job stayed locked: %v", err)
+	}
+}
+
+func TestHookRevisionsInUse(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	with := func(job, ns string, rev string, to State) {
+		t.Helper()
+		d := newDep(job)
+		d.Namespace = ns
+		h := hookRow("pre", 0, "h")
+		h.Revision = rev
+		d.Hooks = []DeploymentHook{h}
+		mustCreate(t, s, d)
+		if to != StateDetected {
+			if err := s.Transition(ctx, d.ID, to, Transition{From: StateDetected, Actor: "nops", Error: "x"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	with("a", "default", "h-aaaaaaaa", StateDetected)
+	with("b", "default", "h-bbbbbbbb", StatePendingApproval)
+	with("c", "default", "h-aaaaaaaa", StateApplying) // shared: listed once
+	with("d", "default", "h-dddddddd", StateCompleted)
+	with("e", "default", "h-eeeeeeee", StateFailed)
+	with("f", "default", "h-ffffffff", StateSuperseded)
+	with("g", "staging", "h-99999999", StateDetected) // another namespace
+
+	got, err := s.HookRevisionsInUse(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "h-aaaaaaaa h-bbbbbbbb"; strings.Join(got, " ") != want {
+		t.Errorf("in use = %v, want only the non-terminal ones of the namespace, once each and sorted: %s", got, want)
+	}
+	if got, _ := s.HookRevisionsInUse(ctx, "nowhere"); len(got) != 0 {
+		t.Errorf("an empty namespace = %v", got)
+	}
+}
+
+// TestUpgradeFromV2 opens a database left by the second schema, with a
+// deployment in it, and checks the hook revisions migration keeps it readable:
+// it simply has no frozen hooks.
+func TestUpgradeFromV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"0001_init.sql", "0002_dashboard.sql"} {
+		body, err := migrationsFS.ReadFile("migrations/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", f, err)
+		}
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 2",
+		`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+		 VALUES ('old', 'web', 'default', 'abc1234', 'h', '{}', 'approval', 'pre_hook', 7, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v2: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	if got, err := s.GetDeployment(context.Background(), "old"); err != nil || got.State != StatePreHook {
+		t.Fatalf("upgraded deployment = %+v, %v", got, err)
+	}
+	if got, err := s.DeploymentHooks(context.Background(), "old"); err != nil || len(got) != 0 {
+		t.Errorf("hooks of an upgraded deployment = %+v, %v; want none", got, err)
 	}
 }

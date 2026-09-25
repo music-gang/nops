@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -171,7 +172,7 @@ func TestSummarize(t *testing.T) {
 
 func TestPlanSteps(t *testing.T) {
 	d := sampleDeployment()
-	steps, err := planSteps(d)
+	steps, err := planSteps(d, sampleHooks())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,19 +186,22 @@ func TestPlanSteps(t *testing.T) {
 	if steps[0].Job != "web-migrate" || steps[0].Timeout != "10m" || steps[3].Job != "web-smoke" {
 		t.Errorf("hooks = %+v / %+v", steps[0], steps[3])
 	}
+	if steps[0].Revision != "0a1b2c3d" || steps[3].Revision != "9f8e7d6c" {
+		t.Errorf("revisions = %q / %q, want the 8 hex of each frozen hook", steps[0].Revision, steps[3].Revision)
+	}
 	if !strings.Contains(steps[1].Text, "index 42") {
 		t.Errorf("register step = %q, want the CAS index", steps[1].Text)
 	}
 
 	d.CASIndex = 0
 	d.JobSpec = `{"ID":"web"}`
-	steps, err = planSteps(d)
+	steps, err = planSteps(d, nil)
 	if err != nil || len(steps) != 2 || !strings.HasPrefix(steps[0].Text, "Create the job") {
 		t.Errorf("a new job with no hooks: steps %+v, err %v; want create + health", steps, err)
 	}
 
 	d.JobSpec = "not json"
-	if _, err := planSteps(d); err == nil || !strings.Contains(err.Error(), "d1") {
+	if _, err := planSteps(d, nil); err == nil || !strings.Contains(err.Error(), "d1") {
 		t.Errorf("an unreadable spec: err = %v, want one that names the deployment", err)
 	}
 }
@@ -634,7 +638,7 @@ func TestDriftMovedToJobs(t *testing.T) {
 func TestDeploymentPage(t *testing.T) {
 	d := sampleDeployment()
 	d.PlanDiff = diffJSON(t, sampleDiff())
-	st := &fakeStore{deployment: d,
+	st := &fakeStore{deployment: d, hooks: sampleHooks(),
 		events: []store.Event{
 			{From: "", To: store.StateDetected, Actor: "nops", Message: "detected at commit abc123def456", Time: testNow.Add(-time.Hour)},
 			{From: store.StateDetected, To: store.StatePendingApproval, Actor: "nops", Message: "drift detected", Time: testNow.Add(-59 * time.Minute)},
@@ -652,6 +656,8 @@ func TestDeploymentPage(t *testing.T) {
 		// the decision, with what it will do
 		"Review", "Run the pre-hook", "web-migrate", "timeout 10m", "Wait for the new version to become healthy",
 		"Run the post-hook", "web-smoke", "only if it has not changed since (index 42)",
+		// which version of each hook the approval covers
+		"@0a1b2c3d", "@9f8e7d6c",
 		`action="/deployments/d1/approve"`, `action="/deployments/d1/reject"`, "Approve", "Reject",
 		// the diff, summarized and in full
 		"3 field changes", "Priority", "Env[FOO]",
@@ -677,6 +683,14 @@ func TestDeploymentPageShortensLongHashes(t *testing.T) {
 		`title="`+d.SpecHash+`">0123456789ab<`, // short in the text, whole on hover
 		`title="`+d.EvalID+`">abcdef12<`)
 	mustNotContain(t, page, ">"+d.SpecHash+"<", ">"+d.EvalID+"<")
+}
+
+func TestDeploymentPageFailsLoudWhenFrozenHooksCannotBeRead(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{deployment: sampleDeployment(), hooksErr: errors.New("disk on fire")}, &fakeEngine{}, "")
+	rec := ts.do("GET", "/deployments/d1", nil, mintSession(t, ts.auth, "alice"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500: a page that cannot say what Approve will run must not offer it", rec.Code)
+	}
 }
 
 func TestDeploymentPageStepsForANewJobWithoutHooks(t *testing.T) {

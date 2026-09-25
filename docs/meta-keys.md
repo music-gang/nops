@@ -20,7 +20,7 @@ Keys are read **from the HCL in the repo** and nops never writes them.
 | `nops_pre_hook_timeout` | Go duration (`90s`, `10m`) | `5m` | On expiry: the dispatch is stopped, the deployment is `failed`. Must be > 0. |
 | `nops_post_hook` | ID of a hook job | — | Runs once the new version is healthy. |
 | `nops_post_hook_timeout` | Go duration | `5m` | Same as above. |
-| `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and syncable by nops. |
+| `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and as something nops registers itself, as a [revision](hooks.md#hook-revisions), when a deployment needs it. |
 
 Values are **case-sensitive** strings (`"True"` is not valid).
 
