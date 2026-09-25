@@ -18,7 +18,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **deployment** | One attempt to bring a job to a given spec, a row in SQLite with a state machine. | The rolling-update tracker Nomad creates after a register. | Bare "deployment" is always the nops one. Write **Nomad deployment** for the other. |
 | **job** | A Nomad job, seen through nops. | The same. | Qualify it when it matters: **live job**, **target job**, **hook job**, **dispatched job**. |
 | **evaluation**, **allocation** | Not used as nops concepts. | Scheduler terms. | Only in code that talks to Nomad (`nomadx`, outcome detection). |
-| **stop** | Deregistering a dispatched hook job without purge (`StopJob`). | Same operation, `DELETE /v1/job/<id>`. | nops stops a dispatched job of a hook that timed out, and the hook revisions no deployment needs. It never deregisters anything else. |
+| **stop** | Deregistering a job without purge (`StopJob`): a dispatched job whose hook timed out, or a hook revision no deployment needs. | Same operation, `DELETE /v1/job/<id>`. | nops stops a dispatched job of a hook that timed out, and the hook revisions no deployment needs. It never deregisters anything else. |
 
 ## Jobs and specs
 
@@ -39,7 +39,7 @@ Some words exist in both worlds and mean different things. Say which one.
 
 | Term | Meaning |
 |---|---|
-| **detection** | Comparing the repo with Nomad and creating, superseding or revalidating deployments. One pass is a **detection cycle**. |
+| **detection** | Comparing the repo with Nomad and creating, superseding or revalidating deployments. One pass is a **detection cycle**; the loop that runs it is also called the **reconciler**. |
 | **deployment** | See above. States: `detected`, `pending_approval`, `pre_hook`, `applying`, `post_hook`, `completed`, `failed`, `rejected`, `superseded`. |
 | **state** | Where a deployment (or a hook run) is in its state machine. Not the same as *phase*. |
 | **active deployment** | One in a non-terminal state. A job has at most one: the **per-job lock**, enforced by the partial unique index. |
@@ -54,14 +54,14 @@ Some words exist in both worlds and mean different things. Say which one.
 | **observation** | The last detection cycle's drift for one managed job (policy, whether it drifted, its redacted diff), kept only in memory (`Engine.Observations()`), never in SQLite: it is always a function of the current git head and the current live job, so there is nothing to persist. It is how a `none` policy job's drift reaches the dashboard, since no deployment is ever created for it. |
 | **blocked drift** | Drift a retry rule is deliberately not turning into a new deployment (`Observation.BlockedBy`/`BlockedReason`): either the existing rule for a `failed`/`rejected` deployment with an unchanged `spec_hash` and live index, or the anti-loop rule for a deployment that `failed` after reaching the register. Only a new commit or a **retry** unblocks it. |
 | **retry** | A human lifting a **blocked drift** without a new commit (`Engine.Retry`): the blocking deployment is marked *retried* (`retried_by`, `retried_at`) and stops blocking, and the next detection cycle creates a new deployment that follows the policy. It never approves and never applies anything by itself. |
-| **sync state** | Where a managed job stands against git, in one word, as the Jobs page shows and filters it: invalid meta, blocked, awaiting approval, deploying, drift or in sync (the first that applies wins; [dashboard](dashboard.md#sync-state-of-a-job)). Not a deployment state: it is about the *job*. |
+| **sync state** | Where a managed job stands against git, in one word, as the Jobs page shows and filters it: invalid meta, blocked, not in git, awaiting approval, deploying, drift or in sync (the first that applies wins; [dashboard](dashboard.md#sync-state-of-a-job)). Not a deployment state: it is about the *job*. |
 | **needs attention** | What the Overview lists for a person to act on: approvals waiting, blocked jobs, failures nobody retried, meta errors, orphans. Not drift under policy `none`: that is a sync state. |
 | **orphan** | A job nops deployed (it has a `completed` deployment) that is no longer in the repository but still exists in Nomad, not stopped and not `dead`. Reported (`Engine.Orphans()`, sync state **Not in git**, a line in **needs attention**), never stopped by nops ([engine-detection](design/engine-detection.md#orphan-jobs)). A job still in the repository without `nops_managed` is not one. |
 | **apply** | The CAS register of the target spec, always preceded by a plan. Nomad carries out the update. |
 | **CAS** | Compare-and-set on the job's modify index. |
 | **cas index** | The live `JobModifyIndex` captured at detection (`cas_index`). `0` means "the job must not exist". |
 | **applied index** | The live `JobModifyIndex` re-read after the apply (`applied_index`), never the one in the register response. |
-| **recovery** | Resuming non-terminal deployments after a restart: it is the first cycle of the engine loop, not a separate pass. Every step is written to be **resumable**: calling it again continues where it stopped. |
+| **recovery** | Resuming non-terminal deployments after a restart: it is the first cycle of the **apply loop**, not a separate pass. Every step is written to be **resumable**: calling it again continues where it stopped. |
 | **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
 | **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
 | **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
@@ -95,7 +95,7 @@ Some words exist in both worlds and mean different things. Say which one.
 |---|---|
 | **store** | `internal/store`: SQLite, the only place state lives. |
 | **nomadx** | `internal/nomadx`: the Nomad client wrapper, CAS-only register, sentinel errors. |
-| **engine** | `internal/engine`: the state machine that moves deployments forward. Its two loops are **detection** and the **engine loop** (advancing non-terminal deployments); **recovery** is the engine loop's first cycle. |
+| **engine** | `internal/engine`: the state machine that moves deployments forward. Its two loops are **detection** (also called the **reconciler**: parses, plans, creates/supersedes/revalidates deployments) and the **apply loop** (advances non-terminal deployments); **recovery** is the apply loop's first cycle. |
 | **runner** | `hooks.Runner`: runs one hook run to a terminal state. Blocking and idempotent. |
 | **sentinel error** | An exported `Err...` value the caller tests with `errors.Is` (`ErrCASConflict`, `ErrJobNotFound`, `ErrActiveDeployment`). |
 | **fake / stub** | *Fake*: an in-memory stand-in with behaviour (the fake Nomad in `hooks` tests). *Stub*: an `httptest` server that returns canned answers (`nomadx` tests). |
@@ -103,12 +103,16 @@ Some words exist in both worlds and mean different things. Say which one.
 
 ## Work on the repo
 
+The mechanics behind these terms (branching, PRs, how a task moves through
+the roadmap) are in [CLAUDE.md](../CLAUDE.md#picking-up-work); this is just
+what to call them.
+
 | Term | Meaning |
 |---|---|
 | **PR** | Pull request. Its **title** is the commit that lands on `main`, in Angular style `type(scope): subject`. |
 | **roadmap** | [`roadmap.md`](roadmap.md): the tasks left, with dependencies, what to read and when each is done. |
 | **task** | One block of the roadmap. Its ID is the suffix of the branch that works on it. |
 | **in flight** | A task with a remote branch (or an open PR). Derived from git, never written in the roadmap. |
-| **ready / plan first** | Whether a task can be done unattended, or needs the plan and its open questions reviewed in a draft PR first. |
+| **ready / plan first** | Whether a task can be done unattended, or its open design questions still need the maintainer's answer before any branch exists. |
 | **decision log** | [`design/decisions.md`](design/decisions.md): one row per design decision, added in the PR that takes it. |
 | **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |

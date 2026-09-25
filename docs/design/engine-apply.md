@@ -259,32 +259,6 @@ expanded here.
    register (for instance while nops was down), so someone else's healthy
    version could complete our deployment. The fallback now requires the live
    index to still be `applied_index`, and fails the deployment otherwise.
-
-## Tests
-
-`internal/engine`: a fake `Nomad`/`Hooks` and a real, temp-file `store.Store`,
-table- and scenario-driven over every case in
-[Per-deployment step](#per-deployment-step) above (both hooks
-skipped/declared/failed/timed out, CAS conflict, already-applied-after-crash,
-Nomad deployment failed, apply timeout, the detection race in
-[Races with detection](#races-with-detection)), the anti-loop rule and
-`BlockedBy`/`BlockedReason` from decisions 6 and 7 (a job whose latest
-deployment failed after applying stays blocked across a live-index change,
-and unblocks on a new `spec_hash`), plus the goroutine loop never starting the
-same deployment twice. `recovery_test.go` restarts the engine (a fresh
-`Engine` over the same store and fake Nomad) and checks where the first
-`RunApply` cycle takes a deployment left in every state a crash can leave: a
-table for `detected`, `pre_hook`, `applying` (before the register, after it
-before `applied_index`, a conflict found only after the restart, a CAS conflict
-on the resumed register, healthy or timed out or modified outside nops while
-down) and `post_hook`; `pending_approval` and other namespaces left alone; and
-a real `hooks.Runner` over a fake hook Nomad for a crash between `Dispatch` and
-the saved dispatched job ID (the child is adopted, or the hook fails, and is
-never dispatched again). `tests/integration`: one full cycle against a real
-`nomad agent -dev` for a job with no hooks (register → healthy →
-`completed`) and one with both hooks, plus whichever health path from
-decision 3 is not already covered by an existing `nomadx`/`hooks` integration
-test.
 9. **Retry lifts a block; it does not create or approve anything.** A job
    blocked by decision 6 or by the existing rule can be retried from the
    dashboard without a new commit (`Engine.Retry`). It is *not* a wrapper that
@@ -307,3 +281,29 @@ test.
    tempt an approval by the same click), and a "retry" that ignores the rule
    for every deployment of the job (it would also lift blocks nobody looked
    at).
+
+## Tests
+
+`internal/engine`: a fake `Nomad`/`Hooks` and a real, temp-file `store.Store`,
+table- and scenario-driven over every case in
+[Per-deployment step](#per-deployment-step) above (both hooks
+skipped/declared/failed/timed out, CAS conflict, already-applied-after-crash,
+Nomad deployment failed, apply timeout, the detection race in
+[Races with detection](#races-with-detection)), the anti-loop rule and
+`BlockedBy`/`BlockedReason` from decisions 6 and 7 (a job whose latest
+deployment failed after applying stays blocked across a live-index change,
+and unblocks on a new `spec_hash`), plus the goroutine loop never starting the
+same deployment twice. `recovery_test.go` restarts the engine (a fresh
+`Engine` over the same store and fake Nomad) and checks where the first
+`RunApply` cycle takes a deployment left in every state a crash can leave: a
+table for `detected`, `pre_hook`, `applying` (before the register, after it
+before `applied_index`, a conflict found only after the restart, a CAS conflict
+on the resumed register, healthy or timed out or modified outside nops while
+down) and `post_hook`; `pending_approval` and other namespaces left alone; and
+a real `hooks.Runner` over a fake hook Nomad for a crash between `Dispatch` and
+the saved dispatched job ID (the dispatched job is adopted, or the hook
+fails, and is never dispatched again). `tests/integration`: one full cycle against a real
+`nomad agent -dev` for a job with no hooks (register → healthy →
+`completed`) and one with both hooks, plus whichever health path from
+decision 3 is not already covered by an existing `nomadx`/`hooks` integration
+test.

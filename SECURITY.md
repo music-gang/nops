@@ -17,8 +17,9 @@ nops is in early development and has no releases yet. Only the latest commit on
 
 ## Scope notes
 
-- The dashboard reads the acting user from a header set by a reverse proxy (see
-  [docs/dashboard.md](docs/dashboard.md)). Exposing nops directly, without the
-  proxy, is a misconfiguration, not a vulnerability.
+- The dashboard authenticates the acting user itself, with OpenID Connect or a
+  local `username:bcrypt-hash` file depending on `-auth-mode` (see
+  [docs/dashboard.md](docs/dashboard.md#authentication)). A reverse proxy in
+  front of it is only for TLS.
 - Plan diffs are redacted before being stored or shown; a secret that reaches
   the database or the HTML is a valid report.

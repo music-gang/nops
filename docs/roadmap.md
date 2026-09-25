@@ -1,9 +1,8 @@
 # Roadmap
 
-What is done, what is in flight and what is left. It is written so that a
-session that only has this repo (a cloud session, a phone request like "do
-`config`") can pick a task and take it to a pull request without other context.
-The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
+What is done, what is in flight and what is left. The step-by-step workflow
+for picking up a task is in [CLAUDE.md](../CLAUDE.md#picking-up-work); this
+page only tracks the tasks themselves.
 
 ## How to read it
 
@@ -13,9 +12,8 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 - A task is startable when every task in *Depends on* is `done` and no branch
   for it exists.
 - **Ready** says whether it can be done unattended. `yes`: go. `plan first`:
-  design questions are still open, so lay out the plan and the questions to
-  the maintainer in the session and wait for their answers — no branch, no PR
-  for this step.
+  design questions are still open (see CLAUDE.md for how those get resolved
+  before a branch exists).
 - The PR that finishes a task sets it to `done` here and adds the decisions it
   took to the [decision log](design/decisions.md). The *Notes* of the tasks that
   come next are updated with what was learned.
@@ -32,12 +30,12 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `ci-setup` | GitHub Actions, repo policies, license | #1, #2 |
 | `hooks` | Hook runner: dispatch, wait, timeout, stop, recovery of a run | #3, `internal/hooks` |
 | `vocabulary` | [Vocabulary](vocabulary.md) of the terms used everywhere | #4 |
-| `pr-template` | No PR template: the description is the commit body | #5, #6 |
+| `pr-template` | The PR description uses a template (`.github/pull_request_template.md`): `## What changes` / `## Why` / an optional `## Notes` ([workflow](development.md#workflow-and-ci)) | #5, #6 |
 | `config` | Flags and `NOPS_*` env vars with validation ([configuration](configuration.md)) | #8, `internal/config` |
 | `redact` | Secret values removed from the plan diff ([rules](dashboard.md#secret-redaction)) | #9, `internal/redact` |
 | `notify` | Notifications through built-in adapters ([notifications](error-handling.md#notifications)) | `internal/notify` |
 | `gitwatch` | In-memory git watcher ([design](design/gitwatch.md)), `-git-path` in `config` | #12, `internal/gitwatch` |
-| `engine-detection` | Detection cycle: parse, plan, create/supersede/revalidate deployments, hook sync ([design](design/engine-detection.md)) | `internal/engine` |
+| `engine-detection` | Detection cycle: parse, plan, create/supersede/revalidate deployments ([design](design/engine-detection.md)) | `internal/engine` |
 | `engine-apply` | Apply loop: approve/reject, register, health, timeout, the anti-loop rule and blocked drift ([design](design/engine-apply.md)) | `internal/engine` |
 | `engine-recovery` | Recovery after a restart: `RunApply`'s first cycle, crash-window tests, health fails on an outside edit ([design](design/engine-apply.md#decisions), 8) | #16, `internal/engine` |
 | `web-auth` | OIDC login of the dashboard: allowlist, session, `Require`, cross-origin protection ([dashboard](dashboard.md#authentication)); `-auth-header` replaced by the `-oidc-*` options | `internal/web`, `internal/config` |
@@ -51,6 +49,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `multi-hooks` | Several pre-hooks and post-hooks per job (`nops_pre_hook = "backup,migrate"`), run in order and stopping at the first failure; the timeout moves to `nops_timeout` on the hook job ([hooks](hooks.md#several-hooks)) | `internal/meta`, `internal/store`, `internal/hooks`, `internal/engine`, `internal/web`, `examples/` |
 | `e2e` | Simulated end-to-end integration tests in place of manual acceptance checklists: approval flow, self-heal under `auto`, the pre-hook scenarios (pre-pull, backup) with `raw_exec`, and `examples/` kept parsing ([development](development.md#integration)); the real check is using nops on the cluster ([first rollout](development.md#first-rollout-on-a-real-cluster)) | `tests/integration` |
 | `dashboard-live` | Overview, Jobs, Job and Activity poll themselves every 5s (`hx-select`/`hx-swap="outerHTML"` on their own address, the Deployment page's own htmx pattern, no new endpoint), so a new deployment, a changed sync state or *Fetch now* shows up without a reload; the Job page's drift diff stays out of the poll so its `<details>` state is not reset. Also relabels the Overview's git strip ("committed" vs "repository checked") so the two times are not misread as one ([dashboard](dashboard.md#look-and-technology), [decisions](design/decisions.md) 2026-09-25) | `internal/web` |
+| `docs-cleanup` | The workflow procedure (branching, `plan first`, attribution, the PR description shape) is now written once, in `CLAUDE.md`; every other doc points to it instead of restating it. Fixed along the way: stale and contradictory facts found across the docs (a removed "hook sync" mention, a wrong PR-template row, a narrower-than-its-own-rule `vocabulary.md` definition, a missing sync state, mismatched commands between `CLAUDE.md` and `development.md`) ([decisions](design/decisions.md) 2026-09-25) | every `.md` file |
 
 ## Todo
 

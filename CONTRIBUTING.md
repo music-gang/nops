@@ -8,8 +8,8 @@ Thanks for your interest. The full guide is in
 2. Branch from `main` (`type/short-description`, e.g. `feat/hooks-package`).
    `main` is protected: all changes go through a pull request.
 3. Add tests for every behaviour change and update the docs in the same PR.
-4. Make sure `go build ./...`, `go vet ./...`, staticcheck and
-   `go test -race ./...` pass (commands in `docs/development.md`).
+4. Make sure the checks pass (see CLAUDE.md's "Definition of done and
+   commands" for the exact commands).
 5. Title the PR in [Angular style](docs/development.md#commit-messages)
    (`type(scope): subject`) and write each commit of the branch in the same
    style. PRs are squash-merged: the title becomes the commit subject on
