@@ -53,6 +53,9 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | Task | Depends on | Ready |
 |---|---|---|
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
+| [`hook-revisions`](#hook-revisions) | — | yes |
+| [`multi-hooks`](#multi-hooks) | `hook-revisions` | yes |
+| [`orphan-jobs`](#orphan-jobs) | — | yes |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
@@ -72,3 +75,145 @@ wording, empty states. No new features; anything bigger becomes its own task.
   history of that commit.
 - **Done when:** the maintainer has used it for real and the list they gave is
   closed.
+
+### hook-revisions
+
+Make the approval cover the hooks that will run, and stop two deployments that
+share a hook from racing on one Nomad job.
+
+- **Read first:** [hooks.md](hooks.md), [engine-detection.md](design/engine-detection.md),
+  [engine-apply.md](design/engine-apply.md), the decision log (2026-09-25,
+  "Hook revisions").
+- **The problem:** `spec_hash` covers only the target job. The hook that runs
+  is whatever is registered in Nomad under its fixed ID when it is dispatched,
+  that is the latest in git, not what was there when the deployment was
+  approved; and between one deployment's register and its dispatch another
+  can register a different version (Nomad has no CAS on dispatch).
+- **Decided** (with the maintainer, 2026-09-25):
+  - At detection the deployment freezes, for every hook it declares, the hook
+    ID, the hash of its spec and the spec itself, taken from the same
+    snapshot as the target. The deployment's `spec_hash` becomes the hash of
+    the target and its hooks, in order: approving covers what will run.
+  - A hook revision is registered in Nomad as `<hook-id>-<first 8 hex of its
+    hash>`, keeping `Name` as the hook's own ID, **right before it is
+    dispatched**, from the frozen spec: `Plan` + `RegisterCAS` at index 0,
+    skipped when the plan shows no change (the revision is already there).
+    Nothing is registered before approval, and the per-cycle hook sync
+    (`syncHooks`) goes.
+  - GC after every detection cycle: deregister, **without purge**, every job
+    with `nops_role = "hook"` and an ID matching `^(.+)-[0-9a-f]{8}$` that no
+    non-terminal deployment uses. A failure is an ERROR, retried next cycle.
+  - No migration for hooks already registered under their fixed ID: nops is not
+    in use yet.
+- **First step:** check on `nomad agent -dev` 2.0.3, and write in the decision
+  log, that deregistering a `parameterized` parent leaves its dispatched jobs
+  and their logs readable, that a job whose `Name` differs from its `ID`
+  registers, and that the suffixed ID hits no length limit.
+- **Scope:**
+  - `internal/store`: migration `0003` with `deployment_hooks(deployment_id,
+    phase, position, hook_id, revision, spec_hash, job_spec)`, written by
+    `CreateDeployment` in the same transaction; `hook_runs.hook_job_id` holds
+    the revision. `position` is for `multi-hooks`: always 0 here.
+  - `internal/engine/detect.go`: build the frozen hooks from what `classify`
+    returns, compute the combined hash (reuse `specHash`), use it in
+    revalidation and `blockedRetry`; remove `syncHooks`, keep `missingHook`.
+  - `internal/engine/apply.go` (`stepHook`): read the hook from
+    `deployment_hooks`, register the revision, then `hooks.Run` with the
+    revision as `HookJobID`. `internal/hooks` does not change.
+  - `internal/nomadx`: list jobs by ID prefix, deregister without purge.
+  - `internal/web`: `planSteps` reads `deployment_hooks` instead of parsing the
+    target's meta; the hook rows show the hook and a short revision.
+  - Docs: `hooks.md`, `engine-detection.md`, `engine-apply.md`,
+    `state-machine.md` (schema), `architecture.md` ("does not deregister jobs"
+    gets the hook-revision exception), `vocabulary.md` (**hook revision**),
+    decision log.
+- **Done when:** unit tests for the combined hash, the revision ID, a changed
+  hook superseding a pending deployment and unblocking a blocked one, the GC's
+  selection and the register at dispatch; the migration tested; integration and
+  e2e against Nomad showing nothing registered before approval, the revision
+  registered and dispatched after it, a hook changed while pending superseding
+  the deployment, and an unused revision deregistered (the `TestE2EPreHook*`
+  tests adapted).
+- **Consequences to keep:** a hook changed in git supersedes a pending
+  deployment (it must be approved again), a fixed hook unblocks a blocked job
+  on its own, and a hook change alone never creates a deployment for a target
+  with no drift.
+
+### multi-hooks
+
+More than one pre-hook and post-hook per job (for example, backup then
+migrate).
+
+- **Read first:** [meta-keys.md](meta-keys.md), [hooks.md](hooks.md),
+  `hook-revisions` above, the decision log (2026-09-25, "Multiple hooks").
+- **Decided** (with the maintainer, 2026-09-25):
+  - `nops_pre_hook` / `nops_post_hook` take a comma-separated list; one hook is
+    written as today.
+  - The hooks of a phase run in order, one after the other; the first failure
+    stops the phase (a pre-hook failure leaves the live job untouched, a
+    post-hook failure fails the deployment with the job already live, as
+    today). No parallel runs.
+  - The timeout moves onto the hook job: `nops_timeout` in its meta (default
+    5m), valid only with `nops_role = "hook"`, frozen with the revision.
+    `nops_pre_hook_timeout` and `nops_post_hook_timeout` are removed.
+  - The same hook twice in one phase is a meta error (policy `none` + ERROR).
+- **Scope:**
+  - `internal/meta` (source of truth, with `meta-keys.md`): `PreHooks` /
+    `PostHooks []Hook` in place of `PreHook` / `PostHook`, list parsing (trim,
+    no empty item, no duplicate), `nops_timeout`, the two old keys become
+    unknown.
+  - `internal/store`: migration adding `position` to `hook_runs`,
+    `UNIQUE(deployment_id, phase, position)`, idempotency token
+    `<deployment_id>:<phase>:<n>`.
+  - `internal/engine`: `stepHook` walks the phase's positions in order; a
+    finished run returns its stored result, so recovery resumes at the first
+    unfinished one; `nextAfterDecision` uses the length of the list. The state
+    machine does not change.
+  - `internal/web`: every hook of the plan in order; hook rows sorted by phase
+    and position.
+  - `examples/`: a scenario with two pre-hooks (`TestExamplesParse` covers it).
+  - Docs: `meta-keys.md`, `hooks.md`, `engine-apply.md`, `state-machine.md`,
+    decision log.
+- **Done when:** table tests for the meta (list, duplicates, `nops_timeout`,
+  removed keys), engine tests for order, stop at the first failure and recovery
+  in the middle of the list, the migration, and an e2e where two pre-hooks run
+  in order and a failing first one keeps the second from running.
+
+### orphan-jobs
+
+Tell the operator when a job nops deployed is no longer in the repository but
+still runs in Nomad.
+
+- **Read first:** [dashboard.md](dashboard.md), [engine-detection.md](design/engine-detection.md),
+  the decision log (2026-09-25, "Orphan jobs").
+- **Decided** (with the maintainer, 2026-09-25): **alert only**, like Argo CD's
+  default "OutOfSync, requires pruning". nops never stops or deregisters an
+  orphan: the operator stops it in Nomad or puts the file back, and the alert
+  clears on its own. This builds the observation a later "Stop" action would
+  use; that action, and a guard against mass removals, are a separate task if
+  ever needed.
+- **An orphan** is a job that nops has deployed (a `completed` deployment),
+  that is not among the jobs *parsed* from the snapshot whatever their
+  classification (a job still in the repository without `nops_managed` is
+  **not** an orphan: that means "hands off"), and that exists in Nomad with
+  `Stop != true` (stopped or purged: not an orphan). In a cycle where any file
+  fails to parse, the orphan check is suspended: a broken file looks exactly
+  like a removed one.
+- **Scope:**
+  - `internal/store`: the jobs with at least one `completed` deployment in the
+    namespace.
+  - `internal/engine`: in `Detect`, the IDs of every parsed job; for each
+    deployed job not among them, `nomad.Job`; `Engine.Orphans()` in memory,
+    rebuilt every cycle like `Observations()`; `Status` gains `Orphans` and
+    `OrphanCheckSkipped`. A Nomad error on one candidate is an ERROR and skips
+    it.
+  - `internal/web`: sync state **Not in git** on Jobs (rows for orphans, which
+    have no observation), a Needs attention row "Removed from git, still
+    running in Nomad", a banner on the job page with what to do (`nomad job
+    stop <id>`, or restore the file), and the suspended check on the Overview.
+  - Docs: `vocabulary.md` (**orphan**), `dashboard.md`, `engine-detection.md`,
+    decision log.
+- **Done when:** engine tests with the fake Nomad (found; not when still parsed
+  but unmanaged; not when stopped; not when purged; not when never completed;
+  suspended with an unparsed file), page tests, and an e2e: deploy a job, remove
+  its file, see it; `nomad job stop` it, see it gone.
