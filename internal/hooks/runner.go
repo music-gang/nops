@@ -32,7 +32,7 @@ type Nomad interface {
 
 // Store is what the runner needs from the store. *store.Store implements it.
 type Store interface {
-	EnsureHookRun(ctx context.Context, deploymentID, phase, hookJobID string, timeout time.Duration) (run *store.HookRun, created bool, err error)
+	EnsureHookRun(ctx context.Context, deploymentID, phase string, position int, hookJobID string, timeout time.Duration) (run *store.HookRun, created bool, err error)
 	UpdateHookRun(ctx context.Context, runID string, u store.HookUpdate) error
 }
 
@@ -41,7 +41,10 @@ type Request struct {
 	DeploymentID string
 	// Phase is "pre" or "post".
 	Phase string
-	// HookJobID is the parameterized hook job declared in nops_pre_hook/nops_post_hook.
+	// Position is the place of the hook among those of its phase, from 0.
+	Position int
+	// HookJobID is the parameterized hook job to dispatch: the revision of a
+	// hook declared in nops_pre_hook/nops_post_hook.
 	HookJobID string
 	// Commit is the git commit that produced the deployment.
 	Commit string
@@ -129,11 +132,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	// Whole seconds, rounded up: the stored deadline must never be earlier than asked.
 	timeout := (req.Timeout + time.Second - 1) / time.Second * time.Second
-	run, _, err := r.store.EnsureHookRun(ctx, req.DeploymentID, req.Phase, req.HookJobID, timeout)
+	run, _, err := r.store.EnsureHookRun(ctx, req.DeploymentID, req.Phase, req.Position, req.HookJobID, timeout)
 	if err != nil {
 		return Result{}, err
 	}
-	log := r.log.With("deployment_id", run.DeploymentID, "phase", run.Phase, "hook_job", run.HookJobID)
+	log := r.log.With("deployment_id", run.DeploymentID, "phase", run.Phase, "position", run.Position, "hook_job", run.HookJobID)
 
 	switch run.State {
 	case store.HookSucceeded, store.HookFailed, store.HookTimedOut:

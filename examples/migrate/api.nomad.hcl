@@ -9,10 +9,9 @@ job "api" {
   type        = "service"
 
   meta {
-    nops_managed          = "true"
-    nops_policy           = "approval"
-    nops_pre_hook         = "api-migrate"
-    nops_pre_hook_timeout = "5m"
+    nops_managed  = "true"
+    nops_policy   = "approval"
+    nops_pre_hook = "api-migrate"
   }
 
   group "api" {

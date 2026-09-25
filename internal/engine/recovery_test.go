@@ -353,7 +353,7 @@ func TestRecoveryAdoptsHookDispatchedBeforeCrash(t *testing.T) {
 
 			// What the crash left: the hook run is running, with no child ID.
 			ctx := context.Background()
-			run, _, err := h.store.EnsureHookRun(ctx, d.ID, "pre", "web-migrate", time.Minute)
+			run, _, err := h.store.EnsureHookRun(ctx, d.ID, "pre", 0, "web-migrate", time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -374,7 +374,7 @@ func TestRecoveryAdoptsHookDispatchedBeforeCrash(t *testing.T) {
 			if hn.dispatches != 0 {
 				t.Errorf("dispatches = %d, want none: the crash window must never dispatch again", hn.dispatches)
 			}
-			got, err := h.store.GetHookRun(ctx, d.ID, "pre")
+			got, err := h.store.GetHookRun(ctx, d.ID, "pre", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

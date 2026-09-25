@@ -173,28 +173,18 @@ type deploymentDetailData struct {
 	OOB        bool   // the status fragment: the side column swaps out of band
 }
 
-// planSteps reads what approving d will run: the hooks it froze at detection
-// (which one, and at which revision) with the timeouts its spec declares, and
-// the register and health steps between them. The spec itself is never
-// rendered.
-func planSteps(d *store.Deployment, hooks []store.DeploymentHook) ([]planStep, error) {
-	var job api.Job
-	if err := json.Unmarshal([]byte(d.JobSpec), &job); err != nil {
-		return nil, fmt.Errorf("read the spec of deployment %s: %w", d.ID, err)
-	}
-	cfg := meta.Parse(job.Meta)
-
-	hookStep := func(kind string, h store.DeploymentHook, declared *meta.Hook) planStep {
-		st := planStep{Kind: kind, Job: h.HookID, Revision: strings.TrimPrefix(h.Revision, h.HookID+"-")}
-		if declared != nil {
-			st.Timeout = duration(declared.Timeout)
-		}
-		return st
+// planSteps reads what approving d will run: the hooks it froze at detection,
+// in the order they run (which one, at which revision, and how long it may
+// take, from the hook's own spec), and the register and health steps between
+// the two phases. The specs themselves are never rendered.
+func planSteps(d *store.Deployment, hooks []store.DeploymentHook) []planStep {
+	hookStep := func(kind string, h store.DeploymentHook) planStep {
+		return planStep{Kind: kind, Job: h.HookID, Revision: strings.TrimPrefix(h.Revision, h.HookID+"-"), Timeout: hookTimeout(h)}
 	}
 	var steps []planStep
 	for _, h := range hooks {
 		if h.Phase == "pre" {
-			steps = append(steps, hookStep("pre", h, cfg.PreHook))
+			steps = append(steps, hookStep("pre", h))
 		}
 	}
 	register := "Create the job in Nomad (it is not registered yet)."
@@ -204,10 +194,20 @@ func planSteps(d *store.Deployment, hooks []store.DeploymentHook) ([]planStep, e
 	steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
 	for _, h := range hooks {
 		if h.Phase == "post" {
-			steps = append(steps, hookStep("post", h, cfg.PostHook))
+			steps = append(steps, hookStep("post", h))
 		}
 	}
-	return steps, nil
+	return steps
+}
+
+// hookTimeout is how long a frozen hook may run, read from its spec's meta;
+// empty when the spec cannot be read.
+func hookTimeout(h store.DeploymentHook) string {
+	var job api.Job
+	if err := json.Unmarshal([]byte(h.JobSpec), &job); err != nil {
+		return ""
+	}
+	return duration(meta.Parse(job.Meta).Timeout)
 }
 
 // deploymentView assembles everything /deployments/{id} and its status
@@ -247,25 +247,19 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 			s.serverError(w, r, "list frozen hooks", err)
 			return deploymentDetailData{}, false
 		}
-		if data.Steps, err = planSteps(d, frozen); err != nil {
-			s.serverError(w, r, "plan steps", err)
-			return deploymentDetailData{}, false
-		}
+		data.Steps = planSteps(d, frozen)
 	}
 	for _, e := range events {
 		data.Events = append(data.Events, eventView{
 			Time: s.when(e.Time), From: e.From, To: e.To, Actor: e.Actor, Msg: e.Message, Retry: e.From == e.To,
 		})
 	}
-	for _, phase := range []string{"pre", "post"} {
-		run, err := s.store.GetHookRun(r.Context(), id, phase)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			s.serverError(w, r, "get hook run", err)
-			return deploymentDetailData{}, false
-		}
+	runs, err := s.store.ListHookRuns(r.Context(), id)
+	if err != nil {
+		s.serverError(w, r, "list hook runs", err)
+		return deploymentDetailData{}, false
+	}
+	for _, run := range runs {
 		data.HookRuns = append(data.HookRuns, hookRunView{
 			Phase: run.Phase, JobID: run.HookJobID, State: run.State, Error: run.Error,
 			StartedAt: s.when(run.StartedAt), FinishedAt: s.when(run.FinishedAt),

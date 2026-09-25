@@ -122,12 +122,12 @@ func TestE2EPreHookTimeout(t *testing.T) {
 	hookID := uniqueID(t, e.raw, "pretimeouthook")
 
 	e.repo.commit(t, "job "+jobID, map[string]string{
-		file(jobID):  e2eJob{id: jobID, policy: "auto", version: "1", preHook: hookID, preTimeout: "2s"}.hcl(),
-		file(hookID): hookCmdHCL(hookID, "sleep 600", true),
+		file(jobID):  e2eJob{id: jobID, policy: "auto", version: "1", preHook: hookID}.hcl(),
+		file(hookID): hookWithTimeoutHCL(hookID, "sleep 600", "2s"),
 	})
 	d := e.waitNew(jobID, "", store.StateFailed)
 
-	run, err := e.st.GetHookRun(context.Background(), d.ID, "pre")
+	run, err := e.st.GetHookRun(context.Background(), d.ID, "pre", 0)
 	if err != nil {
 		t.Fatalf("GetHookRun: %v", err)
 	}

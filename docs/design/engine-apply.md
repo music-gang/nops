@@ -73,15 +73,21 @@ CAS conflict actually closes the deployment.
   below): read `nops_pre_hook` from `meta.Parse` on the stored `job_spec`'s
   meta. Declared → `Transition` to `pre_hook`. Not declared → `Transition`
   straight to `applying`.
-- **`pre_hook`**: read the frozen hook of the phase (`Store.DeploymentHooks`;
+- **`pre_hook`**: read the frozen hooks of the phase (`Store.DeploymentHooks`;
   none means a deployment made before hooks were frozen, which is `failed` with
-  a message saying so), register its revision (below), then
-  `Hooks.Run(ctx, hooks.Request{DeploymentID, Phase: "pre",
-  HookJobID: <revision>, Commit, Timeout, Target: job_spec})`. An error from
-  registering or from `Run` (Nomad or SQLite) is retried next tick, unchanged;
-  a registration that keeps failing for the hook's timeout, counted from when
-  the deployment entered the phase, fails the deployment like a hook that timed
-  out. A terminal `Result`:
+  a message saying so) and walk them in position order. For each: register its
+  revision (below), then `Hooks.Run(ctx, hooks.Request{DeploymentID, Phase:
+  "pre", Position, HookJobID: <revision>, Commit, Timeout, Target: job_spec})`,
+  the timeout being the `nops_timeout` of the frozen hook. Only when a hook has
+  succeeded does the next one start (nothing of a hook after a failure is
+  registered or dispatched), and the deployment moves on once the last has. An
+  error from registering or from `Run` (Nomad or SQLite) is retried next tick:
+  the step starts over from the first hook, and one whose run already finished
+  answers from its stored result without touching Nomad (`hooks.Runner`'s own
+  contract), so it resumes at the first that had not. A registration that keeps
+  failing for the hook's timeout, counted from when the previous hook finished
+  (or the deployment entered the phase, for the first), fails the deployment
+  like a hook that timed out. A terminal `Result`:
   `succeeded` → `Transition` to `applying`; `failed`/`timed_out` → `Transition`
   to `failed` (message from `Result.Error`) — the live job is never touched
   (`state-machine.md`'s "a pre-hook leaves the live job untouched").
@@ -113,7 +119,7 @@ CAS conflict actually closes the deployment.
   nothing more: no rollback, no `nomad deployment fail` (see
   [Decisions](#decisions), 5).
 - **`post_hook`**: same as `pre_hook`, but a `failed`/`timed_out` result's
-  message notes explicitly that the apply is already live and is not undone
+  message names the hook and notes explicitly that the apply is already live and is not undone
   (`state-machine.md`: "a post-hook failure does not undo the apply").
 
 ### Registering a hook revision

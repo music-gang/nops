@@ -581,7 +581,6 @@ func (e *e2eEnv) editOutsideNops(jobID, jobHCL string) {
 type e2eJob struct {
 	id, policy, version string
 	preHook, postHook   string
-	preTimeout          string
 	// cmd is the target's shell command; empty means "exit 0".
 	cmd string
 }
@@ -595,9 +594,6 @@ func (j e2eJob) hcl() string {
 	fmt.Fprintf(&meta, "    nops_managed = %q\n    nops_policy  = %q\n    version      = %q\n", "true", j.policy, j.version)
 	if j.preHook != "" {
 		fmt.Fprintf(&meta, "    nops_pre_hook = %q\n", j.preHook)
-	}
-	if j.preTimeout != "" {
-		fmt.Fprintf(&meta, "    nops_pre_hook_timeout = %q\n", j.preTimeout)
 	}
 	if j.postHook != "" {
 		fmt.Fprintf(&meta, "    nops_post_hook = %q\n", j.postHook)

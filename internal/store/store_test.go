@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -349,17 +350,17 @@ func TestHookRunLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	d := mustCreate(t, s, newDep("web"))
 
-	run, created, err := s.EnsureHookRun(ctx, d.ID, "pre", "migrate", 10*time.Minute)
+	run, created, err := s.EnsureHookRun(ctx, d.ID, "pre", 0, "migrate", 10*time.Minute)
 	if err != nil || !created {
 		t.Fatalf("EnsureHookRun = %+v, created=%v, err=%v", run, created, err)
 	}
-	if run.State != HookDispatching || run.IdempotencyToken != d.ID+":pre" || run.Timeout != 10*time.Minute ||
+	if run.State != HookDispatching || run.IdempotencyToken != d.ID+":pre:0" || run.Timeout != 10*time.Minute ||
 		run.HookJobID != "migrate" || !run.FinishedAt.IsZero() {
 		t.Errorf("new run = %+v", run)
 	}
 
 	// A restarted controller calls Ensure again and gets the same row back.
-	again, created, err := s.EnsureHookRun(ctx, d.ID, "pre", "migrate", time.Minute)
+	again, created, err := s.EnsureHookRun(ctx, d.ID, "pre", 0, "migrate", time.Minute)
 	if err != nil || created || again.ID != run.ID || again.Timeout != 10*time.Minute {
 		t.Errorf("second EnsureHookRun = %+v, created=%v, err=%v", again, created, err)
 	}
@@ -367,7 +368,7 @@ func TestHookRunLifecycle(t *testing.T) {
 	if err := s.UpdateHookRun(ctx, run.ID, HookUpdate{State: HookRunning, DispatchedJobID: "migrate/dispatch-1"}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.GetHookRun(ctx, d.ID, "pre")
+	got, _ := s.GetHookRun(ctx, d.ID, "pre", 0)
 	if got.State != HookRunning || got.DispatchedJobID != "migrate/dispatch-1" || !got.FinishedAt.IsZero() {
 		t.Errorf("after running = %+v", got)
 	}
@@ -375,14 +376,14 @@ func TestHookRunLifecycle(t *testing.T) {
 	if err := s.UpdateHookRun(ctx, run.ID, HookUpdate{State: HookTimedOut, Error: "timeout after 10m0s"}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = s.GetHookRun(ctx, d.ID, "pre")
+	got, _ = s.GetHookRun(ctx, d.ID, "pre", 0)
 	if got.State != HookTimedOut || got.Error != "timeout after 10m0s" || got.FinishedAt.IsZero() ||
 		got.DispatchedJobID != "migrate/dispatch-1" {
 		t.Errorf("after timeout = %+v", got)
 	}
 
 	// pre and post are independent runs of the same deployment.
-	post, created, err := s.EnsureHookRun(ctx, d.ID, "post", "smoke", time.Minute)
+	post, created, err := s.EnsureHookRun(ctx, d.ID, "post", 0, "smoke", time.Minute)
 	if err != nil || !created || post.ID == run.ID {
 		t.Errorf("post run = %+v, created=%v, err=%v", post, created, err)
 	}
@@ -393,13 +394,13 @@ func TestHookRunErrors(t *testing.T) {
 	s := newTestStore(t)
 	d := mustCreate(t, s, newDep("web"))
 
-	if _, _, err := s.EnsureHookRun(ctx, d.ID, "during", "h", time.Minute); err == nil {
+	if _, _, err := s.EnsureHookRun(ctx, d.ID, "during", 0, "h", time.Minute); err == nil {
 		t.Error("invalid phase accepted")
 	}
-	if _, _, err := s.EnsureHookRun(ctx, "no-such-deployment", "pre", "h", time.Minute); err == nil {
+	if _, _, err := s.EnsureHookRun(ctx, "no-such-deployment", "pre", 0, "h", time.Minute); err == nil {
 		t.Error("foreign key to missing deployment not enforced")
 	}
-	if _, err := s.GetHookRun(ctx, d.ID, "pre"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetHookRun(ctx, d.ID, "pre", 0); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetHookRun(missing) err = %v", err)
 	}
 	if err := s.UpdateHookRun(ctx, "missing", HookUpdate{State: HookRunning}); !errors.Is(err, ErrNotFound) {
@@ -426,7 +427,7 @@ func TestReopenKeepsState(t *testing.T) {
 	if err := s1.Transition(ctx, d.ID, StatePreHook, Transition{From: StateDetected, Actor: "nops"}); err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := s1.EnsureHookRun(ctx, d.ID, "pre", "migrate", time.Minute)
+	run, _, err := s1.EnsureHookRun(ctx, d.ID, "pre", 0, "migrate", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +445,7 @@ func TestReopenKeepsState(t *testing.T) {
 	if err != nil || len(active) != 1 || active[0].State != StatePreHook {
 		t.Fatalf("ListActive after reopen = %+v, %v", active, err)
 	}
-	h, err := s2.GetHookRun(ctx, d.ID, "pre")
+	h, err := s2.GetHookRun(ctx, d.ID, "pre", 0)
 	if err != nil || h.DispatchedJobID != "migrate/d1" || h.State != HookRunning {
 		t.Errorf("hook run after reopen = %+v, %v", h, err)
 	}
@@ -456,8 +457,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 3 {
-		t.Errorf("user_version = %d, %v; want 3", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 4 {
+		t.Errorf("user_version = %d, %v; want 4", v, err)
 	}
 }
 
@@ -984,5 +985,111 @@ func TestUpgradeFromV2(t *testing.T) {
 	}
 	if got, err := s.DeploymentHooks(context.Background(), "old"); err != nil || len(got) != 0 {
 		t.Errorf("hooks of an upgraded deployment = %+v, %v; want none", got, err)
+	}
+}
+
+func TestHookRunsAtSeveralPositions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := mustCreate(t, s, newDep("web"))
+
+	if got, err := s.ListHookRuns(ctx, d.ID); err != nil || len(got) != 0 {
+		t.Fatalf("before any run: %+v, %v", got, err)
+	}
+	// Created out of order: the listing is by phase and position anyway.
+	for _, r := range []struct {
+		phase string
+		pos   int
+		hook  string
+	}{{"post", 1, "notify"}, {"pre", 1, "migrate"}, {"post", 0, "smoke"}, {"pre", 0, "backup"}} {
+		run, created, err := s.EnsureHookRun(ctx, d.ID, r.phase, r.pos, r.hook, time.Minute)
+		if err != nil || !created {
+			t.Fatalf("EnsureHookRun(%s, %d) = %+v, %v, %v", r.phase, r.pos, run, created, err)
+		}
+		if want := fmt.Sprintf("%s:%s:%d", d.ID, r.phase, r.pos); run.IdempotencyToken != want || run.Position != r.pos {
+			t.Errorf("run = %+v, want token %s: one per position, so each dispatches on its own", run, want)
+		}
+	}
+
+	got, err := s.ListHookRuns(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, r := range got {
+		order = append(order, r.Phase+"/"+strconv.Itoa(r.Position)+"/"+r.HookJobID)
+	}
+	if want := "pre/0/backup pre/1/migrate post/0/smoke post/1/notify"; strings.Join(order, " ") != want {
+		t.Errorf("runs = %v, want %s", order, want)
+	}
+
+	// Ensure is idempotent per position, and positions are independent.
+	again, created, err := s.EnsureHookRun(ctx, d.ID, "pre", 1, "other", time.Hour)
+	if err != nil || created || again.HookJobID != "migrate" || again.Timeout != time.Minute {
+		t.Errorf("second Ensure at pre/1 = %+v, %v, %v; want the first one back", again, created, err)
+	}
+	one, err := s.GetHookRun(ctx, d.ID, "pre", 1)
+	if err != nil || one.HookJobID != "migrate" {
+		t.Errorf("GetHookRun(pre, 1) = %+v, %v", one, err)
+	}
+	if _, err := s.GetHookRun(ctx, d.ID, "pre", 2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetHookRun(pre, 2) err = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.EnsureHookRun(ctx, d.ID, "pre", -1, "h", time.Minute); err == nil {
+		t.Error("a negative position was accepted")
+	}
+	if other, _ := s.ListHookRuns(ctx, "someone-else"); len(other) != 0 {
+		t.Errorf("runs of another deployment = %+v", other)
+	}
+}
+
+// TestUpgradeFromV3 opens a database left by the schema with one hook run per
+// phase, with a run in flight, and checks the rebuild of hook_runs keeps it: at
+// position 0, with the token it was dispatched with (the new format is for new
+// runs), and a second position can be added.
+func TestUpgradeFromV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"0001_init.sql", "0002_dashboard.sql", "0003_hook_revisions.sql"} {
+		body, err := migrationsFS.ReadFile("migrations/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", f, err)
+		}
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 3",
+		`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+		 VALUES ('old', 'web', 'default', 'abc1234', 'h', '{}', 'auto', 'pre_hook', 7, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+		`INSERT INTO hook_runs (id, deployment_id, phase, hook_job_id, idempotency_token, dispatched_job_id, state, timeout_s, error, started_at, finished_at)
+		 VALUES ('r1', 'old', 'pre', 'migrate-0a1b2c3d', 'old:pre', 'migrate-0a1b2c3d/dispatch-1', 'running', 300, NULL, '2026-09-01T00:00:01Z', NULL)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v3: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	ctx := context.Background()
+	run, err := s.GetHookRun(ctx, "old", "pre", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ID != "r1" || run.Position != 0 || run.IdempotencyToken != "old:pre" || run.State != HookRunning ||
+		run.DispatchedJobID != "migrate-0a1b2c3d/dispatch-1" || run.Timeout != 5*time.Minute || run.HookJobID != "migrate-0a1b2c3d" {
+		t.Errorf("upgraded run = %+v", run)
+	}
+	// Ensure at position 0 finds the row, and does not create a second one.
+	if again, created, err := s.EnsureHookRun(ctx, "old", "pre", 0, "x", time.Minute); err != nil || created || again.ID != "r1" {
+		t.Errorf("Ensure after the upgrade = %+v, %v, %v", again, created, err)
+	}
+	if next, created, err := s.EnsureHookRun(ctx, "old", "pre", 1, "second", time.Minute); err != nil || !created || next.IdempotencyToken != "old:pre:1" {
+		t.Errorf("a second position after the upgrade = %+v, %v, %v", next, created, err)
 	}
 }

@@ -16,10 +16,9 @@ job "myapp" {
   type        = "service"
 
   meta {
-    nops_managed          = "true"
-    nops_policy           = "approval"
-    nops_pre_hook         = "myapp-prepull"
-    nops_pre_hook_timeout = "15m"
+    nops_managed  = "true"
+    nops_policy   = "approval"
+    nops_pre_hook = "myapp-prepull"
   }
 
   group "myapp" {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/gitwatch"
+	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
@@ -458,12 +460,18 @@ func TestNoDrift(t *testing.T) {
 func TestObservationCarriesTheDeclaredHooks(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "none", map[string]string{
-		"nops_pre_hook": "web-migrate", "nops_pre_hook_timeout": "10m", "nops_post_hook": "web-smoke",
+		"nops_pre_hook": "web-backup, web-migrate", "nops_post_hook": "web-smoke,web-gone",
 	}))
 	h.nomad.setFile("db-v1", managed("db", "none", nil))
+	h.nomad.setFile("backup-v1", withMeta(hookJob("web-backup"), "nops_timeout", "10m"))
+	h.nomad.setFile("migrate-v1", hookJob("web-migrate"))
+	h.nomad.setFile("smoke-v1", withMeta(hookJob("web-smoke"), "nops_timeout", "soon")) // invalid: the timeout is not known
 	h.snap.set("c1",
 		gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"},
-		gitwatch.File{Path: "db.nomad.hcl", Content: "db-v1"})
+		gitwatch.File{Path: "db.nomad.hcl", Content: "db-v1"},
+		gitwatch.File{Path: "backup.nomad.hcl", Content: "backup-v1"},
+		gitwatch.File{Path: "migrate.nomad.hcl", Content: "migrate-v1"},
+		gitwatch.File{Path: "smoke.nomad.hcl", Content: "smoke-v1"})
 
 	h.detect()
 
@@ -472,14 +480,16 @@ func TestObservationCarriesTheDeclaredHooks(t *testing.T) {
 		t.Fatalf("observations = %+v", obs)
 	}
 	db, web := obs[0], obs[1]
-	if db.PreHook != nil || db.PostHook != nil {
-		t.Errorf("db declares no hooks, got pre %+v post %+v", db.PreHook, db.PostHook)
+	if len(db.PreHooks) != 0 || len(db.PostHooks) != 0 {
+		t.Errorf("db declares no hooks, got pre %+v post %+v", db.PreHooks, db.PostHooks)
 	}
-	if web.PreHook == nil || web.PreHook.JobID != "web-migrate" || web.PreHook.Timeout != 10*time.Minute {
-		t.Errorf("web pre-hook = %+v, want web-migrate with a 10m timeout", web.PreHook)
+	wantPre := []HookRef{{"web-backup", 10 * time.Minute}, {"web-migrate", meta.DefaultHookTimeout}}
+	if !reflect.DeepEqual(web.PreHooks, wantPre) {
+		t.Errorf("web pre-hooks = %+v, want %+v, in the declared order with each hook's own timeout", web.PreHooks, wantPre)
 	}
-	if web.PostHook == nil || web.PostHook.JobID != "web-smoke" {
-		t.Errorf("web post-hook = %+v, want web-smoke", web.PostHook)
+	wantPost := []HookRef{{"web-smoke", 0}, {"web-gone", 0}}
+	if !reflect.DeepEqual(web.PostHooks, wantPost) {
+		t.Errorf("web post-hooks = %+v, want %+v: no timeout for a hook that is invalid or not in the repo", web.PostHooks, wantPost)
 	}
 }
 

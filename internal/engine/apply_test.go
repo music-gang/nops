@@ -26,10 +26,13 @@ type fakeHooks struct {
 	results map[string]hooks.Result
 	errs    map[string]error
 	calls   []hooks.Request
+	// at* are the same by position ("<deployment>:<phase>:<position>"), and win.
+	resultsAt map[string]hooks.Result
+	errsAt    map[string]error
 }
 
 func newFakeHooks() *fakeHooks {
-	return &fakeHooks{results: map[string]hooks.Result{}, errs: map[string]error{}}
+	return &fakeHooks{results: map[string]hooks.Result{}, errs: map[string]error{}, resultsAt: map[string]hooks.Result{}, errsAt: map[string]error{}}
 }
 
 func hookKey(deploymentID, phase string) string { return deploymentID + ":" + phase }
@@ -46,10 +49,44 @@ func (f *fakeHooks) setErr(deploymentID, phase string, err error) {
 	f.errs[hookKey(deploymentID, phase)] = err
 }
 
+func hookKeyAt(deploymentID, phase string, position int) string {
+	return fmt.Sprintf("%s:%s:%d", deploymentID, phase, position)
+}
+
+func (f *fakeHooks) setResultAt(deploymentID, phase string, position int, res hooks.Result) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resultsAt[hookKeyAt(deploymentID, phase, position)] = res
+}
+
+func (f *fakeHooks) setErrAt(deploymentID, phase string, position int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errsAt[hookKeyAt(deploymentID, phase, position)] = err
+}
+
+// order is the positions of the runs so far, "phase/position" each.
+func (f *fakeHooks) order() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, c := range f.calls {
+		out = append(out, fmt.Sprintf("%s/%d", c.Phase, c.Position))
+	}
+	return out
+}
+
 func (f *fakeHooks) Run(_ context.Context, req hooks.Request) (hooks.Result, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, req)
+	at := hookKeyAt(req.DeploymentID, req.Phase, req.Position)
+	if err, ok := f.errsAt[at]; ok {
+		return hooks.Result{}, err
+	}
+	if res, ok := f.resultsAt[at]; ok {
+		return res, nil
+	}
 	key := hookKey(req.DeploymentID, req.Phase)
 	if err, ok := f.errs[key]; ok {
 		return hooks.Result{}, err
@@ -115,20 +152,19 @@ func frozenFromSpec(spec string) []store.DeploymentHook {
 	}
 	cfg := meta.Parse(job.Meta)
 	var out []store.DeploymentHook
-	for _, dh := range []struct {
+	for _, ph := range []struct {
 		phase string
-		hook  *meta.Hook
-	}{{"pre", cfg.PreHook}, {"post", cfg.PostHook}} {
-		if dh.hook == nil {
-			continue
+		ids   []string
+	}{{"pre", cfg.PreHooks}, {"post", cfg.PostHooks}} {
+		for pos, id := range ph.ids {
+			hj := hookJob(id)
+			b, _ := json.Marshal(hj)
+			hash, _ := specHash(hj)
+			out = append(out, store.DeploymentHook{
+				Phase: ph.phase, Position: pos, HookID: id, Revision: revisionID(id, hash),
+				SpecHash: hash, JobSpec: string(b),
+			})
 		}
-		hj := hookJob(dh.hook.JobID)
-		b, _ := json.Marshal(hj)
-		hash, _ := specHash(hj)
-		out = append(out, store.DeploymentHook{
-			Phase: dh.phase, HookID: dh.hook.JobID, Revision: revisionID(dh.hook.JobID, hash),
-			SpecHash: hash, JobSpec: string(b),
-		})
 	}
 	return out
 }

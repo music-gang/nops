@@ -21,6 +21,12 @@ import (
 
 // hookCmdHCL is a parameterized batch hook running `sh -c cmd`. It declares the
 // dispatch meta a real hook would (one required, two optional).
+// hookWithTimeoutHCL is a hook that sets its own nops_timeout.
+func hookWithTimeoutHCL(id, cmd, timeout string) string {
+	return strings.Replace(hookCmdHCL(id, cmd, true), `nops_role = "hook"`,
+		`nops_role = "hook"`+"\n    "+`nops_timeout = "`+timeout+`"`, 1)
+}
+
 func hookCmdHCL(id, cmd string, isHook bool) string {
 	role := ""
 	if isHook {
@@ -175,7 +181,7 @@ func TestHookRunSucceedsAndRerunDoesNotDispatch(t *testing.T) {
 	if kids := e.children(t); len(kids) != 1 {
 		t.Errorf("children = %v, want exactly one", kids)
 	}
-	if run, err := e.store.GetHookRun(context.Background(), e.depID, "pre"); err != nil || run.State != store.HookSucceeded {
+	if run, err := e.store.GetHookRun(context.Background(), e.depID, "pre", 0); err != nil || run.State != store.HookSucceeded {
 		t.Errorf("stored run = %+v, %v", run, err)
 	}
 }
@@ -248,7 +254,7 @@ func TestHookRunTimesOutAndStopsTheChild(t *testing.T) {
 func (e *hookEnv) markDispatchAttempted(t *testing.T) *store.HookRun {
 	t.Helper()
 	ctx := context.Background()
-	run, _, err := e.store.EnsureHookRun(ctx, e.depID, "pre", e.hookID, time.Minute)
+	run, _, err := e.store.EnsureHookRun(ctx, e.depID, "pre", 0, e.hookID, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

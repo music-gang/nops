@@ -172,10 +172,7 @@ func TestSummarize(t *testing.T) {
 
 func TestPlanSteps(t *testing.T) {
 	d := sampleDeployment()
-	steps, err := planSteps(d, sampleHooks())
-	if err != nil {
-		t.Fatal(err)
-	}
+	steps := planSteps(d, sampleHooks())
 	kinds := make([]string, len(steps))
 	for i, st := range steps {
 		kinds[i] = st.Kind
@@ -195,14 +192,28 @@ func TestPlanSteps(t *testing.T) {
 
 	d.CASIndex = 0
 	d.JobSpec = `{"ID":"web"}`
-	steps, err = planSteps(d, nil)
-	if err != nil || len(steps) != 2 || !strings.HasPrefix(steps[0].Text, "Create the job") {
-		t.Errorf("a new job with no hooks: steps %+v, err %v; want create + health", steps, err)
+	steps = planSteps(d, nil)
+	if len(steps) != 2 || !strings.HasPrefix(steps[0].Text, "Create the job") {
+		t.Errorf("a new job with no hooks: steps %+v; want create + health", steps)
 	}
 
-	d.JobSpec = "not json"
-	if _, err := planSteps(d, nil); err == nil || !strings.Contains(err.Error(), "d1") {
-		t.Errorf("an unreadable spec: err = %v, want one that names the deployment", err)
+	// Several hooks in a phase come out in the order they were frozen, and one
+	// whose spec cannot be read is still listed, without a timeout.
+	steps = planSteps(d, []store.DeploymentHook{
+		{Phase: "pre", Position: 0, HookID: "backup", Revision: "backup-11111111", JobSpec: `{"Meta":{"nops_role":"hook","nops_timeout":"30m"}}`},
+		{Phase: "pre", Position: 1, HookID: "migrate", Revision: "migrate-22222222", JobSpec: "not json"},
+		{Phase: "post", Position: 0, HookID: "smoke", Revision: "smoke-33333333", JobSpec: `{}`},
+		{Phase: "post", Position: 1, HookID: "notify", Revision: "notify-44444444", JobSpec: `{}`},
+	})
+	var seq []string
+	for _, st := range steps {
+		seq = append(seq, st.Kind+":"+st.Job)
+	}
+	if got := strings.Join(seq, " "); got != "pre:backup pre:migrate register: health: post:smoke post:notify" {
+		t.Errorf("steps = %s", got)
+	}
+	if steps[0].Timeout != "30m" || steps[1].Timeout != "" {
+		t.Errorf("timeouts = %q / %q, want the hook's own and none for an unreadable spec", steps[0].Timeout, steps[1].Timeout)
 	}
 }
 
@@ -477,8 +488,8 @@ func TestJobPage(t *testing.T) {
 	en := &fakeEngine{observations: []engine.Observation{{
 		JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, Drift: true, FilePath: "apps/web.nomad.hcl",
 		PlanDiff: diffJSON(t, sampleDiff()), ObservedAt: testNow.Add(-2 * time.Minute),
-		PreHook: &meta.Hook{JobID: "web-migrate", Timeout: 10 * time.Minute},
-		Issues:  []meta.Issue{{Severity: meta.SeverityWarn, Key: "nops_post_hook_timeout", Message: "unusual value"}},
+		PreHooks: []engine.HookRef{{JobID: "web-migrate", Timeout: 10 * time.Minute}},
+		Issues:   []meta.Issue{{Severity: meta.SeverityWarn, Key: "nops_post_hook_timeout", Message: "unusual value"}},
 	}}}
 	ts := newTestServer(t, st, en, "")
 
@@ -496,6 +507,60 @@ func TestJobPage(t *testing.T) {
 	mustNotContain(t, page, specMarker, "Blocked.", "Retry", "layout--single") // it has its side column
 	if strings.Index(page, `href="/deployments/d1"`) > strings.Index(page, `href="/deployments/d0"`) {
 		t.Error("deployments are not listed newest first")
+	}
+}
+
+func TestJobPageListsSeveralHooksInOrder(t *testing.T) {
+	en := &fakeEngine{observations: []engine.Observation{{
+		JobID: "db", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "db.nomad.hcl",
+		PreHooks:  []engine.HookRef{{JobID: "db-backup", Timeout: 30 * time.Minute}, {JobID: "db-migrate", Timeout: 5 * time.Minute}},
+		PostHooks: []engine.HookRef{{JobID: "db-smoke"}, {JobID: "db-notify", Timeout: time.Minute}},
+	}}}
+	ts := newTestServer(t, &fakeStore{}, en, "")
+
+	page := ts.get("/jobs/default/db")
+	mustContain(t, page, "Pre-hooks", "Post-hooks", "db-backup", "30m", "db-migrate", "db-smoke", "db-notify")
+	for _, pair := range [][2]string{{"db-backup", "db-migrate"}, {"db-smoke", "db-notify"}} {
+		if strings.Index(page, pair[0]) > strings.Index(page, pair[1]) {
+			t.Errorf("%s is listed after %s: hooks are shown in the order they run", pair[0], pair[1])
+		}
+	}
+	// A hook that is not in the repository has no timeout to show.
+	mustNotContain(t, page, "db-smoke</span> <span class=\"muted\">")
+}
+
+func TestDeploymentPageShowsEveryHookInOrder(t *testing.T) {
+	d := sampleDeployment()
+	st := &fakeStore{
+		deployment: d,
+		hooks: []store.DeploymentHook{
+			{Phase: "pre", Position: 0, HookID: "web-backup", Revision: "web-backup-11111111", JobSpec: `{"Meta":{"nops_role":"hook","nops_timeout":"30m"}}`},
+			{Phase: "pre", Position: 1, HookID: "web-migrate", Revision: "web-migrate-22222222", JobSpec: `{"Meta":{"nops_role":"hook"}}`},
+			{Phase: "post", Position: 0, HookID: "web-smoke", Revision: "web-smoke-33333333", JobSpec: `{"Meta":{"nops_role":"hook"}}`},
+		},
+		hookRuns: map[string]*store.HookRun{
+			"d1/post/0": {Phase: "post", Position: 0, HookJobID: "web-smoke-33333333", State: store.HookRunning, StartedAt: testNow},
+			"d1/pre/1":  {Phase: "pre", Position: 1, HookJobID: "web-migrate-22222222", State: store.HookSucceeded, StartedAt: testNow, FinishedAt: testNow},
+			"d1/pre/0":  {Phase: "pre", Position: 0, HookJobID: "web-backup-11111111", State: store.HookSucceeded, StartedAt: testNow, FinishedAt: testNow},
+		},
+	}
+	ts := newTestServer(t, st, &fakeEngine{}, "")
+
+	page := ts.get("/deployments/d1")
+	mustContain(t, page, "@11111111", "timeout 30m", "@22222222", "@33333333")
+	// The plan, and then the runs, list the hooks in the order they run.
+	for _, order := range [][]string{
+		{"web-backup", "web-migrate", "Update the job", "Wait for the new version", "web-smoke"},
+		{"web-backup-11111111", "web-migrate-22222222", "web-smoke-33333333"},
+	} {
+		last := -1
+		for _, want := range order {
+			i := strings.Index(page[max(last, 0):], want)
+			if i < 0 {
+				t.Fatalf("%q is not after the previous one in %v", want, order)
+			}
+			last = max(last, 0) + i
+		}
 	}
 }
 
@@ -776,18 +841,6 @@ func TestDeploymentPageStaleApprovalNotice(t *testing.T) {
 	}
 	// The page that comes back is the review page, with the new spec to decide on.
 	mustContain(t, rec.Body.String(), "The spec changed since this page loaded", `value="spec-hash-1"`, "Approve")
-}
-
-func TestDeploymentPageUnreadableSpecIsAServerError(t *testing.T) {
-	d := sampleDeployment()
-	d.JobSpec = "not json"
-	ts := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "")
-	rec := ts.do("GET", "/deployments/d1", nil, mintSession(t, ts.auth, "alice"))
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rec.Code)
-	}
-	mustContain(t, ts.logs.String(), "level=ERROR", "d1")
-	mustNotContain(t, rec.Body.String(), "not json")
 }
 
 func TestDeploymentPageErrors(t *testing.T) {

@@ -53,6 +53,9 @@ type Store interface {
 	// (see docs/design/engine-detection.md#hook-revisions).
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 	HookRevisionsInUse(ctx context.Context, namespace string) ([]string, error)
+	// GetHookRun is used by the hook step to time a registration that keeps
+	// failing from the end of the previous hook.
+	GetHookRun(ctx context.Context, deploymentID, phase string, position int) (*store.HookRun, error)
 	// MarkRetried is used by Retry (see docs/state-machine.md).
 	MarkRetried(ctx context.Context, id, actor string) error
 	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
@@ -92,9 +95,9 @@ type Observation struct {
 	Drift bool
 	// PlanDiff is the redacted JSON diff, empty when there is no drift.
 	PlanDiff string
-	// PreHook and PostHook are the hooks the job's meta declares, nil if none:
-	// what a deployment of this job would run.
-	PreHook, PostHook *meta.Hook
+	// PreHooks and PostHooks are the hooks the job's meta declares, in the
+	// order they run: what a deployment of this job would run.
+	PreHooks, PostHooks []HookRef
 	// Issues lists the meta validation problems found on this job, if any.
 	Issues []meta.Issue
 	// ObservedAt is when this cycle computed the observation.
@@ -106,6 +109,14 @@ type Observation struct {
 	// BlockedReason explains BlockedBy and what unblocks it. Empty when
 	// BlockedBy is empty.
 	BlockedReason string
+}
+
+// HookRef is a hook a job declares, as the repository has it now.
+type HookRef struct {
+	JobID string
+	// Timeout is the hook job's nops_timeout (or the default); zero when the
+	// hook is not in the repository, or its meta is invalid, so nothing says.
+	Timeout time.Duration
 }
 
 // Orphan is a job nops has deployed that is no longer in the repository but is

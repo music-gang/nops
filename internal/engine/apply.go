@@ -115,11 +115,11 @@ func parseJobSpec(d *store.Deployment) (*api.Job, error) {
 }
 
 // nextAfterDecision picks pre_hook or applying for a deployment about to
-// start applying: pre_hook if the target spec declares nops_pre_hook, else
+// start applying: pre_hook if the target spec declares any nops_pre_hook, else
 // applying straight away. Used both for an auto deployment leaving detected
 // and for Approve leaving pending_approval.
 func nextAfterDecision(job *api.Job) store.State {
-	if meta.Parse(job.Meta).PreHook != nil {
+	if len(meta.Parse(job.Meta).PreHooks) > 0 {
 		return store.StatePreHook
 	}
 	return store.StateApplying
@@ -134,41 +134,38 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 	e.applyTransition(ctx, log, d, nextAfterDecision(job), "")
 }
 
-// stepHook runs the deployment's hook for phase ("pre" or "post") and moves
-// it on once the hook reaches a terminal state. The hook is the one the
-// deployment froze at detection: its revision is registered here, right
-// before dispatch, from that spec (nothing of it is in Nomad before the
-// deployment is approved, and what runs is what was approved). An error from
-// registering it or from Hooks.Run (Nomad or SQLite) is left for the next
-// cycle to retry, and a registration that keeps failing for the hook's
-// timeout fails the deployment, as an unreachable hook would.
+// stepHook runs the deployment's hooks for phase ("pre" or "post"), one after
+// the other in the order they are declared, and moves it on once all of them
+// have succeeded; the first one to fail or time out stops the phase and fails
+// the deployment. The hooks are the ones the deployment froze at detection:
+// each one's revision is registered here, right before it is dispatched, from
+// that spec (nothing of a hook is in Nomad before the deployment is approved,
+// and what runs is what was approved). An error from registering a revision
+// or from Hooks.Run (Nomad or SQLite) is left for the next cycle to retry, and
+// a registration that keeps failing for the hook's timeout fails the
+// deployment, as an unreachable hook would.
+//
+// A hook whose run already finished returns its stored result without being
+// dispatched again, so a step that starts over, after an error or a restart,
+// carries on at the first hook that has not finished.
 func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deployment, phase string) {
 	job, err := parseJobSpec(d)
 	if err != nil {
 		log.ErrorContext(ctx, "decode job spec", "error", err)
 		return
 	}
-	cfg := meta.Parse(job.Meta)
-	timeout := meta.DefaultHookTimeout
-	if h := cfg.PreHook; phase == "pre" && h != nil {
-		timeout = h.Timeout
-	} else if h := cfg.PostHook; phase == "post" && h != nil {
-		timeout = h.Timeout
-	}
-
 	frozen, err := e.store.DeploymentHooks(ctx, d.ID)
 	if err != nil {
 		log.ErrorContext(ctx, "read frozen hooks", "phase", phase, "error", err)
 		return
 	}
-	var hook *store.DeploymentHook
-	for i := range frozen {
-		if frozen[i].Phase == phase {
-			hook = &frozen[i]
-			break
+	var phaseHooks []store.DeploymentHook
+	for _, h := range frozen {
+		if h.Phase == phase {
+			phaseHooks = append(phaseHooks, h)
 		}
 	}
-	if hook == nil {
+	if len(phaseHooks) == 0 {
 		// Detection freezes every hook a deployment declares and only routes
 		// here for one that does: no row means a deployment made before hooks
 		// were frozen. Nothing to run and nothing to wait for: fail it, and
@@ -178,35 +175,60 @@ func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deploy
 		return
 	}
 
-	if err := e.registerRevision(ctx, log, *hook); err != nil {
-		log.ErrorContext(ctx, "register hook revision", "phase", phase, "hook", hook.HookID, "revision", hook.Revision, "error", err)
-		if e.now().Sub(d.UpdatedAt) >= timeout {
-			e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase,
-				fmt.Sprintf("could not register hook %q within %s: %v", hook.HookID, timeout, err)))
+	for i, hook := range phaseHooks {
+		timeout := frozenTimeout(hook)
+		if err := e.registerRevision(ctx, log, hook); err != nil {
+			log.ErrorContext(ctx, "register hook revision", "phase", phase, "hook", hook.HookID, "revision", hook.Revision, "error", err)
+			if e.now().Sub(e.hookStart(ctx, log, d, phase, phaseHooks, i)) >= timeout {
+				e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase,
+					fmt.Sprintf("%s: could not register it within %s: %v", hook.HookID, timeout, err)))
+			}
+			return
 		}
+
+		res, err := e.hooks.Run(ctx, hooks.Request{
+			DeploymentID: d.ID, Phase: phase, Position: hook.Position, HookJobID: hook.Revision,
+			Commit: d.CommitSHA, Timeout: timeout, Target: job,
+		})
+		if err != nil {
+			log.ErrorContext(ctx, "run hook", "phase", phase, "hook", hook.HookID, "error", err)
+			return
+		}
+		switch res.State {
+		case store.HookSucceeded:
+			continue
+		case store.HookFailed, store.HookTimedOut:
+			e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase,
+				fmt.Sprintf("%s %s: %s", hook.HookID, res.State, res.Error)))
+			return
+		}
+		// running/dispatching: Run only returns once terminal or on error, so
+		// this case does not occur; stop here and look again next cycle.
 		return
 	}
 
-	res, err := e.hooks.Run(ctx, hooks.Request{
-		DeploymentID: d.ID, Phase: phase, HookJobID: hook.Revision,
-		Commit: d.CommitSHA, Timeout: timeout, Target: job,
-	})
-	if err != nil {
-		log.ErrorContext(ctx, "run hook", "phase", phase, "error", err)
-		return
+	next := store.StateApplying
+	if phase == "post" {
+		next = store.StateCompleted
 	}
-	switch res.State {
-	case store.HookSucceeded:
-		next := store.StateApplying
-		if phase == "post" {
-			next = store.StateCompleted
+	e.applyTransition(ctx, log, d, next, "")
+}
+
+// hookStart is when the hook at index i of the phase became the one being
+// worked on: when the previous one finished, or when the deployment entered
+// the phase for the first.
+func (e *Engine) hookStart(ctx context.Context, log *slog.Logger, d *store.Deployment, phase string, phaseHooks []store.DeploymentHook, i int) time.Time {
+	if i == 0 {
+		return d.UpdatedAt
+	}
+	prev, err := e.store.GetHookRun(ctx, d.ID, phase, phaseHooks[i-1].Position)
+	if err != nil || prev.FinishedAt.IsZero() {
+		if err != nil {
+			log.ErrorContext(ctx, "read the previous hook run", "phase", phase, "error", err)
 		}
-		e.applyTransition(ctx, log, d, next, "")
-	case store.HookFailed, store.HookTimedOut:
-		e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase, fmt.Sprintf("%s: %s", res.State, res.Error)))
+		return d.UpdatedAt
 	}
-	// running/dispatching: Run only returns once terminal or on error, so
-	// this case does not occur; nothing to do either way.
+	return prev.FinishedAt
 }
 
 // hookFailure words why a deployment failed in a hook phase, and what that
@@ -329,7 +351,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 			return
 		}
 		next := store.StateCompleted
-		if meta.Parse(job.Meta).PostHook != nil {
+		if len(meta.Parse(job.Meta).PostHooks) > 0 {
 			next = store.StatePostHook
 		}
 		e.applyTransition(ctx, log, d, next, "")

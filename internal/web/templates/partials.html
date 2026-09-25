@@ -149,6 +149,8 @@
 {{end}}
 
 {{/* -- hook runs and the timeline, one line each ---------------------------- */}}
+{{define "hook_list"}}{{range $i, $h := .}}{{if $i}}<br>{{end}}<span class="mono" title="{{$h.JobID}}">{{$h.JobID}}</span>{{if $h.Timeout}} <span class="muted">{{$h.Timeout}}</span>{{end}}{{else}}<span class="muted">none</span>{{end}}{{end}}
+
 {{define "hook_runs"}}
 {{if .}}
 <ul class="rows">

@@ -84,8 +84,8 @@
       <header class="box__header"><h2 class="box__title">Details</h2></header>
       <dl class="dl">
         <dt>Policy</dt><dd>{{.Policy}}</dd>
-        <dt>Pre-hook</dt><dd>{{with .PreHook}}<span class="mono" title="{{.JobID}}">{{.JobID}}</span> <span class="muted">{{.Timeout}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>
-        <dt>Post-hook</dt><dd>{{with .PostHook}}<span class="mono" title="{{.JobID}}">{{.JobID}}</span> <span class="muted">{{.Timeout}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>
+        <dt>Pre-hooks</dt><dd>{{template "hook_list" .PreHooks}}</dd>
+        <dt>Post-hooks</dt><dd>{{template "hook_list" .PostHooks}}</dd>
         <dt>File</dt><dd class="mono" title="{{.File}}">{{.File}}</dd>
         <dt>Observed</dt><dd>{{template "time" .Observed}}</dd>
       </dl>

@@ -12,8 +12,9 @@ func TestParse(t *testing.T) {
 		in         map[string]string
 		managed    bool
 		policy     Policy
-		pre, post  *Hook
+		pre, post  []string
 		isHook     bool
+		timeout    time.Duration
 		wantIssues []Issue
 	}{
 		{
@@ -34,12 +35,64 @@ func TestParse(t *testing.T) {
 			policy:  PolicyAuto,
 		},
 		{
-			name:    "approval with hooks and timeouts",
-			in:      map[string]string{KeyManaged: "true", KeyPolicy: "approval", KeyPreHook: "migrate", KeyPreHookTimeout: "10m", KeyPostHook: "smoke"},
+			name:    "approval with a pre-hook and a post-hook",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "approval", KeyPreHook: "migrate", KeyPostHook: "smoke"},
 			managed: true,
 			policy:  PolicyApproval,
-			pre:     &Hook{JobID: "migrate", Timeout: 10 * time.Minute},
-			post:    &Hook{JobID: "smoke", Timeout: DefaultHookTimeout},
+			pre:     []string{"migrate"},
+			post:    []string{"smoke"},
+		},
+		{
+			name:    "several hooks run in the order they are listed, spaces trimmed",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "backup, migrate ,warm-cache", KeyPostHook: "smoke,notify"},
+			managed: true,
+			policy:  PolicyAuto,
+			pre:     []string{"backup", "migrate", "warm-cache"},
+			post:    []string{"smoke", "notify"},
+		},
+		{
+			name:    "the same hook may be in both phases",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "check", KeyPostHook: "check"},
+			managed: true,
+			policy:  PolicyAuto,
+			pre:     []string{"check"},
+			post:    []string{"check"},
+		},
+		{
+			name:    "the same hook twice in a phase is an error",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "backup,migrate,backup"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyPreHook, "hook job \"backup\" is listed twice"},
+			},
+		},
+		{
+			name:    "an empty item is an error",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPostHook: "smoke,,notify"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyPostHook, "empty item in the list of hook job IDs \"smoke,,notify\""},
+			},
+		},
+		{
+			name:    "a trailing comma is an error",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "backup,"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyPreHook, "empty item in the list of hook job IDs \"backup,\""},
+			},
+		},
+		{
+			name:    "only blanks is an empty hook ID",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "  "},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyPreHook, "empty hook job ID"},
+			},
 		},
 		{
 			name:    "explicit false",
@@ -70,26 +123,6 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name:    "invalid timeout forces policy none, hook kept with default timeout",
-			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "h", KeyPreHookTimeout: "soon"},
-			managed: true,
-			policy:  PolicyNone,
-			pre:     &Hook{JobID: "h", Timeout: DefaultHookTimeout},
-			wantIssues: []Issue{
-				{SeverityError, KeyPreHookTimeout, "invalid duration \"soon\": time: invalid duration \"soon\""},
-			},
-		},
-		{
-			name:    "non positive timeout",
-			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPostHook: "h", KeyPostHookTimeout: "0s"},
-			managed: true,
-			policy:  PolicyNone,
-			post:    &Hook{JobID: "h", Timeout: DefaultHookTimeout},
-			wantIssues: []Issue{
-				{SeverityError, KeyPostHookTimeout, "duration \"0s\" must be positive"},
-			},
-		},
-		{
 			name:    "empty hook id is an error",
 			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: ""},
 			managed: true,
@@ -99,12 +132,14 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name:    "timeout without hook is only a warning",
-			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHookTimeout: "1m"},
+			name:    "the old per-phase timeouts are removed, and say what replaces them",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyPreHook: "h", "nops_pre_hook_timeout": "10m", "nops_post_hook_timeout": "1m"},
 			managed: true,
 			policy:  PolicyAuto,
+			pre:     []string{"h"},
 			wantIssues: []Issue{
-				{SeverityWarn, KeyPreHookTimeout, "set but nops_pre_hook is not declared: ignored"},
+				{SeverityWarn, "nops_post_hook_timeout", "removed: set nops_timeout on the hook job"},
+				{SeverityWarn, "nops_pre_hook_timeout", "removed: set nops_timeout on the hook job"},
 			},
 		},
 		{
@@ -117,10 +152,47 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name:   "hook role",
-			in:     map[string]string{KeyRole: "hook"},
-			policy: PolicyNone,
-			isHook: true,
+			name:    "hook role has the default timeout",
+			in:      map[string]string{KeyRole: "hook"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+		},
+		{
+			name:    "hook with its own timeout",
+			in:      map[string]string{KeyRole: "hook", KeyTimeout: "20m"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: 20 * time.Minute,
+		},
+		{
+			name:    "invalid hook timeout keeps the default",
+			in:      map[string]string{KeyRole: "hook", KeyTimeout: "soon"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+			wantIssues: []Issue{
+				{SeverityError, KeyTimeout, "invalid duration \"soon\": time: invalid duration \"soon\""},
+			},
+		},
+		{
+			name:    "non positive hook timeout keeps the default",
+			in:      map[string]string{KeyRole: "hook", KeyTimeout: "0s"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+			wantIssues: []Issue{
+				{SeverityError, KeyTimeout, "duration \"0s\" must be positive"},
+			},
+		},
+		{
+			name:    "a timeout on a job that is not a hook is ignored with a warning",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyTimeout: "1m"},
+			managed: true,
+			policy:  PolicyAuto,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyTimeout, "set but nops_role is not \"hook\": ignored"},
+			},
 		},
 		{
 			name:   "invalid role",
@@ -141,11 +213,14 @@ func TestParse(t *testing.T) {
 			if got.Policy != tc.policy {
 				t.Errorf("Policy = %q, want %q", got.Policy, tc.policy)
 			}
-			if !reflect.DeepEqual(got.PreHook, tc.pre) {
-				t.Errorf("PreHook = %+v, want %+v", got.PreHook, tc.pre)
+			if !reflect.DeepEqual(got.PreHooks, tc.pre) {
+				t.Errorf("PreHooks = %+v, want %+v", got.PreHooks, tc.pre)
 			}
-			if !reflect.DeepEqual(got.PostHook, tc.post) {
-				t.Errorf("PostHook = %+v, want %+v", got.PostHook, tc.post)
+			if !reflect.DeepEqual(got.PostHooks, tc.post) {
+				t.Errorf("PostHooks = %+v, want %+v", got.PostHooks, tc.post)
+			}
+			if got.Timeout != tc.timeout {
+				t.Errorf("Timeout = %s, want %s", got.Timeout, tc.timeout)
 			}
 			if got.IsHook != tc.isHook {
 				t.Errorf("IsHook = %v, want %v", got.IsHook, tc.isHook)

@@ -93,7 +93,7 @@ func TestFreezeHooksNamesAMissingHookAndHashesItsAbsence(t *testing.T) {
 	cfg := cfgOf(map[string]string{"nops_pre_hook": "web-migrate", "nops_post_hook": "web-smoke"})
 
 	frozen, without, missing, err := freezeHooks(cfg, hookFiles(hookJob("web-smoke")), "t")
-	if err != nil || missing != `pre-hook "web-migrate"` {
+	if err != nil || missing != `pre-hook "web-migrate" not found in repo` {
 		t.Fatalf("missing = %q, err %v", missing, err)
 	}
 	if len(frozen) != 1 || frozen[0].HookID != "web-smoke" {

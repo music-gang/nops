@@ -236,11 +236,18 @@ type hookView struct {
 	Timeout string
 }
 
-func hookOf(h *meta.Hook) *hookView {
-	if h == nil {
-		return nil
+// hooksOf names the hooks of a phase, in the order they run. The timeout is
+// the hook's own; empty when the hook is not in the repository.
+func hooksOf(refs []engine.HookRef) []hookView {
+	var out []hookView
+	for _, r := range refs {
+		v := hookView{JobID: r.JobID}
+		if r.Timeout > 0 {
+			v.Timeout = duration(r.Timeout)
+		}
+		out = append(out, v)
 	}
-	return &hookView{JobID: h.JobID, Timeout: duration(h.Timeout)}
+	return out
 }
 
 // orphanView is what the page of an orphan tells the operator to do. nops does
@@ -259,7 +266,7 @@ type jobData struct {
 	SyncLabel, SyncClass    string
 	File                    string
 	Observed                timeView
-	PreHook, PostHook       *hookView
+	PreHooks, PostHooks     []hookView  // in the order they run
 	Orphan                  *orphanView // set when the job is gone from git but still runs in Nomad
 	Blocked                 bool
 	BlockedReason           string
@@ -324,7 +331,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		data.InRepo, data.Policy = true, obs.Policy
 		data.Sync, data.SyncLabel, data.SyncClass = k, k.label(), k.class()
 		data.File, data.Observed = obs.FilePath, s.when(obs.ObservedAt)
-		data.PreHook, data.PostHook = hookOf(obs.PreHook), hookOf(obs.PostHook)
+		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
 		if data.Blocked {
 			data.RetryPath = jobPath(ns, id) + "/retry"

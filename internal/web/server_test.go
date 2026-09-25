@@ -114,7 +114,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		"job": jobData{
 			baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", InRepo: true, Policy: meta.PolicyApproval,
 			Sync: syncBlocked, SyncLabel: "Blocked", SyncClass: "state-failed", File: "web.nomad.hcl", Observed: tv,
-			PreHook: &hookView{JobID: "a", Timeout: "5m0s"}, PostHook: &hookView{JobID: "b", Timeout: "5m0s"},
+			PreHooks: []hookView{{JobID: "a", Timeout: "5m0s"}}, PostHooks: []hookView{{JobID: "b", Timeout: "5m0s"}},
 			Blocked: true, BlockedReason: "why", BlockedBy: "d1", RetryPath: "/jobs/default/web/retry",
 			Drift: true, Diff: diff, Summary: summary,
 			Issues:      []meta.Issue{{Severity: meta.SeverityError, Key: "k", Message: "m"}, {Severity: meta.SeverityWarn, Key: "k2", Message: "m2"}},

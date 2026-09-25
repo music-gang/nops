@@ -160,9 +160,8 @@ it, so use a topic nobody can guess, or your own server with a token.
 | `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). |
 | `-log-level` | `NOPS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 
-The timeout of a hook is not here: it is set per job with
-`nops_pre_hook_timeout` / `nops_post_hook_timeout` (see
-[meta keys](meta-keys.md)).
+The timeout of a hook is not here: it is set on the hook job, with
+`nops_timeout` (see [meta keys](meta-keys.md)).
 
 ## Running nops as a Nomad job
 

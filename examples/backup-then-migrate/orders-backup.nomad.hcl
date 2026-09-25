@@ -1,21 +1,22 @@
-# Pre-hook: pg_dump backup before deploying "db".
+# First pre-hook of "orders": a dump of the database before it is migrated.
 #
-# In the "db" job:
+# In the "orders" job:
 #   meta {
-#     nops_managed  = "true"
-#     nops_policy   = "approval"
-#     nops_pre_hook = "db-backup"
+#     nops_pre_hook = "orders-backup,orders-migrate"
 #   }
 #
-# It runs after approval, so the backup is fresh, and before apply, so a bad
-# migration can be restored from it. pg_dump connects to the running "db"
-# service over the network (found through Nomad's service discovery), not
-# the filesystem, so this hook only needs the volume it writes the dump to,
-# never "db"'s own data volume.
-# The timeout (nops_timeout below) is generous: a large database can take a
-# while to dump.
+# How long a hook may run is decided here, on the hook, with nops_timeout (a
+# large database takes a while to dump), so every job that uses it gets the
+# same limit. The dump goes to a host volume, as in examples/backup-stateful:
+#
+#   client {
+#     host_volume "db_backup" {
+#       path      = "/opt/nomad/volumes/db_backup"
+#       read_only = false
+#     }
+#   }
 
-job "db-backup" {
+job "orders-backup" {
   datacenters = ["dc1"]
   type        = "batch"
 
@@ -47,8 +48,6 @@ job "db-backup" {
     task "dump" {
       driver = "docker"
 
-      # PGHOST and PGPORT come from Nomad's own service discovery (the "db"
-      # job registers it with provider = "nomad"): pg_dump reads them itself.
       template {
         destination = "local/db.env"
         env         = true

@@ -217,7 +217,7 @@ func (h *harness) request(hookID string, timeout time.Duration) Request {
 
 func (h *harness) hookRun() *store.HookRun {
 	h.t.Helper()
-	run, err := h.store.GetHookRun(context.Background(), h.depID, "pre")
+	run, err := h.store.GetHookRun(context.Background(), h.depID, "pre", 0)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -255,8 +255,8 @@ func TestRunSucceeds(t *testing.T) {
 	}
 	d := h.nomad.dispatches[0]
 	wantMeta := map[string]string{"nops_deployment_id": h.depID, "nops_phase": "pre", "nops_image_api": "reg/api:2"}
-	if d.Parent != "api-migrate" || d.Token != h.depID+":pre" || !reflect.DeepEqual(d.Meta, wantMeta) {
-		t.Errorf("dispatch = %+v, want meta %v and token %s:pre", d, wantMeta, h.depID)
+	if d.Parent != "api-migrate" || d.Token != h.depID+":pre:0" || !reflect.DeepEqual(d.Meta, wantMeta) {
+		t.Errorf("dispatch = %+v, want meta %v and token %s:pre:0", d, wantMeta, h.depID)
 	}
 
 	run := h.hookRun()
@@ -342,7 +342,7 @@ func TestRunTimeoutCountsFromStartedAt(t *testing.T) {
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	ctx := context.Background()
 
-	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", "hook", time.Minute)
+	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", 0, "hook", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestRunTerminalRunTouchesNothing(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			h := newHarness(t)
 			ctx := context.Background()
-			run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", "hook", time.Minute)
+			run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", 0, "hook", time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -403,7 +403,7 @@ func TestRunResumesWithoutDispatching(t *testing.T) {
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
 	ctx := context.Background()
 
-	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", "hook", time.Minute)
+	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", 0, "hook", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestRunResumesWithoutDispatching(t *testing.T) {
 func (h *harness) markDispatchAttempted() *store.HookRun {
 	h.t.Helper()
 	ctx := context.Background()
-	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", "hook", time.Minute)
+	run, _, err := h.store.EnsureHookRun(ctx, h.depID, "pre", 0, "hook", time.Minute)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestRunRecoveryErrorIsRetryable(t *testing.T) {
 func TestRunExpiredBeforeDispatch(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
-	if _, _, err := h.store.EnsureHookRun(context.Background(), h.depID, "pre", "hook", time.Minute); err != nil {
+	if _, _, err := h.store.EnsureHookRun(context.Background(), h.depID, "pre", 0, "hook", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.advance(2 * time.Minute)
@@ -856,5 +856,46 @@ func TestSleep(t *testing.T) {
 	cancel()
 	if err := sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled sleep: %v", err)
+	}
+}
+
+// Two hooks of one phase are two runs: each is dispatched on its own, with a
+// token of its own, and a run that already finished is answered from the store
+// without going to Nomad.
+func TestRunsAtDifferentPositionsAreIndependent(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("backup", []string{"nops_deployment_id"}, []string{"nops_phase"})
+	h.addHook("migrate", []string{"nops_deployment_id"}, []string{"nops_phase"})
+	h.onPoll = func(int) {
+		for _, id := range []string{"backup/dispatch-1", "migrate/dispatch-2"} {
+			if _, ok := h.nomad.jobs[id]; ok {
+				h.nomad.finish(id, "complete", "")
+			}
+		}
+	}
+
+	first := h.request("backup", time.Minute)
+	second := h.request("migrate", time.Minute)
+	second.Position = 1
+	if res := mustRun(t, h.runner, first); res.State != store.HookSucceeded {
+		t.Fatalf("first = %+v", res)
+	}
+	if res := mustRun(t, h.runner, second); res.State != store.HookSucceeded {
+		t.Fatalf("second = %+v", res)
+	}
+	if len(h.nomad.dispatches) != 2 || h.nomad.dispatches[0].Token != h.depID+":pre:0" || h.nomad.dispatches[1].Token != h.depID+":pre:1" {
+		t.Fatalf("dispatches = %+v, want one per position with its own token", h.nomad.dispatches)
+	}
+
+	// Asking again for either returns what is stored, dispatching nothing.
+	before := len(h.nomad.dispatches)
+	if res := mustRun(t, h.runner, first); res.State != store.HookSucceeded || res.DispatchedJobID != "backup/dispatch-1" {
+		t.Errorf("first again = %+v", res)
+	}
+	if res := mustRun(t, h.runner, second); res.State != store.HookSucceeded || res.DispatchedJobID != "migrate/dispatch-2" {
+		t.Errorf("second again = %+v", res)
+	}
+	if len(h.nomad.dispatches) != before {
+		t.Errorf("a finished run was dispatched again: %+v", h.nomad.dispatches)
 	}
 }

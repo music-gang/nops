@@ -84,31 +84,35 @@ restart: the next cycle, seconds later, recomputes it, and a table would need
 its own row lifecycle — created, updated, expired — for a value that is
 always a function of the current git head and the current live job).
 
-### A hook declared but missing from the repo fails at detection
+### A hook declared but missing, or invalid, fails at detection
 
-If `nops_pre_hook` or `nops_post_hook` names a job ID that is not a hook file
-in the current snapshot, the deployment is created (freezing the hooks that do
+If `nops_pre_hook` or `nops_post_hook` names (any of the jobs in its list) a job
+ID that is not a hook file in the current snapshot, or whose meta has an error
+(an invalid `nops_timeout`, say), the deployment is created (freezing the hooks that do
 exist) and immediately moved `detected → failed`, with a notification, rather
 than waiting for approval first. Asking a human to approve a deployment that is guaranteed to fail at
 the hook step serves nobody; the fix (add the hook file, or fix its meta) is
 the same either way. This is in addition to, not instead of, the runtime
 check `hooks.Runner` already does at dispatch time (the revision must be
 registered, a hook, of type `batch` and parameterized), which stays: a hook can
-be valid HCL and still not be a valid hook. The missing hook is part of the
-deployment's `spec_hash` (as an absence), so the file appearing changes it and
-unblocks the job by itself.
+be valid HCL and still not be a valid hook. The message names the first such hook (`pre-hook "x" not found in repo` or
+`has invalid meta`). It is part of the deployment's `spec_hash` (as an absence),
+so the file appearing, or its meta being fixed, changes it and unblocks the job
+by itself.
 
 ### Hook revisions
 
 `spec_hash` must cover what runs, and what runs includes the hooks. For every
-hook a managed job declares and that is in the snapshot, detection computes the
+hook a managed job declares (a comma-separated list per phase, each at its
+position) and that is in the snapshot with valid meta, detection computes the
 hash of the hook's spec (`specHash`, the same function as for the target, on the
 job as parsed from git) and freezes, in `deployment_hooks`, next to the
 deployment (same transaction, invariant 7): the hook ID, the hash, the spec and
 the **revision** `<hook-id>-<first 8 hex of the hash>`. The deployment's
 `spec_hash` is then the SHA-256 of the target's hash followed by one line
-`phase:hook-id:hash` per declared hook, pre before post, with `missing` in place
-of the hash of a hook that is not in the snapshot; with no hooks declared it is the target's own hash,
+`phase:hook-id:hash` per declared hook, pre before post and in the order listed, with `missing` (or
+`invalid`, for a hook whose meta has an error) in place of the hash of a hook
+that cannot be used; with no hooks declared it is the target's own hash,
 so a job without hooks does not change. Everything that compares `spec_hash`
 (revalidation, the retry rule and the anti-loop rule) therefore also compares
 the hooks, with three consequences that are the point of it:

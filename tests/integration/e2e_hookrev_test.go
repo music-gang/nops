@@ -93,7 +93,7 @@ func TestE2EHookRevisionLifecycle(t *testing.T) {
 	if rev.Name == nil || *rev.Name != hookID {
 		t.Errorf("revision name = %v, want the hook's own %q", rev.Name, hookID)
 	}
-	run, err := e.st.GetHookRun(context.Background(), d.ID, "pre")
+	run, err := e.st.GetHookRun(context.Background(), d.ID, "pre", 0)
 	if err != nil || run.HookJobID != revision || !strings.HasPrefix(run.DispatchedJobID, revision+"/dispatch-") {
 		t.Fatalf("hook run = %+v, err %v; want it dispatched from the revision", run, err)
 	}

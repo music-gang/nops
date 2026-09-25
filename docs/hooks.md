@@ -6,9 +6,31 @@ new version is healthy. If a hook fails or times out, the deployment goes to
 `failed` with a notification; if it is a pre-hook, the live job is left
 untouched.
 
-Hooks are declared on the job being deployed with `nops_pre_hook`,
-`nops_post_hook` and the related `_timeout` keys (see
-[meta-keys](meta-keys.md)).
+Hooks are declared on the job being deployed with `nops_pre_hook` and
+`nops_post_hook`, each one hook or a comma-separated list (see
+[meta-keys](meta-keys.md)); how long a hook may run is `nops_timeout` on the
+hook job itself.
+
+## Several hooks
+
+A phase with several hooks (`nops_pre_hook = "backup,migrate"`) runs them **in
+the order listed, one after the other**, never in parallel: a backup must have
+finished before the migration starts. The next hook is dispatched only once the
+previous one has succeeded. **The first one to fail or time out stops the
+phase**:
+
+- a failing pre-hook fails the deployment with the live job untouched, and the
+  hooks after it are neither registered nor dispatched;
+- a failing post-hook fails the deployment with the apply already live, and the
+  ones after it do not run.
+
+The message names the hook that failed. Each hook is its own run (a row per
+phase and position in `hook_runs`), with its own [revision](#hook-revisions),
+its own timeout and its own idempotency token, so after a nops crash the
+deployment resumes at the first hook that had not finished: the ones that
+succeeded are not run again. The same hook cannot be listed twice in one phase.
+A hook that is in the repo but has invalid meta counts as unusable, like one
+that is missing: the deployment fails at detection.
 
 ## Contract
 
@@ -107,13 +129,15 @@ message naming the key.
   "migrate" must be a no-op if already applied, or use `nops_deployment_id` as
   a key. Two deployments can run the same hook at the same time (each one its
   own revision, or the same revision): it must tolerate that too.
-- **Timeout.** It is handled by nops, not by the job. It counts from the moment
+- **Timeout.** Set with `nops_timeout` in the hook job's meta (default `5m`).
+  It is enforced by nops, not by the job's own settings, and frozen with the
+  hook revision, so it is approved with the rest. It counts from the moment
   the run was first recorded (`started_at`), so a nops restart does not give
   the hook more time. The store keeps whole seconds, so a sub-second part of
   the timeout is rounded up (`1500ms` → `2s`), never down. On expiry nops stops the dispatched job (without purging
   it, so it stays visible in Nomad) and moves the hook to `timed_out`. If the
   hook has a timeout of its own (for example `image_pull_timeout`), keep it ≥
-  `nops_*_hook_timeout`. A hook that finishes in the same poll in which the
+  `nops_timeout`. A hook that finishes in the same poll in which the
   timeout expires counts as finished.
 
 ## Placement
@@ -125,7 +149,9 @@ without hardcoding a node ID.
 
 ## Dispatch idempotency
 
-nops dispatches with idempotency token `<deployment_id>:<phase>`. Verified on
+nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
+(position from 0 within the phase; a run created before positions existed keeps
+`<deployment_id>:<phase>`). Verified on
 Nomad 2.0.3: the same token returns the same dispatched job without a new
 evaluation, even after the dispatched job has finished. The token lives as long as the
 dispatched job; for recovery see
@@ -155,6 +181,7 @@ nothing but Nomad (see below).
 | Post-deploy smoke test | [`examples/approval/`](../examples/approval/) | HTTP check on the service that was just updated. |
 | Pre-pull of a heavy image on a host volume | [`examples/prepull-hostvolume/`](../examples/prepull-hostvolume/) | See below. |
 | Backup before a stateful deploy | [`examples/backup-stateful/`](../examples/backup-stateful/) | A `pre` hook that dumps the volume (`pg_dump` to a separate backup volume) with a generous timeout. It runs after approval, so the backup is fresh. |
+| Backup, then migrate | [`examples/backup-then-migrate/`](../examples/backup-then-migrate/) | Two `pre` hooks in a row: the dump (30m) and then the migration (5m), each with its own `nops_timeout`. If the dump fails, the migration never runs. |
 
 ### Pre-pull on a host volume
 

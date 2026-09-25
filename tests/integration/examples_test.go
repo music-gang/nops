@@ -70,15 +70,12 @@ func TestExamplesParse(t *testing.T) {
 			}
 
 			for id, cfg := range cfgs {
-				for _, h := range []*meta.Hook{cfg.PreHook, cfg.PostHook} {
-					if h == nil {
-						continue
-					}
-					target, ok := cfgs[h.JobID]
+				for _, hookID := range append(append([]string(nil), cfg.PreHooks...), cfg.PostHooks...) {
+					target, ok := cfgs[hookID]
 					if !ok {
-						t.Errorf("job %s declares hook %q, which is not in %s", id, h.JobID, dir)
+						t.Errorf("job %s declares hook %q, which is not in %s", id, hookID, dir)
 					} else if !target.IsHook {
-						t.Errorf("job %s declares %q as a hook, but it has no nops_role = \"hook\"", id, h.JobID)
+						t.Errorf("job %s declares %q as a hook, but it has no nops_role = \"hook\"", id, hookID)
 					}
 				}
 			}

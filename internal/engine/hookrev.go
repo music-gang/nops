@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/nomad/api"
 
@@ -32,51 +33,83 @@ func revisionID(hookID, hash string) string { return hookID + "-" + hash[:8] }
 // freezeHooks builds the hooks a job's deployment freezes, from the hook jobs
 // of the snapshot, and the hash that identifies the deployment: the target's
 // spec hash combined with the hooks it runs, so a change to a hook is a
-// change to what was approved. A declared hook that is not in the snapshot
-// contributes to the hash with no spec, so adding the file changes it too, and
-// is named in missing (`pre-hook "id"`), the first one found.
+// change to what was approved. Each hook of a phase is frozen at its position,
+// in the order they are declared. A declared hook that is not in the snapshot,
+// or whose meta is invalid, contributes to the hash with no spec, so fixing it
+// changes the hash too, and is named in problem (`pre-hook "id" not found in
+// repo`), the first one found.
 //
 // With no hooks the hash is the target's own.
-func freezeHooks(cfg meta.Config, hooks map[string]parsedFile, targetHash string) (frozen []store.DeploymentHook, hash, missing string, err error) {
-	declared := []struct {
-		phase string
-		hook  *meta.Hook
-	}{{"pre", cfg.PreHook}, {"post", cfg.PostHook}}
-
+func freezeHooks(cfg meta.Config, hooks map[string]parsedFile, targetHash string) (frozen []store.DeploymentHook, hash, problem string, err error) {
 	var b strings.Builder
 	b.WriteString(targetHash)
 	any := false
-	for _, dh := range declared {
-		if dh.hook == nil {
-			continue
-		}
-		any = true
-		hf, ok := hooks[dh.hook.JobID]
-		if !ok {
-			if missing == "" {
-				missing = fmt.Sprintf("%s-hook %q", dh.phase, dh.hook.JobID)
+	for _, ph := range []struct {
+		phase string
+		ids   []string
+	}{{"pre", cfg.PreHooks}, {"post", cfg.PostHooks}} {
+		for pos, id := range ph.ids {
+			any = true
+			hf, ok := hooks[id]
+			if !ok || hf.cfg.HasErrors() {
+				if problem == "" {
+					problem = fmt.Sprintf("%s-hook %q not found in repo", ph.phase, id)
+					if ok {
+						problem = fmt.Sprintf("%s-hook %q has invalid meta", ph.phase, id)
+					}
+				}
+				state := "missing"
+				if ok {
+					state = "invalid"
+				}
+				fmt.Fprintf(&b, "\n%s:%s:%s", ph.phase, id, state)
+				continue
 			}
-			fmt.Fprintf(&b, "\n%s:%s:missing", dh.phase, dh.hook.JobID)
-			continue
+			specHash, err := specHash(hf.job)
+			if err != nil {
+				return nil, "", "", fmt.Errorf("hash hook %s: %w", id, err)
+			}
+			spec, err := json.Marshal(hf.job)
+			if err != nil {
+				return nil, "", "", fmt.Errorf("marshal hook %s: %w", id, err)
+			}
+			frozen = append(frozen, store.DeploymentHook{
+				Phase: ph.phase, Position: pos, HookID: id, Revision: revisionID(id, specHash),
+				SpecHash: specHash, JobSpec: string(spec),
+			})
+			fmt.Fprintf(&b, "\n%s:%s:%s", ph.phase, id, specHash)
 		}
-		specHash, err := specHash(hf.job)
-		if err != nil {
-			return nil, "", "", fmt.Errorf("hash hook %s: %w", dh.hook.JobID, err)
-		}
-		spec, err := json.Marshal(hf.job)
-		if err != nil {
-			return nil, "", "", fmt.Errorf("marshal hook %s: %w", dh.hook.JobID, err)
-		}
-		frozen = append(frozen, store.DeploymentHook{
-			Phase: dh.phase, HookID: dh.hook.JobID, Revision: revisionID(dh.hook.JobID, specHash),
-			SpecHash: specHash, JobSpec: string(spec),
-		})
-		fmt.Fprintf(&b, "\n%s:%s:%s", dh.phase, dh.hook.JobID, specHash)
 	}
 	if !any {
 		return nil, targetHash, "", nil
 	}
-	return frozen, hashOf(b.String()), missing, nil
+	return frozen, hashOf(b.String()), problem, nil
+}
+
+// frozenTimeout is how long a frozen hook may run: the nops_timeout of the
+// hook job as it was frozen.
+func frozenTimeout(h store.DeploymentHook) time.Duration {
+	var job api.Job
+	if err := json.Unmarshal([]byte(h.JobSpec), &job); err == nil {
+		if t := meta.Parse(job.Meta).Timeout; t > 0 {
+			return t
+		}
+	}
+	return meta.DefaultHookTimeout
+}
+
+// hookRefs names the hooks a job declares, with the timeout each one has in
+// the repository now, for the dashboard.
+func hookRefs(ids []string, hooks map[string]parsedFile) []HookRef {
+	var out []HookRef
+	for _, id := range ids {
+		ref := HookRef{JobID: id}
+		if hf, ok := hooks[id]; ok && !hf.cfg.HasErrors() {
+			ref.Timeout = hf.cfg.Timeout
+		}
+		out = append(out, ref)
+	}
+	return out
 }
 
 // revisionJob is the job to register for a frozen hook: its spec with the ID
