@@ -263,7 +263,9 @@ func (e *Engine) stepApplying(ctx context.Context, log *slog.Logger, d *store.De
 
 // stepRegister performs (or recovers) the CAS register of a deployment
 // entering applying, following invariant 1 (a fresh plan right before) and
-// invariant 2 (CAS on the saved cas_index).
+// invariant 2 (CAS on the saved cas_index). A Nomad error before the register
+// has gone through is retried next cycle, bounded by ApplyTimeout like the wait
+// for health (see registerRetry).
 func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.Deployment) {
 	job, err := parseJobSpec(d)
 	if err != nil {
@@ -277,6 +279,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 	case errors.Is(err, nomadx.ErrJobNotFound):
 	case err != nil:
 		log.ErrorContext(ctx, "get live job", "error", err)
+		e.registerRetry(ctx, log, d, err)
 		return
 	default:
 		liveIndex = derefUint64(live.JobModifyIndex)
@@ -287,6 +290,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		plan, err := e.nomad.Plan(ctx, job)
 		if err != nil {
 			log.ErrorContext(ctx, "plan job", "error", err)
+			e.registerRetry(ctx, log, d, err)
 			return
 		}
 		if plan.Diff == nil || plan.Diff.Type == "None" {
@@ -300,6 +304,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 				return
 			}
 			log.ErrorContext(ctx, "register", "error", err)
+			e.registerRetry(ctx, log, d, err)
 			return
 		}
 		evalID = res.EvalID
@@ -311,6 +316,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		plan, err := e.nomad.Plan(ctx, job)
 		if err != nil {
 			log.ErrorContext(ctx, "plan job", "error", err)
+			e.registerRetry(ctx, log, d, err)
 			return
 		}
 		if plan.Diff != nil && plan.Diff.Type != "None" {
@@ -331,6 +337,25 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		return
 	}
 	log.InfoContext(ctx, "apply registered", "applied_index", appliedIndex)
+}
+
+// registerRetry follows a Nomad error that stopped the register step before it
+// went through: the deployment stays applying for the next cycle to try again,
+// unless it has been applying for ApplyTimeout already. Some errors never heal
+// by themselves (a namespace that is gone from Nomad, a token without
+// submit-job, a spec Nomad refuses), and a deployment left applying would hold
+// the job's only active slot (invariant 6) for good. The clock is the same as
+// stepHealth's: the "-> applying" event, which a restart does not move.
+func (e *Engine) registerRetry(ctx context.Context, log *slog.Logger, d *store.Deployment, cause error) {
+	since, err := e.store.AppliedSince(ctx, d.ID)
+	if err != nil {
+		log.ErrorContext(ctx, "read applied timestamp", "error", err)
+		return
+	}
+	if e.now().After(since.Add(e.applyTimeout)) {
+		e.applyTransition(ctx, log, d, store.StateFailed,
+			fmt.Sprintf("could not register within %s: %v", e.applyTimeout, cause))
+	}
 }
 
 // stepHealth waits for the applied job version to become healthy, bounded by

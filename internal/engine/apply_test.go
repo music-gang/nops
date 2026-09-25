@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -457,6 +458,75 @@ func TestStepRegisterRealConflictFails(t *testing.T) {
 
 	got := h.get(d.ID)
 	if got.State != store.StateFailed {
+		t.Fatalf("state = %s, want failed", got.State)
+	}
+}
+
+// A Nomad error before the register goes through is retried until ApplyTimeout
+// from the "-> applying" event, then fails the deployment: a namespace gone from
+// Nomad, or a refused spec, would otherwise hold the job's active slot forever.
+func TestStepRegisterNomadErrorRetriesThenFailsAtApplyTimeout(t *testing.T) {
+	errNS := errors.New(`plan job web: Unexpected response code: 500 (job "web" is in nonexistent namespace "test")`)
+	tests := []struct {
+		name  string
+		setup func(h *harness)
+	}{
+		{"get live job", func(h *harness) { h.nomad.jobErr["web"] = errNS }},
+		{"plan at the saved index", func(h *harness) { h.nomad.planErr["web"] = errNS }},
+		{"register", func(h *harness) {
+			h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+			h.nomad.registerErr["web"] = errNS
+		}},
+		{"plan after the live index moved", func(h *harness) {
+			live := managed("web", "auto", nil)
+			idx := uint64(7)
+			live.JobModifyIndex = &idx
+			h.nomad.setLive(live)
+			h.nomad.planErr["web"] = errNS
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.engine.applyTimeout = time.Minute
+			d := h.createApplying("web", managed("web", "auto", nil), 0)
+			tc.setup(h)
+
+			h.clock.Advance(30 * time.Second)
+			h.step(d)
+			if got := h.get(d.ID); got.State != store.StateApplying {
+				t.Fatalf("before the timeout: state = %s, want applying (retried)", got.State)
+			}
+			if len(h.nomad.registerCalls) != 0 {
+				t.Errorf("nothing must be registered: %+v", h.nomad.registerCalls)
+			}
+
+			h.clock.Advance(31 * time.Second)
+			h.step(d)
+			got := h.get(d.ID)
+			if got.State != store.StateFailed {
+				t.Fatalf("after the timeout: state = %s, want failed", got.State)
+			}
+			if !strings.Contains(got.Error, "could not register within 1m0s") || !strings.Contains(got.Error, "nonexistent namespace") {
+				t.Errorf("error = %q, want the timeout and the Nomad error", got.Error)
+			}
+			h.notifier.waitFor(t, 1)
+		})
+	}
+}
+
+// A restart does not extend the bound: it counts from the stored event.
+func TestStepRegisterTimeoutSurvivesRestart(t *testing.T) {
+	h := newHarness(t)
+	h.engine.applyTimeout = time.Minute
+	d := h.createApplying("web", managed("web", "auto", nil), 0)
+	h.nomad.planErr["web"] = errors.New("nomad is unreachable")
+
+	h.clock.Advance(2 * time.Minute)
+	h.restart(h.hooks)
+	h.step(d)
+
+	if got := h.get(d.ID); got.State != store.StateFailed {
 		t.Fatalf("state = %s, want failed", got.State)
 	}
 }
