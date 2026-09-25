@@ -13,11 +13,55 @@ Hooks are declared on the job being deployed with `nops_pre_hook`,
 ## Contract
 
 A hook is a **`batch` + `parameterized`** job in the repo, with
-`meta { nops_role = "hook" }`. It is inert until dispatched, so nops registers
-or updates it on its own (with plan + CAS) before dispatching, regardless of
-the policy. Before dispatching, nops checks the job in Nomad: if it is missing,
-is not marked `nops_role = "hook"`, is not `batch`, or is not parameterized,
-the hook run is `failed` and nothing is dispatched.
+`meta { nops_role = "hook" }`. It is inert until dispatched, and nops registers
+it in Nomad itself, as a [revision](#hook-revisions), right before dispatching
+it, regardless of the policy. Before dispatching, nops checks the job in Nomad:
+if it is missing, is not marked `nops_role = "hook"`, is not `batch`, or is not
+parameterized, the hook run is `failed` and nothing is dispatched.
+
+You do not register hooks yourself. If you have (a hook under its plain ID),
+nops leaves it alone and never runs it.
+
+## Hook revisions
+
+A deployment runs the hooks **as they were when it was detected**, not as they
+are in git when it gets to run them: approving a deployment covers the target
+and its hooks. At detection nops freezes, for each hook the target declares,
+the hook's spec (as parsed from the same commit as the target) and its hash, and
+the deployment's `spec_hash` is the hash of the target and of the hooks, in
+order. So:
+
+- a hook changed in git supersedes a deployment still waiting for approval,
+  which is detected again and must be approved again;
+- a job blocked because its hook was missing or broken is unblocked by
+  fixing the hook, without a retry (its `spec_hash` changed);
+- a change to a hook alone, with the target already in sync, creates no
+  deployment.
+
+Nothing of a hook is in Nomad until its deployment is approved and gets to the
+hook step. There nops registers the frozen spec as a job named
+**`<hook-id>-<first 8 hex of the hook's spec hash>`** (its `Name` stays the
+hook's own), with a plan first and a CAS on the live index (`0` if it is not
+there), and skips the register when the plan shows no change. That job is the
+**revision**, and it is what is dispatched: the run is `<revision>/dispatch-…`
+and `hook_runs.hook_job_id` holds the revision. Two deployments that share a
+hook at the same spec share the revision; at different specs they use different
+jobs, so neither can change what the other dispatches.
+
+After every detection cycle nops **deregisters, without purging**, the
+revisions no deployment that is still in progress needs. It only considers jobs
+that are hooks (`nops_role = "hook"`), whose ID ends in `-` and 8 lowercase hex
+digits, and that are not dispatched runs. A stopped revision stays visible in
+Nomad, with the runs it dispatched and their logs (Nomad's own garbage
+collection removes it later), and is registered again if a later deployment
+needs it. The **only** consequence for you: **a hook you register by hand under
+an ID that ends in `-` and 8 hex digits, with `nops_role = "hook"`, is stopped
+by nops.** Nomad's job list shows the revisions next to your own jobs; they are
+the price of registering a hook only when it is approved.
+
+If the revision cannot be registered, nops logs an ERROR and tries again at the
+next cycle; if it still cannot within the hook's timeout, the deployment
+fails, as a hook that cannot be reached would.
 
 At dispatch nops passes the meta below, but **only the ones declared** in the
 hook job's `meta_required`/`meta_optional` (Nomad rejects undeclared meta with
@@ -61,7 +105,8 @@ message naming the key.
 - **Idempotency.** A hook may be dispatched again with the same
   `nops_deployment_id` after a nops crash. It must tolerate that: for example
   "migrate" must be a no-op if already applied, or use `nops_deployment_id` as
-  a key.
+  a key. Two deployments can run the same hook at the same time (each one its
+  own revision, or the same revision): it must tolerate that too.
 - **Timeout.** It is handled by nops, not by the job. It counts from the moment
   the run was first recorded (`started_at`), so a nops restart does not give
   the hook more time. The store keeps whole seconds, so a sub-second part of

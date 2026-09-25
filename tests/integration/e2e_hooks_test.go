@@ -138,13 +138,18 @@ func TestE2EPreHookTimeout(t *testing.T) {
 		t.Errorf("job %s was registered (index %d) although its pre-hook timed out", jobID, got)
 	}
 
-	// The dispatched job is stopped but still there to look at, not purged.
-	stubs, _, err := e.raw.Jobs().PrefixList(hookID + "/dispatch-")
+	// The dispatched job is stopped but still there to look at, not purged,
+	// under the revision of the hook the deployment froze.
+	frozen, err := e.st.DeploymentHooks(context.Background(), d.ID)
+	if err != nil || len(frozen) != 1 {
+		t.Fatalf("frozen hooks = %+v, err %v", frozen, err)
+	}
+	stubs, _, err := e.raw.Jobs().PrefixList(frozen[0].Revision + "/dispatch-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(stubs) != 1 {
-		t.Fatalf("%d dispatched jobs for %s, want 1", len(stubs), hookID)
+		t.Fatalf("%d dispatched jobs for %s, want 1", len(stubs), frozen[0].Revision)
 	}
 	child, _, err := e.raw.Jobs().Info(stubs[0].ID, nil)
 	if err != nil {

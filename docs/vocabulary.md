@@ -18,7 +18,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **deployment** | One attempt to bring a job to a given spec, a row in SQLite with a state machine. | The rolling-update tracker Nomad creates after a register. | Bare "deployment" is always the nops one. Write **Nomad deployment** for the other. |
 | **job** | A Nomad job, seen through nops. | The same. | Qualify it when it matters: **live job**, **target job**, **hook job**, **dispatched job**. |
 | **evaluation**, **allocation** | Not used as nops concepts. | Scheduler terms. | Only in code that talks to Nomad (`nomadx`, outcome detection). |
-| **stop** | Deregistering a dispatched hook job without purge (`StopJob`). | Same operation, `DELETE /v1/job/<id>`. | nops stops only dispatched jobs of hooks that timed out. It never deregisters anything else. |
+| **stop** | Deregistering a dispatched hook job without purge (`StopJob`). | Same operation, `DELETE /v1/job/<id>`. | nops stops a dispatched job of a hook that timed out, and the hook revisions no deployment needs. It never deregisters anything else. |
 
 ## Jobs and specs
 
@@ -26,7 +26,7 @@ Some words exist in both worlds and mean different things. Say which one.
 |---|---|
 | **live job** | The job as it is in Nomad right now. |
 | **spec** | The HCL of a job as parsed by Nomad. The **target spec** is the one in the repo that a deployment wants to reach. |
-| **spec hash** | Hash of the target spec (`spec_hash`). An approval is valid for one `(deployment_id, spec_hash)`. |
+| **spec hash** | Hash that identifies what a deployment will do (`spec_hash`): the target spec combined with the frozen hooks, in order (the target's own when it has none). An approval is valid for one `(deployment_id, spec_hash)`. |
 | **target job** | The job a deployment is about (the hook receives it as `nops_job_id`). |
 | **managed job** | A target job with `nops_managed = "true"`, eligible for deployment detection. A target job without it is ignored by detection; hook jobs are separate and use `nops_role = "hook"`. |
 | **meta key** | A `nops_*` key in a job's `meta` block: the [only syntax](meta-keys.md) nops reads. |
@@ -75,7 +75,8 @@ Some words exist in both worlds and mean different things. Say which one.
 | **hook** | The concept: a job nops runs before (`pre`) or after (`post`) an apply. |
 | **phase** | `pre` or `post`. It is the value of `nops_phase`. The deployment *states* around it are `pre_hook` and `post_hook`. |
 | **hook job** | The `batch` + `parameterized` job in the repo, marked `nops_role = "hook"`. Inert until dispatched. Also called the parent in Nomad's API. |
-| **hook sync** | nops registering or updating the hook job (plan + CAS) before dispatching it. |
+| **hook revision** | A hook job at one exact spec, registered in Nomad as `<hook-id>-<first 8 hex of its spec hash>` right before it is dispatched, from the spec the deployment froze. The unit that is dispatched, and the one [garbage collected](hooks.md#hook-revisions) when no deployment in progress needs it. |
+| **frozen hook** | A hook as a deployment saw it when it was detected: ID, spec, hash and revision (`deployment_hooks`). Approving covers it. |
 | **dispatch** | Asking Nomad to start a run of the hook job (`Jobs.Dispatch`). |
 | **dispatched job** | The job Nomad creates from a dispatch (`<hook job>/dispatch-<id>`), stored as `dispatched_job_id`. Nomad's API calls it a child (`ParentID`); code may say `child` for the parent/child link, docs say *dispatched job*. |
 | **dispatch meta** | The `nops_*` values passed at dispatch: `nops_deployment_id`, `nops_job_id`, `nops_commit`, `nops_phase`, `nops_image_<task>`. Only the ones the hook declares. |

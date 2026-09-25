@@ -135,8 +135,13 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 }
 
 // stepHook runs the deployment's hook for phase ("pre" or "post") and moves
-// it on once the hook reaches a terminal state. An error from Hooks.Run
-// (Nomad or SQLite) is left for the next cycle to retry.
+// it on once the hook reaches a terminal state. The hook is the one the
+// deployment froze at detection: its revision is registered here, right
+// before dispatch, from that spec (nothing of it is in Nomad before the
+// deployment is approved, and what runs is what was approved). An error from
+// registering it or from Hooks.Run (Nomad or SQLite) is left for the next
+// cycle to retry, and a registration that keeps failing for the hook's
+// timeout fails the deployment, as an unreachable hook would.
 func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deployment, phase string) {
 	job, err := parseJobSpec(d)
 	if err != nil {
@@ -144,22 +149,47 @@ func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deploy
 		return
 	}
 	cfg := meta.Parse(job.Meta)
-	h := cfg.PreHook
-	if phase == "post" {
-		h = cfg.PostHook
+	timeout := meta.DefaultHookTimeout
+	if h := cfg.PreHook; phase == "pre" && h != nil {
+		timeout = h.Timeout
+	} else if h := cfg.PostHook; phase == "post" && h != nil {
+		timeout = h.Timeout
 	}
-	if h == nil {
-		// stepDetected/stepApplying only route here when the phase is
-		// declared: reaching this with no hook is a bug, not a runtime
-		// condition, so it is logged and left for investigation rather than
-		// guessed at.
-		log.ErrorContext(ctx, "hook step: no hook declared for this phase", "phase", phase)
+
+	frozen, err := e.store.DeploymentHooks(ctx, d.ID)
+	if err != nil {
+		log.ErrorContext(ctx, "read frozen hooks", "phase", phase, "error", err)
+		return
+	}
+	var hook *store.DeploymentHook
+	for i := range frozen {
+		if frozen[i].Phase == phase {
+			hook = &frozen[i]
+			break
+		}
+	}
+	if hook == nil {
+		// Detection freezes every hook a deployment declares and only routes
+		// here for one that does: no row means a deployment made before hooks
+		// were frozen. Nothing to run and nothing to wait for: fail it, and
+		// the job's next deployment starts from a clean state.
+		e.applyTransition(ctx, log, d, store.StateFailed,
+			fmt.Sprintf("%s-hook: the deployment has no frozen hook (created by an older nops): push a new commit or retry it", phase))
+		return
+	}
+
+	if err := e.registerRevision(ctx, log, *hook); err != nil {
+		log.ErrorContext(ctx, "register hook revision", "phase", phase, "hook", hook.HookID, "revision", hook.Revision, "error", err)
+		if e.now().Sub(d.UpdatedAt) >= timeout {
+			e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase,
+				fmt.Sprintf("could not register hook %q within %s: %v", hook.HookID, timeout, err)))
+		}
 		return
 	}
 
 	res, err := e.hooks.Run(ctx, hooks.Request{
-		DeploymentID: d.ID, Phase: phase, HookJobID: h.JobID,
-		Commit: d.CommitSHA, Timeout: h.Timeout, Target: job,
+		DeploymentID: d.ID, Phase: phase, HookJobID: hook.Revision,
+		Commit: d.CommitSHA, Timeout: timeout, Target: job,
 	})
 	if err != nil {
 		log.ErrorContext(ctx, "run hook", "phase", phase, "error", err)
@@ -173,16 +203,21 @@ func (e *Engine) stepHook(ctx context.Context, log *slog.Logger, d *store.Deploy
 		}
 		e.applyTransition(ctx, log, d, next, "")
 	case store.HookFailed, store.HookTimedOut:
-		reason := fmt.Sprintf("%s-hook %s: %s", phase, res.State, res.Error)
-		if phase == "pre" {
-			reason += " (live job left untouched)"
-		} else {
-			reason += " (apply already live, not undone)"
-		}
-		e.applyTransition(ctx, log, d, store.StateFailed, reason)
+		e.applyTransition(ctx, log, d, store.StateFailed, hookFailure(phase, fmt.Sprintf("%s: %s", res.State, res.Error)))
 	}
 	// running/dispatching: Run only returns once terminal or on error, so
 	// this case does not occur; nothing to do either way.
+}
+
+// hookFailure words why a deployment failed in a hook phase, and what that
+// leaves behind: a pre-hook has not touched the job, a post-hook runs after it
+// is live.
+func hookFailure(phase, what string) string {
+	reason := fmt.Sprintf("%s-hook %s", phase, what)
+	if phase == "pre" {
+		return reason + " (live job left untouched)"
+	}
+	return reason + " (apply already live, not undone)"
 }
 
 func (e *Engine) stepApplying(ctx context.Context, log *slog.Logger, d *store.Deployment) {

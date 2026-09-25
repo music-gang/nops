@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/nomad/api"
@@ -142,10 +143,13 @@ type hookRunView struct {
 
 // planStep is one thing Approve sets in motion, in order.
 type planStep struct {
-	Kind    string // "pre", "register", "health" or "post"
-	Job     string // the hook's job ID, for "pre" and "post"
-	Timeout string
-	Text    string // for "register"
+	Kind string // "pre", "register", "health" or "post"
+	Job  string // the hook's job ID, for "pre" and "post"
+	// Revision is the first 8 hex of the hook's spec hash: which version of the
+	// hook runs.
+	Revision string
+	Timeout  string
+	Text     string // for "register"
 }
 
 // blockingView says a deployment is what holds its job's drift back, and how
@@ -169,27 +173,39 @@ type deploymentDetailData struct {
 	OOB        bool   // the status fragment: the side column swaps out of band
 }
 
-// planSteps reads what approving d will run from the spec nops stored for it:
-// the hooks its meta declares, keys and job IDs only. The spec itself is never
+// planSteps reads what approving d will run: the hooks it froze at detection
+// (which one, and at which revision) with the timeouts its spec declares, and
+// the register and health steps between them. The spec itself is never
 // rendered.
-func planSteps(d *store.Deployment) ([]planStep, error) {
+func planSteps(d *store.Deployment, hooks []store.DeploymentHook) ([]planStep, error) {
 	var job api.Job
 	if err := json.Unmarshal([]byte(d.JobSpec), &job); err != nil {
 		return nil, fmt.Errorf("read the spec of deployment %s: %w", d.ID, err)
 	}
 	cfg := meta.Parse(job.Meta)
 
+	hookStep := func(kind string, h store.DeploymentHook, declared *meta.Hook) planStep {
+		st := planStep{Kind: kind, Job: h.HookID, Revision: strings.TrimPrefix(h.Revision, h.HookID+"-")}
+		if declared != nil {
+			st.Timeout = duration(declared.Timeout)
+		}
+		return st
+	}
 	var steps []planStep
-	if h := cfg.PreHook; h != nil {
-		steps = append(steps, planStep{Kind: "pre", Job: h.JobID, Timeout: duration(h.Timeout)})
+	for _, h := range hooks {
+		if h.Phase == "pre" {
+			steps = append(steps, hookStep("pre", h, cfg.PreHook))
+		}
 	}
 	register := "Create the job in Nomad (it is not registered yet)."
 	if d.CASIndex != 0 {
 		register = fmt.Sprintf("Update the job in Nomad, only if it has not changed since (index %d).", d.CASIndex)
 	}
 	steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
-	if h := cfg.PostHook; h != nil {
-		steps = append(steps, planStep{Kind: "post", Job: h.JobID, Timeout: duration(h.Timeout)})
+	for _, h := range hooks {
+		if h.Phase == "post" {
+			steps = append(steps, hookStep("post", h, cfg.PostHook))
+		}
 	}
 	return steps, nil
 }
@@ -226,7 +242,12 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		}
 	}
 	if data.CanDecide {
-		if data.Steps, err = planSteps(d); err != nil {
+		frozen, err := s.store.DeploymentHooks(r.Context(), id)
+		if err != nil {
+			s.serverError(w, r, "list frozen hooks", err)
+			return deploymentDetailData{}, false
+		}
+		if data.Steps, err = planSteps(d, frozen); err != nil {
 			s.serverError(w, r, "plan steps", err)
 			return deploymentDetailData{}, false
 		}

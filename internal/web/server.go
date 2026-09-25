@@ -42,6 +42,7 @@ type Store interface {
 	LatestPerJob(ctx context.Context) ([]*store.Deployment, error)
 	Events(ctx context.Context, deploymentID string) ([]store.Event, error)
 	GetHookRun(ctx context.Context, deploymentID, phase string) (*store.HookRun, error)
+	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to

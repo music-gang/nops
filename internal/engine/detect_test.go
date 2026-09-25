@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,9 @@ type fakeNomad struct {
 
 	registerErr   map[string]error
 	registerCalls []registerCall
+	stopCalls     []string // job IDs StopJob was called for
+	stopErr       map[string]error
+	listErr       error
 	versions      map[string]uint64 // jobID -> version bumped on every RegisterCAS
 
 	allocs     map[string][]nomadx.Alloc
@@ -98,6 +102,7 @@ func newFakeNomad() *fakeNomad {
 		lastTG:         map[string]map[string]int{},
 		planErr:        map[string]error{},
 		registerErr:    map[string]error{},
+		stopErr:        map[string]error{},
 		versions:       map[string]uint64{},
 		allocs:         map[string][]nomadx.Alloc{},
 		allocsErr:      map[string]error{},
@@ -174,6 +179,17 @@ func (f *fakeNomad) Plan(_ context.Context, j *api.Job) (*api.JobPlanResponse, e
 	}
 	fx, ok := f.plan[id]
 	if !ok {
+		// A hook revision has no fixture: like Nomad, its plan is Added when it
+		// is not registered, Edited when it was stopped, None otherwise.
+		if isRevisionJob(j) {
+			live, exists := f.live[id]
+			switch {
+			case !exists:
+				return &api.JobPlanResponse{Diff: &api.JobDiff{Type: "Added", ID: id}}, nil
+			case live.Stop != nil && *live.Stop:
+				return &api.JobPlanResponse{Diff: &api.JobDiff{Type: "Edited", ID: id}}, nil
+			}
+		}
 		return &api.JobPlanResponse{Diff: &api.JobDiff{Type: "None", ID: id}}, nil
 	}
 	if fx.err != nil {
@@ -189,6 +205,9 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	if err, ok := f.registerErr[id]; ok {
 		return nil, err
 	}
+	if live, ok := f.live[id]; ok && derefUint64(live.JobModifyIndex) != index {
+		return nil, fmt.Errorf("register job %s at index %d: %w: live index is %d", id, index, nomadx.ErrCASConflict, derefUint64(live.JobModifyIndex))
+	}
 	f.registerCalls = append(f.registerCalls, registerCall{id, index, preserve})
 	cp, err := deepCopyJob(j)
 	if err != nil {
@@ -201,6 +220,44 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	cp.Version = &version
 	f.live[id] = cp
 	return &nomadx.RegisterResult{EvalID: "eval-" + id, JobModifyIndex: newIndex}, nil
+}
+
+func (f *fakeNomad) ListJobs(_ context.Context) ([]nomadx.JobStub, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	out := make([]nomadx.JobStub, 0, len(f.live))
+	for id, j := range f.live {
+		stub := nomadx.JobStub{ID: id, Meta: j.Meta, Stop: j.Stop != nil && *j.Stop}
+		if j.ParentID != nil {
+			stub.ParentID = *j.ParentID
+		}
+		out = append(out, stub)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (f *fakeNomad) StopJob(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, ok := f.stopErr[id]; ok {
+		return err
+	}
+	f.stopCalls = append(f.stopCalls, id)
+	if j, ok := f.live[id]; ok {
+		stop := true
+		j.Stop = &stop
+	}
+	return nil
+}
+
+// isRevisionJob is true for a job the way registerRevision makes one: a hook
+// whose ID ends in 8 hex.
+func isRevisionJob(j *api.Job) bool {
+	return j.ID != nil && revisionRe.MatchString(*j.ID) && j.Meta["nops_role"] == "hook"
 }
 
 func (f *fakeNomad) Allocations(_ context.Context, jobID string) ([]nomadx.Alloc, error) {
@@ -653,12 +710,11 @@ func TestMissingHookFailsImmediately(t *testing.T) {
 	}
 }
 
-func TestDeclaredHookIsFoundAndSynced(t *testing.T) {
+func TestDeclaredHookIsFoundAndFrozen(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "auto", map[string]string{"nops_pre_hook": "web-migrate"}))
 	h.nomad.setFile("hook-v1", hookJob("web-migrate"))
 	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
-	h.nomad.setDrift("web-migrate", &api.JobDiff{Type: "Edited", ID: "web-migrate"}) // hook not registered yet
 	h.snap.set("c1",
 		gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"},
 		gitwatch.File{Path: "web-migrate.nomad.hcl", Content: "hook-v1"})
@@ -669,8 +725,14 @@ func TestDeclaredHookIsFoundAndSynced(t *testing.T) {
 	if d.State != store.StateDetected {
 		t.Fatalf("deployment = %+v, want detected (hook found)", d)
 	}
-	if len(h.nomad.registerCalls) != 1 || h.nomad.registerCalls[0].id != "web-migrate" {
-		t.Fatalf("hook sync calls = %+v", h.nomad.registerCalls)
+	frozen, err := h.store.DeploymentHooks(context.Background(), d.ID)
+	if err != nil || len(frozen) != 1 || frozen[0].HookID != "web-migrate" || frozen[0].Revision != revisionOfPlainHook("web-migrate") {
+		t.Fatalf("frozen hooks = %+v, err %v", frozen, err)
+	}
+	// Nothing of the hook is in Nomad before the deployment is approved and
+	// run: it is registered right before it is dispatched.
+	if len(h.nomad.registerCalls) != 0 {
+		t.Fatalf("detection registered %+v, want nothing", h.nomad.registerCalls)
 	}
 }
 

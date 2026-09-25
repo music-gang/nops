@@ -349,6 +349,41 @@ func TestStopJob(t *testing.T) {
 	}
 }
 
+func TestListJobs(t *testing.T) {
+	s, c := newStub(t, 200, `[
+		{"ID":"z-hook-0a1b2c3d","ParentID":"","Status":"running","Stop":false,"Meta":{"nops_role":"hook"}},
+		{"ID":"a-hook-0a1b2c3d/dispatch-1-2dbd0404","ParentID":"a-hook-0a1b2c3d","Status":"dead","Meta":{"nops_role":"hook"}},
+		{"ID":"a-hook-0a1b2c3d","Status":"dead","Stop":true,"Meta":{"nops_role":"hook"}},
+		{"ID":"plain","Status":"running"}]`)
+
+	got, err := c.ListJobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.method != http.MethodGet || s.path != "/v1/jobs" {
+		t.Errorf("request = %s %s", s.method, s.path)
+	}
+	// Nomad leaves the meta out of a listing unless asked.
+	if v := s.query["meta"]; len(v) != 1 || v[0] != "true" {
+		t.Errorf("meta = %v, want true", v)
+	}
+	var ids []string
+	for _, j := range got {
+		ids = append(ids, j.ID)
+	}
+	if want := "a-hook-0a1b2c3d a-hook-0a1b2c3d/dispatch-1-2dbd0404 plain z-hook-0a1b2c3d"; strings.Join(ids, " ") != want {
+		t.Fatalf("ids = %v, want them ordered by ID", ids)
+	}
+	if !got[0].Stop || got[0].Meta["nops_role"] != "hook" || got[1].ParentID != "a-hook-0a1b2c3d" || got[2].Meta != nil || got[3].Stop {
+		t.Errorf("listing = %+v", got)
+	}
+
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.ListJobs(context.Background()); err == nil || !strings.Contains(err.Error(), "list jobs") {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
 func TestParseHCL(t *testing.T) {
 	s, c := newStub(t, 200, `{"ID":"web"}`)
 	job, err := c.ParseHCL(context.Background(), `job "web" {}`, `tag = "1"`)

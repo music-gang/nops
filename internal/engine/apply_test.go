@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/hooks"
+	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
@@ -82,7 +83,7 @@ func (h *harness) createApplying(jobID string, job *api.Job, casIndex uint64) *s
 	specJSON := mustMarshal(h.t, job)
 	d := &store.Deployment{
 		JobID: jobID, Namespace: testNamespace, CommitSHA: "c1", SpecHash: "hash-" + jobID,
-		JobSpec: specJSON, PlanDiff: "", Policy: store.PolicyAuto, CASIndex: casIndex,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), PlanDiff: "", Policy: store.PolicyAuto, CASIndex: casIndex,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		h.t.Fatalf("CreateDeployment: %v", err)
@@ -103,6 +104,41 @@ func mustMarshal(t *testing.T, v any) string {
 	return string(b)
 }
 
+// frozenFromSpec is what detection would freeze for a target spec: one hook
+// per declared phase, each a plain hook job (see freezeHooks). Tests that
+// create a deployment straight in the store use it so the hook steps find
+// their hooks.
+func frozenFromSpec(spec string) []store.DeploymentHook {
+	var job api.Job
+	if err := json.Unmarshal([]byte(spec), &job); err != nil {
+		return nil
+	}
+	cfg := meta.Parse(job.Meta)
+	var out []store.DeploymentHook
+	for _, dh := range []struct {
+		phase string
+		hook  *meta.Hook
+	}{{"pre", cfg.PreHook}, {"post", cfg.PostHook}} {
+		if dh.hook == nil {
+			continue
+		}
+		hj := hookJob(dh.hook.JobID)
+		b, _ := json.Marshal(hj)
+		hash, _ := specHash(hj)
+		out = append(out, store.DeploymentHook{
+			Phase: dh.phase, HookID: dh.hook.JobID, Revision: revisionID(dh.hook.JobID, hash),
+			SpecHash: hash, JobSpec: string(b),
+		})
+	}
+	return out
+}
+
+// revisionOfPlainHook is the revision frozenFromSpec gives the hook id.
+func revisionOfPlainHook(id string) string {
+	hash, _ := specHash(hookJob(id))
+	return revisionID(id, hash)
+}
+
 // errNomadCASConflict builds an error shaped like nomadx.RegisterCAS's own on
 // a CAS conflict, for tests of the fake Nomad's registerErr fixture.
 func errNomadCASConflict() error {
@@ -117,7 +153,7 @@ func TestStepDetectedRoutesToApplyingWithoutPreHook(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -137,7 +173,7 @@ func TestStepDetectedRoutesToPreHookWhenDeclared(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -177,7 +213,7 @@ func TestStepPreHookSucceededMovesToApplying(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -195,7 +231,7 @@ func TestStepPreHookSucceededMovesToApplying(t *testing.T) {
 	if got.State != store.StateApplying {
 		t.Fatalf("state = %s, want applying", got.State)
 	}
-	if len(h.hooks.calls) != 1 || h.hooks.calls[0].HookJobID != "web-migrate" || h.hooks.calls[0].Phase != "pre" {
+	if len(h.hooks.calls) != 1 || h.hooks.calls[0].HookJobID != revisionOfPlainHook("web-migrate") || h.hooks.calls[0].Phase != "pre" {
 		t.Errorf("hook call = %+v", h.hooks.calls)
 	}
 }
@@ -206,7 +242,7 @@ func TestStepPreHookFailedFailsDeploymentAndNotifies(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -224,8 +260,10 @@ func TestStepPreHookFailedFailsDeploymentAndNotifies(t *testing.T) {
 	if got.State != store.StateFailed {
 		t.Fatalf("state = %s, want failed", got.State)
 	}
-	if h.nomad.registerCalls != nil {
-		t.Errorf("a failed pre-hook must never register: %+v", h.nomad.registerCalls)
+	for _, c := range h.nomad.registerCalls {
+		if c.id == "web" {
+			t.Errorf("a failed pre-hook must never register the job: %+v", h.nomad.registerCalls)
+		}
 	}
 	h.notifier.waitFor(t, 1)
 }
@@ -236,7 +274,7 @@ func TestStepPostHookTimedOutFails(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -264,7 +302,7 @@ func TestStepHookErrorRetriesNextCycle(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -545,7 +583,7 @@ func (h *harness) pendingApproval(jobID string, job *api.Job, specHash string) *
 	specJSON := mustMarshal(h.t, job)
 	d := &store.Deployment{
 		JobID: jobID, Namespace: testNamespace, CommitSHA: "c1", SpecHash: specHash,
-		JobSpec: specJSON, Policy: store.PolicyApproval, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyApproval, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		h.t.Fatal(err)
@@ -693,7 +731,7 @@ func TestRunApplyInitialAndTicker(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -716,7 +754,7 @@ func TestApplyTransitionLogsStoreErrorWithoutPanicking(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -734,7 +772,7 @@ func TestApplyStepDropsSilentlyOnDetectionRace(t *testing.T) {
 	specJSON := mustMarshal(t, job)
 	d := &store.Deployment{
 		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
-		JobSpec: specJSON, Policy: store.PolicyAuto, CASIndex: 0,
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto, CASIndex: 0,
 	}
 	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
 		t.Fatal(err)

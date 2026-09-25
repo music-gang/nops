@@ -366,3 +366,114 @@ func TestDispatch(t *testing.T) {
 		t.Error("dispatch of a missing job succeeded")
 	}
 }
+
+// TestListJobsCarriesMetaAndStop is what the hook revision GC relies on: the
+// listing carries each job's meta (Nomad leaves it out unless asked, and gives
+// a dispatched child its parent's), the parent of a child, and whether a job
+// was stopped.
+func TestListJobsCarriesMetaAndStop(t *testing.T) {
+	c, raw := newClient(t)
+	ctx := context.Background()
+	id := uniqueID(t, raw, "list")
+
+	hook, err := c.ParseHCL(ctx, hookHCL(id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, hook, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	child, err := c.Dispatch(ctx, id, map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	find := func() map[string]nomadx.JobStub {
+		stubs, err := c.ListJobs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]nomadx.JobStub{}
+		for i, s := range stubs {
+			out[s.ID] = s
+			if i > 0 && stubs[i-1].ID > s.ID {
+				t.Errorf("listing not ordered by ID: %s before %s", stubs[i-1].ID, s.ID)
+			}
+		}
+		return out
+	}
+
+	got := find()
+	parent, kid := got[id], got[child.JobID]
+	if parent.Meta["nops_role"] != "hook" || parent.ParentID != "" || parent.Stop {
+		t.Errorf("parent = %+v, want the hook's meta, no parent and not stopped", parent)
+	}
+	if kid.ParentID != id || kid.Meta["nops_role"] != "hook" {
+		t.Errorf("child = %+v, want its parent and, like Nomad does, the parent's meta", kid)
+	}
+
+	// Stopped without a purge: still listed, and its dispatched run untouched.
+	if err := c.StopJob(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if after := find(); !after[id].Stop || after[child.JobID].ParentID != id {
+		t.Errorf("after StopJob: parent %+v, child %+v; want the parent listed as stopped and its run still there", after[id], after[child.JobID])
+	}
+	if _, err := c.Job(ctx, child.JobID); err != nil {
+		t.Errorf("the dispatched run is gone after its parent was stopped: %v", err)
+	}
+}
+
+// TestHookRevisionRegistration checks against Nomad the behaviour
+// registerRevision counts on: a job registers under an ID other than its own
+// name, a stopped job shows as a plan difference and is registered again at
+// the index it has (a stopped job still exists, so index 0 is a conflict),
+// and a second identical plan is a no-op.
+func TestHookRevisionRegistration(t *testing.T) {
+	c, raw := newClient(t)
+	ctx := context.Background()
+	hookID := uniqueID(t, raw, "rev")
+	revision := hookID + "-0a1b2c3d"
+
+	hook, err := c.ParseHCL(ctx, hookHCL(hookID), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := *hook
+	job.ID = &revision // Name stays the hook's own
+
+	plan, err := c.Plan(ctx, &job)
+	if err != nil || plan.Diff == nil || plan.Diff.Type != "Added" {
+		t.Fatalf("plan of an unregistered revision = %+v, %v; want Added", plan, err)
+	}
+	if _, err := c.RegisterCAS(ctx, &job, 0, false); err != nil {
+		t.Fatalf("register under another ID than the name: %v", err)
+	}
+	live, err := c.Job(ctx, revision)
+	if err != nil || live.Name == nil || *live.Name != hookID {
+		t.Fatalf("live = %+v, %v; want the revision ID with the hook's name %q", live, err, hookID)
+	}
+	if plan, err := c.Plan(ctx, &job); err != nil || plan.Diff == nil || plan.Diff.Type != "None" {
+		t.Errorf("plan of what is registered = %+v, %v; want None", plan, err)
+	}
+
+	if err := c.StopJob(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	if plan, err := c.Plan(ctx, &job); err != nil || plan.Diff == nil || plan.Diff.Type == "None" {
+		t.Fatalf("plan of a stopped revision = %+v, %v; want a difference (it is not running)", plan, err)
+	}
+	if _, err := c.RegisterCAS(ctx, &job, 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
+		t.Errorf("register of a stopped revision at index 0: %v; want a CAS conflict, the job exists", err)
+	}
+	stopped, err := c.Job(ctx, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, &job, *stopped.JobModifyIndex, false); err != nil {
+		t.Fatalf("register of a stopped revision at its own index: %v", err)
+	}
+	if again, err := c.Job(ctx, revision); err != nil || again.Stop != nil && *again.Stop {
+		t.Errorf("revision after registering again = %+v, %v; want it running", again, err)
+	}
+}

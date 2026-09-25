@@ -25,8 +25,9 @@ type parsedFile struct {
 }
 
 // Detect runs one detection cycle: parse every file of the current gitwatch
-// snapshot, sync hook jobs, and create, supersede or complete deployments for
-// managed jobs. It never applies anything (see engine-apply).
+// snapshot, create, supersede or complete deployments for managed jobs
+// (freezing the hooks each one runs), and deregister the hook revisions no
+// deployment needs any more. It never applies anything (see engine-apply).
 //
 // It returns an error only for a failure that must stop the whole cycle: a
 // store failure (invariant 7: never act on Nomad with unpersisted state) or a
@@ -57,13 +58,12 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	e.replaceParseCache(cache)
 	st.Unparsed = unparsed
 
-	hooks, managed := e.classify(ctx, commit, parsed)
+	hookFiles, managed := e.classify(ctx, commit, parsed)
 	st.Managed = len(managed)
-	e.syncHooks(ctx, commit, hooks)
 
-	hookIDs := make(map[string]bool, len(hooks))
-	for _, h := range hooks {
-		hookIDs[*h.job.ID] = true
+	hooks := make(map[string]parsedFile, len(hookFiles))
+	for _, h := range hookFiles {
+		hooks[*h.job.ID] = h
 	}
 
 	seen := make(map[string]bool, len(managed))
@@ -72,7 +72,7 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		jobID := *mf.job.ID
 		seen[jobID] = true // classified as managed: never "removed from repo" this cycle
 
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hookIDs)
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks)
 		if err != nil {
 			return st, err
 		}
@@ -85,6 +85,9 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	e.replaceObservations(observations)
 
 	if err := e.supersedeRemoved(ctx, seen); err != nil {
+		return st, err
+	}
+	if err := e.gcHookRevisions(ctx); err != nil {
 		return st, err
 	}
 
@@ -201,54 +204,22 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 	log.WarnContext(ctx, "meta key issue", args...)
 }
 
-// syncHooks registers or updates every hook job found in the snapshot, plan
-// then CAS, whatever the policy of the job it serves: it must be inert and
-// ready in Nomad before any deployment can dispatch it. A failure here is an
-// ERROR, retried at the next cycle; it never fails a deployment (the hook
-// runner validates the job again at dispatch, see internal/hooks).
-func (e *Engine) syncHooks(ctx context.Context, commit string, hooks []parsedFile) {
-	for _, hf := range hooks {
-		id := *hf.job.ID
-		log := e.log.With("job", id, "namespace", e.namespace, "commit", commit)
-
-		var index uint64
-		live, err := e.nomad.Job(ctx, id)
-		switch {
-		case errors.Is(err, nomadx.ErrJobNotFound):
-		case err != nil:
-			log.ErrorContext(ctx, "hook sync: get live job", "error", err)
-			continue
-		default:
-			index = derefUint64(live.JobModifyIndex)
-		}
-
-		plan, err := e.nomad.Plan(ctx, hf.job)
-		if err != nil {
-			log.ErrorContext(ctx, "hook sync: plan job", "error", err)
-			continue
-		}
-		if plan.Diff == nil || plan.Diff.Type == "None" {
-			continue
-		}
-		if _, err := e.nomad.RegisterCAS(ctx, hf.job, index, false); err != nil {
-			log.ErrorContext(ctx, "hook sync: register", "error", err)
-			continue
-		}
-		log.InfoContext(ctx, "hook job synced")
-	}
-}
-
 // reconcileJob computes the drift of one managed job and reconciles its
 // deployment. ok is false when the job was skipped because of a Nomad
 // failure scoped to it (already logged): the caller keeps no observation for
 // it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hookIDs map[string]bool) (obs Observation, ok bool, err error) {
+func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile) (obs Observation, ok bool, err error) {
 	jobID := *mf.job.ID
 	log := e.log.With("job", jobID, "namespace", e.namespace, "commit", commit.sha)
 
-	hash, err := specHash(mf.job)
+	targetHash, err := specHash(mf.job)
 	if err != nil {
 		log.ErrorContext(ctx, "compute spec hash", "error", err)
+		return Observation{}, false, nil
+	}
+	frozen, hash, missing, err := freezeHooks(mf.cfg, hooks, targetHash)
+	if err != nil {
+		log.ErrorContext(ctx, "freeze hooks", "error", err)
 		return Observation{}, false, nil
 	}
 
@@ -296,7 +267,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, liveIndex, drift, redacted, planJob, hookIDs)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, jobID, commit, mf.cfg, hash, frozen, missing, liveIndex, drift, redacted, planJob)
 	if err != nil {
 		return obs, true, err
 	}
@@ -313,7 +284,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobID string, commit commitRef, cfg meta.Config,
-	hash string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hookIDs map[string]bool) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, missing string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job) (blockedBy, blockedReason string, err error) {
 
 	active, err := e.store.ActiveDeployment(ctx, e.namespace, jobID)
 	switch {
@@ -373,6 +344,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 	d := &store.Deployment{
 		JobID: jobID, Namespace: e.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
+		Hooks: frozen,
 	}
 	if err := e.store.CreateDeployment(ctx, d); err != nil {
 		if errors.Is(err, store.ErrActiveDeployment) {
@@ -382,7 +354,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, jobI
 		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
 	}
 
-	if missing := missingHook(cfg, hookIDs); missing != "" {
+	if missing != "" {
 		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s not found in repo at commit %s", missing, commit.sha))
 	}
 	if cfg.Policy == meta.PolicyApproval {
@@ -475,18 +447,6 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 	}
 	go e.notifier.Notify(ctx, fresh)
 	return nil
-}
-
-// missingHook reports the first declared hook that is not among the hook
-// jobs found in the repo's snapshot, or "" if both are.
-func missingHook(cfg meta.Config, hookIDs map[string]bool) string {
-	if cfg.PreHook != nil && !hookIDs[cfg.PreHook.JobID] {
-		return fmt.Sprintf("pre-hook %q", cfg.PreHook.JobID)
-	}
-	if cfg.PostHook != nil && !hookIDs[cfg.PostHook.JobID] {
-		return fmt.Sprintf("post-hook %q", cfg.PostHook.JobID)
-	}
-	return ""
 }
 
 func storePolicy(p meta.Policy) store.Policy {

@@ -47,6 +47,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `dashboard-data` | The backend the redesigned dashboard needs: commit subject/author on deployments and `gitwatch.CommitURL`, `gitwatch.Status` and `Engine.Status`, `Store.ListByJob`/`LatestPerJob`, **retry** of a blocked job (`Engine.Retry`, [engine-apply](design/engine-apply.md), 9) and `POST /fetch`, with their endpoints and tests; no page shows them yet | `internal/gitwatch`, `internal/store`, `internal/engine`, `internal/web` |
 | `dashboard-ux` | The redesigned dashboard: Overview (what needs attention, git and cycle health), Jobs (sync state), Job, Deployment (a review page: what Approve will do, the diff summarized and folded once decided) and Activity, in a dense Primer look ([dashboard](dashboard.md), [decisions](design/decisions.md) 2026-09-24) | `internal/web`, `internal/engine` |
 | `orphan-jobs` | A job nops deployed that is gone from the repository but still runs in Nomad is reported (sync state **Not in git**, Needs attention, a notice on its page) and never stopped; the check is suspended while a file does not parse ([design](design/engine-detection.md#orphan-jobs)) | `internal/engine`, `internal/store`, `internal/web` |
+| `hook-revisions` | An approval covers the hooks that run: a deployment freezes its hooks (`deployment_hooks`), `spec_hash` covers them, each is registered in Nomad as `<hook-id>-<8 hex>` right before its dispatch and unused revisions are deregistered without purge; the per-cycle hook sync is gone ([hooks](hooks.md#hook-revisions), [design](design/engine-detection.md#hook-revisions)) | `internal/store`, `internal/engine`, `internal/nomadx`, `internal/web` |
 | `e2e` | Simulated end-to-end integration tests in place of manual acceptance checklists: approval flow, self-heal under `auto`, the pre-hook scenarios (pre-pull, backup) with `raw_exec`, and `examples/` kept parsing ([development](development.md#integration)); the real check is using nops on the cluster ([first rollout](development.md#first-rollout-on-a-real-cluster)) | `tests/integration` |
 
 ## Todo
@@ -54,8 +55,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | Task | Depends on | Ready |
 |---|---|---|
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
-| [`hook-revisions`](#hook-revisions) | — | yes |
-| [`multi-hooks`](#multi-hooks) | `hook-revisions` | yes |
+| [`multi-hooks`](#multi-hooks) | — | yes |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
@@ -76,76 +76,26 @@ wording, empty states. No new features; anything bigger becomes its own task.
 - **Done when:** the maintainer has used it for real and the list they gave is
   closed.
 
-### hook-revisions
-
-Make the approval cover the hooks that will run, and stop two deployments that
-share a hook from racing on one Nomad job.
-
-- **Read first:** [hooks.md](hooks.md), [engine-detection.md](design/engine-detection.md),
-  [engine-apply.md](design/engine-apply.md), the decision log (2026-09-25,
-  "Hook revisions").
-- **The problem:** `spec_hash` covers only the target job. The hook that runs
-  is whatever is registered in Nomad under its fixed ID when it is dispatched,
-  that is the latest in git, not what was there when the deployment was
-  approved; and between one deployment's register and its dispatch another
-  can register a different version (Nomad has no CAS on dispatch).
-- **Decided** (with the maintainer, 2026-09-25):
-  - At detection the deployment freezes, for every hook it declares, the hook
-    ID, the hash of its spec and the spec itself, taken from the same
-    snapshot as the target. The deployment's `spec_hash` becomes the hash of
-    the target and its hooks, in order: approving covers what will run.
-  - A hook revision is registered in Nomad as `<hook-id>-<first 8 hex of its
-    hash>`, keeping `Name` as the hook's own ID, **right before it is
-    dispatched**, from the frozen spec: `Plan` + `RegisterCAS` at index 0,
-    skipped when the plan shows no change (the revision is already there).
-    Nothing is registered before approval, and the per-cycle hook sync
-    (`syncHooks`) goes.
-  - GC after every detection cycle: deregister, **without purge**, every job
-    with `nops_role = "hook"` and an ID matching `^(.+)-[0-9a-f]{8}$` that no
-    non-terminal deployment uses. A failure is an ERROR, retried next cycle.
-  - No migration for hooks already registered under their fixed ID: nops is not
-    in use yet.
-- **First step:** check on `nomad agent -dev` 2.0.3, and write in the decision
-  log, that deregistering a `parameterized` parent leaves its dispatched jobs
-  and their logs readable, that a job whose `Name` differs from its `ID`
-  registers, and that the suffixed ID hits no length limit.
-- **Scope:**
-  - `internal/store`: migration `0003` with `deployment_hooks(deployment_id,
-    phase, position, hook_id, revision, spec_hash, job_spec)`, written by
-    `CreateDeployment` in the same transaction; `hook_runs.hook_job_id` holds
-    the revision. `position` is for `multi-hooks`: always 0 here.
-  - `internal/engine/detect.go`: build the frozen hooks from what `classify`
-    returns, compute the combined hash (reuse `specHash`), use it in
-    revalidation and `blockedRetry`; remove `syncHooks`, keep `missingHook`.
-  - `internal/engine/apply.go` (`stepHook`): read the hook from
-    `deployment_hooks`, register the revision, then `hooks.Run` with the
-    revision as `HookJobID`. `internal/hooks` does not change.
-  - `internal/nomadx`: list jobs by ID prefix, deregister without purge.
-  - `internal/web`: `planSteps` reads `deployment_hooks` instead of parsing the
-    target's meta; the hook rows show the hook and a short revision.
-  - Docs: `hooks.md`, `engine-detection.md`, `engine-apply.md`,
-    `state-machine.md` (schema), `architecture.md` ("does not deregister jobs"
-    gets the hook-revision exception), `vocabulary.md` (**hook revision**),
-    decision log.
-- **Done when:** unit tests for the combined hash, the revision ID, a changed
-  hook superseding a pending deployment and unblocking a blocked one, the GC's
-  selection and the register at dispatch; the migration tested; integration and
-  e2e against Nomad showing nothing registered before approval, the revision
-  registered and dispatched after it, a hook changed while pending superseding
-  the deployment, and an unused revision deregistered (the `TestE2EPreHook*`
-  tests adapted).
-- **Consequences to keep:** a hook changed in git supersedes a pending
-  deployment (it must be approved again), a fixed hook unblocks a blocked job
-  on its own, and a hook change alone never creates a deployment for a target
-  with no drift.
-
 ### multi-hooks
 
 More than one pre-hook and post-hook per job (for example, backup then
 migrate).
 
-- **Read first:** [meta-keys.md](meta-keys.md), [hooks.md](hooks.md),
-  `hook-revisions` above, the decision log (2026-09-25, "Multiple hooks").
+- **Read first:** [meta-keys.md](meta-keys.md), [hooks.md](hooks.md) (with
+  [hook revisions](hooks.md#hook-revisions)), the decision log (2026-09-25,
+  "Multiple hooks" and "Hook revisions built").
+- **What `hook-revisions` left ready:** `deployment_hooks` already has
+  `position` (always `0`), and `Store.DeploymentHooks` returns the hooks of a
+  deployment ordered by phase and position; `freezeHooks`
+  (`internal/engine/hookrev.go`) builds them from `PreHook`/`PostHook`, the
+  combined `spec_hash` takes them in order, and `stepHook`
+  (`internal/engine/apply.go`) reads the first frozen hook of its phase,
+  registers its revision (`registerRevision`) and calls `Hooks.Run` with it. The
+  timeout is still the target's `nops_pre_hook_timeout` /
+  `nops_post_hook_timeout`, read from the stored spec's meta in `stepHook`;
+  moving it to `nops_timeout` on the hook means reading it from the frozen hook
+  spec instead. `web.planSteps` already takes the frozen hooks; the GC needs
+  no change (a revision is a revision whatever its position).
 - **Decided** (with the maintainer, 2026-09-25):
   - `nops_pre_hook` / `nops_post_hook` take a comma-separated list; one hook is
     written as today.

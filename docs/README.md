@@ -42,7 +42,7 @@ New here? Start with the [project README](../README.md).
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | A scenario in `examples/` | `TestExamplesParse` checks every example; a new scenario needs nothing else unless it shows new behaviour worth an end-to-end test |
 | State, transition, schema, recovery | `state-machine.md` |
-| Detection cycle (parse, plan, create, supersede, hook sync) | `internal/engine` **and** `design/engine-detection.md` |
+| Detection cycle (parse, plan, create, supersede, freeze hooks, revision GC) | `internal/engine` **and** `design/engine-detection.md` |
 | Flag or env var | `internal/config` **and** `configuration.md` |
 | Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
 | New concept, or a renamed term | `vocabulary.md` |

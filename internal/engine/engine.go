@@ -28,6 +28,10 @@ type Nomad interface {
 	Job(ctx context.Context, id string) (*api.Job, error)
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
 	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)
+	// ListJobs and StopJob are used to deregister hook revisions nothing needs
+	// any more (see docs/design/engine-detection.md#hook-revisions).
+	ListJobs(ctx context.Context) ([]nomadx.JobStub, error)
+	StopJob(ctx context.Context, id string) error
 	// Allocations and LatestDeployment are used by apply to decide whether the
 	// applied job version is healthy (see docs/design/engine-apply.md).
 	Allocations(ctx context.Context, jobID string) ([]nomadx.Alloc, error)
@@ -45,6 +49,10 @@ type Store interface {
 	// LatestCompletedPerJob is used by the orphan check (see
 	// docs/design/engine-detection.md#orphan-jobs).
 	LatestCompletedPerJob(ctx context.Context, namespace string) ([]*store.Deployment, error)
+	// DeploymentHooks and HookRevisionsInUse are used by the hook revisions
+	// (see docs/design/engine-detection.md#hook-revisions).
+	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
+	HookRevisionsInUse(ctx context.Context, namespace string) ([]string, error)
 	// MarkRetried is used by Retry (see docs/state-machine.md).
 	MarkRetried(ctx context.Context, id, actor string) error
 	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
