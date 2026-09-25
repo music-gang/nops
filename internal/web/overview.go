@@ -25,6 +25,8 @@ type cycleView struct {
 	Took                       string
 	Error                      string
 	Managed, Skipped, Unparsed int
+	// OrphanCheckSkipped: jobs removed from git were not looked for this cycle.
+	OrphanCheckSkipped bool
 }
 
 type overviewData struct {
@@ -52,7 +54,7 @@ func (s *server) cycleView() cycleView {
 	st := s.engine.Status()
 	return cycleView{
 		Ran: !st.At.IsZero(), At: s.when(st.At), Took: st.Duration.Round(time.Millisecond).String(), Error: st.Error,
-		Managed: st.Managed, Skipped: st.Skipped, Unparsed: st.Unparsed,
+		Managed: st.Managed, Skipped: st.Skipped, Unparsed: st.Unparsed, OrphanCheckSkipped: st.OrphanCheckSkipped,
 	}
 }
 

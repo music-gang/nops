@@ -296,6 +296,28 @@ func (r *scratchRepo) commit(t *testing.T, msg string, files map[string]string) 
 	}
 }
 
+// remove deletes files (repository-relative paths), commits and pushes, like
+// a person removing a job from the repository.
+func (r *scratchRepo) remove(t *testing.T, msg string, paths ...string) {
+	t.Helper()
+	wt, err := r.repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	for _, path := range paths {
+		if _, err := wt.Remove(path); err != nil {
+			t.Fatalf("remove %s: %v", path, err)
+		}
+	}
+	sig := &object.Signature{Name: "test", Email: "test@example.com", When: time.Now()}
+	if _, err := wt.Commit(msg, &git.CommitOptions{Author: sig}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := r.repo.Push(&git.PushOptions{RemoteName: "origin"}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+}
+
 // -- dashboard client -----------------------------------------------------
 
 // dashboard is an HTTP client for the nops dashboard: a cookie jar for the

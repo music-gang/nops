@@ -2,17 +2,27 @@
 {{template "chrome_head" .}}
 <div class="pagehead">
   <p class="crumbs"><a href="/jobs">Jobs</a></p>
-  <h1 class="pagehead__title">{{.Title}} {{if .InRepo}}<span class="pill {{.SyncClass}}">{{.SyncLabel}}</span>{{end}}</h1>
+  <h1 class="pagehead__title">{{.Title}} {{if or .InRepo .Orphan}}<span class="pill {{.SyncClass}}">{{.SyncLabel}}</span>{{end}}</h1>
   <p class="pagehead__sub">
     {{if .InRepo}}
     <span class="label">{{.Policy}}</span>
     <span class="mono muted" title="{{.File}}">{{.File}}</span>
     <span class="muted">&middot; observed {{template "time" .Observed}}</span>
+    {{else if .Orphan}}
+    <span class="label">{{.Policy}}</span>
+    <span class="muted">Not in the repository any more.</span>
     {{else}}
     <span class="muted">Not in the repository any more, or nops could not read it in the last cycle: only its past deployments remain.</span>
     {{end}}
   </p>
 </div>
+
+{{with .Orphan}}
+<section class="flash flash--warn">
+  <p><strong>Removed from git, still running in Nomad</strong>{{if .NomadStatus}} (status <span class="mono">{{.NomadStatus}}</span>){{end}}. nops deployed this job and does not stop it on its own: the operator decides.</p>
+  <p>To stop it: <code>{{.StopCommand}}</code>. To keep it, put its file back in the repository. This notice goes away by itself once either is done.</p>
+</section>
+{{end}}
 
 {{if .Blocked}}
 <section class="flash flash--error flash--action">
@@ -27,7 +37,7 @@
 </section>
 {{end}}
 
-<div class="layout">
+<div class="layout{{if not .InRepo}} layout--single{{end}}">
   <div class="layout__main">
     {{if .InRepo}}
     <section class="box">

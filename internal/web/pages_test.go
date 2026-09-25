@@ -88,6 +88,7 @@ type fakeEngine struct {
 	rejectCalls  []rejectCall
 	retryCalls   []retryCall
 	observations []engine.Observation
+	orphans      []engine.Orphan
 	status       engine.Status
 }
 
@@ -107,6 +108,7 @@ func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) 
 }
 
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }
+func (f *fakeEngine) Orphans() []engine.Orphan           { return f.orphans }
 func (f *fakeEngine) Status() engine.Status              { return f.status }
 
 type fakeGit struct {

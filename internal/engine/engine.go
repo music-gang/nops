@@ -42,6 +42,9 @@ type Store interface {
 	ActiveDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	LatestDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
+	// LatestCompletedPerJob is used by the orphan check (see
+	// docs/design/engine-detection.md#orphan-jobs).
+	LatestCompletedPerJob(ctx context.Context, namespace string) ([]*store.Deployment, error)
 	// MarkRetried is used by Retry (see docs/state-machine.md).
 	MarkRetried(ctx context.Context, id, actor string) error
 	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
@@ -97,6 +100,25 @@ type Observation struct {
 	BlockedReason string
 }
 
+// Orphan is a job nops has deployed that is no longer in the repository but is
+// still there in Nomad and not stopped: something the operator has to decide
+// about. nops only reports it, it never stops it (see
+// docs/design/engine-detection.md#orphan-jobs). Like Observation it is kept
+// only in memory and rebuilt every cycle.
+type Orphan struct {
+	JobID     string
+	Namespace string
+	// Policy is the policy of the job's last completed deployment: the file
+	// that said what it should be is gone.
+	Policy store.Policy
+	// LastDeploymentID is that deployment.
+	LastDeploymentID string
+	// NomadStatus is the job's status in Nomad ("running" or "pending").
+	NomadStatus string
+	// ObservedAt is when this cycle looked at it in Nomad.
+	ObservedAt time.Time
+}
+
 // Status is how the last detection cycle went, kept only in memory for the
 // dashboard: whether nops is doing its job is not something an empty list of
 // deployments can say.
@@ -113,6 +135,12 @@ type Status struct {
 	// (they have no observation this cycle). Unparsed is how many files Nomad
 	// could not parse (or that name a namespace nops does not manage).
 	Managed, Skipped, Unparsed int
+	// Orphans is how many orphan jobs are reported. OrphanCheckSkipped is true
+	// when the cycle did not look for them because a file did not parse (a
+	// file that does not parse looks exactly like one that was removed); the
+	// orphans of the last complete check are then kept as they were.
+	Orphans            int
+	OrphanCheckSkipped bool
 }
 
 // Engine runs the detection cycle (parse, plan, create and supersede
@@ -134,6 +162,7 @@ type Engine struct {
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[string]Observation
+	orphans      []Orphan
 	status       Status
 
 	// kick asks the detection loop for a cycle now (Retry).
@@ -240,5 +269,19 @@ func (e *Engine) Status() Status {
 func (e *Engine) setStatus(st Status) {
 	e.mu.Lock()
 	e.status = st
+	e.mu.Unlock()
+}
+
+// Orphans returns the jobs nops deployed that are gone from the repository but
+// still run in Nomad, sorted by job ID. See Orphan.
+func (e *Engine) Orphans() []Orphan {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return append([]Orphan(nil), e.orphans...)
+}
+
+func (e *Engine) setOrphans(next []Orphan) {
+	e.mu.Lock()
+	e.orphans = next
 	e.mu.Unlock()
 }

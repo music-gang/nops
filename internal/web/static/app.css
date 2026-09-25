@@ -405,6 +405,8 @@ form { margin: 0; }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
 .layout__side { position: sticky; top: 16px; }
+/* No side column (a job that is not in the repository): the list takes the width. */
+.layout--single { grid-template-columns: minmax(0, 1fr); }
 
 .dl {
   display: grid;

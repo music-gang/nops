@@ -489,7 +489,7 @@ func TestJobPage(t *testing.T) {
 		"Meta issues", "nops_post_hook_timeout", "unusual value",
 		// its deployments, newest first
 		`href="/deployments/d1"`, `href="/deployments/d0"`, "feat(web): scale up", "no commit message")
-	mustNotContain(t, page, specMarker, "Blocked.", "Retry")
+	mustNotContain(t, page, specMarker, "Blocked.", "Retry", "layout--single") // it has its side column
 	if strings.Index(page, `href="/deployments/d1"`) > strings.Index(page, `href="/deployments/d0"`) {
 		t.Error("deployments are not listed newest first")
 	}
@@ -521,7 +521,7 @@ func TestJobPageOnlyDeploymentsRemain(t *testing.T) {
 	st := &fakeStore{byJob: []*store.Deployment{dep("d1", "gone", store.StateCompleted, time.Hour)}}
 	ts := newTestServer(t, st, &fakeEngine{}, "")
 	page := ts.get("/jobs/default/gone")
-	mustContain(t, page, "default/gone", "Not in the repository any more", `href="/deployments/d1"`)
+	mustContain(t, page, "default/gone", "Not in the repository any more", `href="/deployments/d1"`, "layout--single")
 	mustNotContain(t, page, "Drift", "Details", "Retry")
 }
 
@@ -847,4 +847,119 @@ func doWith(h http.Handler, method, target string, cookies ...*http.Cookie) *htt
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// -- orphans: a job nops deployed, gone from git, still running in Nomad --------
+
+func orphanFixture() (*fakeStore, *fakeEngine) {
+	last := dep("d9", "old", store.StateCompleted, 3*24*time.Hour)
+	st := &fakeStore{
+		latest: []*store.Deployment{last},
+		byJob:  []*store.Deployment{last},
+	}
+	en := &fakeEngine{
+		observations: []engine.Observation{{JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "web.nomad.hcl"}},
+		orphans: []engine.Orphan{{
+			JobID: "old", Namespace: "default", Policy: store.PolicyApproval, LastDeploymentID: "d9",
+			NomadStatus: "running", ObservedAt: testNow,
+		}},
+	}
+	return st, en
+}
+
+func TestJobsPageListsOrphansAmongTheJobs(t *testing.T) {
+	st, en := orphanFixture()
+	ts := newTestServer(t, st, en, "")
+	page := ts.get("/jobs")
+
+	mustContain(t, page,
+		`href="/jobs/default/old"`, "Not in git", "removed from git, still running in Nomad",
+		"not in the repository", // no file
+		">approval<",            // the policy of its last deployment
+		`href="/deployments/d9"`, "3d ago", `href="?state=orphan"`,
+		// the orphan comes among the others, sorted by name
+		`href="/jobs/default/web"`)
+	if strings.Index(page, `href="/jobs/default/old"`) > strings.Index(page, `href="/jobs/default/web"`) {
+		t.Error("orphans are not sorted in with the other jobs by name")
+	}
+	if n := strings.Count(page, `class="row__title"`); n != 2 {
+		t.Errorf("%d rows, want 2 (the observed job and the orphan)", n)
+	}
+
+	// The filter finds it, and only it.
+	filtered := ts.get("/jobs?state=orphan")
+	mustContain(t, filtered, `href="/jobs/default/old"`, `is-active" href="?state=orphan"`)
+	mustNotContain(t, filtered, `href="/jobs/default/web"`)
+}
+
+func TestJobsPageWithOnlyOrphansIsNotEmpty(t *testing.T) {
+	st, en := orphanFixture()
+	en.observations = nil
+	ts := newTestServer(t, st, en, "")
+	page := ts.get("/jobs")
+	mustContain(t, page, `href="/jobs/default/old"`)
+	mustNotContain(t, page, "No managed job observed yet.")
+}
+
+func TestOverviewNeedsAttentionListsOrphansLast(t *testing.T) {
+	st, en := orphanFixture()
+	st.active = []*store.Deployment{dep("d1", "web", store.StatePendingApproval, time.Hour)}
+	en.observations = []engine.Observation{{JobID: "bad", Namespace: "default", Issues: []meta.Issue{{Severity: meta.SeverityError, Key: "nops_policy", Message: "unknown value"}}}}
+	ts := newTestServer(t, st, en, "")
+
+	page := ts.get("/")
+	mustContain(t, page, "Not in git", `href="/jobs/default/old"`, "Removed from git, still running in Nomad")
+	// Nothing is broken with an orphan, so it comes after what is: approvals,
+	// meta errors, then it.
+	for _, pair := range [][2]string{{"Needs approval", ">Invalid meta<"}, {">Invalid meta<", ">Not in git<"}} {
+		if strings.Index(page, pair[0]) > strings.Index(page, pair[1]) {
+			t.Errorf("%q comes after %q", pair[0], pair[1])
+		}
+	}
+	// Reported, never acted on: no button that stops or retries anything.
+	mustNotContain(t, page, `action="/jobs/default/old`)
+}
+
+func TestOverviewSaysWhenTheOrphanCheckIsSuspended(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Unparsed: 1, OrphanCheckSkipped: true}}, "")
+	mustContain(t, ts.get("/"), "Jobs removed from git are not being looked for while a file does not parse", "What was found before stays listed")
+
+	ts = newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Unparsed: 1}}, "")
+	mustNotContain(t, ts.get("/"), "not being looked for")
+}
+
+func TestJobPageOfAnOrphan(t *testing.T) {
+	st, en := orphanFixture()
+	ts := newTestServer(t, st, en, "")
+	page := ts.get("/jobs/default/old")
+
+	mustContain(t, page,
+		"default/old", "Not in git", ">approval<", "Not in the repository any more.",
+		"Removed from git, still running in Nomad", "status <span class=\"mono\">running</span>",
+		"does not stop it on its own",
+		// what to do, exactly
+		"nomad job stop -namespace default old", "put its file back",
+		// and its history is there
+		`href="/deployments/d9"`)
+	// It offers nothing that changes anything.
+	mustNotContain(t, page, "Retry", `/retry"`, "/approve", "/reject", "Drift")
+}
+
+func TestJobPageOfANonOrphanHasNoOrphanNotice(t *testing.T) {
+	st, en := orphanFixture()
+	ts := newTestServer(t, st, en, "")
+	mustNotContain(t, ts.get("/jobs/default/web"), "still running in Nomad", "nomad job stop")
+}
+
+func TestOrphanWithoutObservationOrDeploymentsIsStillFound(t *testing.T) {
+	// ListByJob may be empty in a fake: the orphan alone is enough for the page to exist.
+	en := &fakeEngine{orphans: []engine.Orphan{{JobID: "old", Namespace: "default", NomadStatus: "pending"}}}
+	ts := newTestServer(t, &fakeStore{}, en, "")
+	mustContain(t, ts.get("/jobs/default/old"), "Removed from git, still running in Nomad", "status <span class=\"mono\">pending</span>")
+}
+
+func TestJobSyncOrphanHasALabelAndAClass(t *testing.T) {
+	if !syncOrphan.valid() || syncOrphan.label() != "Not in git" || syncOrphan.class() != "state-pending" {
+		t.Errorf("orphan sync state = %q / %q / %q", syncOrphan, syncOrphan.label(), syncOrphan.class())
+	}
 }

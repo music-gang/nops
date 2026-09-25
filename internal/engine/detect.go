@@ -84,7 +84,28 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	}
 	e.replaceObservations(observations)
 
-	return st, e.supersedeRemoved(ctx, seen)
+	if err := e.supersedeRemoved(ctx, seen); err != nil {
+		return st, err
+	}
+
+	// A file that does not parse looks exactly like a removed one: with any,
+	// the check is skipped and the last complete one stands.
+	if unparsed > 0 {
+		st.OrphanCheckSkipped = true
+		st.Orphans = len(e.Orphans())
+		return st, nil
+	}
+	present := make(map[string]bool, len(parsed))
+	for _, pf := range parsed {
+		present[*pf.job.ID] = true
+	}
+	orphans, err := e.findOrphans(ctx, present)
+	if err != nil {
+		return st, err
+	}
+	e.setOrphans(orphans)
+	st.Orphans = len(orphans)
+	return st, nil
 }
 
 // commitRef is the commit a detection cycle reads, as a deployment records it.

@@ -594,6 +594,19 @@ func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
 		ORDER BY namespace, job_id`)
 }
 
+// LatestCompletedPerJob returns, for every job of a namespace that ever had a
+// `completed` deployment, the most recent of those, ordered by job ID. It is
+// what nops has put into production: the jobs it is answerable for, and the
+// only ones it looks for after they leave the repository.
+func (s *Store) LatestCompletedPerJob(ctx context.Context, namespace string) ([]*Deployment, error) {
+	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE namespace = ? AND state = 'completed'
+		  AND id = (SELECT x.id FROM deployments x
+			WHERE x.namespace = deployments.namespace AND x.job_id = deployments.job_id AND x.state = 'completed'
+			ORDER BY x.created_at DESC, x.id DESC LIMIT 1)
+		ORDER BY job_id`, namespace)
+}
+
 // MarkRetried records that actor asked to retry a failed or rejected
 // deployment, and logs an event (from and to are both the deployment's state:
 // nothing moves, it is the audit trail of the decision). A deployment in any

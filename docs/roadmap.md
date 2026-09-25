@@ -46,6 +46,7 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | `wiring` | `cmd/nops`: builds every component, runs the three loops and the dashboard, shuts down cleanly on `SIGINT`/`SIGTERM`; a `run(ctx, cfg, log) error` factored out of `main` for the whole wiring to be one reviewable, testable unit ([binary smoke test](development.md#integration)) | `cmd/nops` |
 | `dashboard-data` | The backend the redesigned dashboard needs: commit subject/author on deployments and `gitwatch.CommitURL`, `gitwatch.Status` and `Engine.Status`, `Store.ListByJob`/`LatestPerJob`, **retry** of a blocked job (`Engine.Retry`, [engine-apply](design/engine-apply.md), 9) and `POST /fetch`, with their endpoints and tests; no page shows them yet | `internal/gitwatch`, `internal/store`, `internal/engine`, `internal/web` |
 | `dashboard-ux` | The redesigned dashboard: Overview (what needs attention, git and cycle health), Jobs (sync state), Job, Deployment (a review page: what Approve will do, the diff summarized and folded once decided) and Activity, in a dense Primer look ([dashboard](dashboard.md), [decisions](design/decisions.md) 2026-09-24) | `internal/web`, `internal/engine` |
+| `orphan-jobs` | A job nops deployed that is gone from the repository but still runs in Nomad is reported (sync state **Not in git**, Needs attention, a notice on its page) and never stopped; the check is suspended while a file does not parse ([design](design/engine-detection.md#orphan-jobs)) | `internal/engine`, `internal/store`, `internal/web` |
 | `e2e` | Simulated end-to-end integration tests in place of manual acceptance checklists: approval flow, self-heal under `auto`, the pre-hook scenarios (pre-pull, backup) with `raw_exec`, and `examples/` kept parsing ([development](development.md#integration)); the real check is using nops on the cluster ([first rollout](development.md#first-rollout-on-a-real-cluster)) | `tests/integration` |
 
 ## Todo
@@ -55,7 +56,6 @@ The working steps are in [CLAUDE.md](../CLAUDE.md#picking-up-work).
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
 | [`hook-revisions`](#hook-revisions) | — | yes |
 | [`multi-hooks`](#multi-hooks) | `hook-revisions` | yes |
-| [`orphan-jobs`](#orphan-jobs) | — | yes |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
@@ -178,42 +178,3 @@ migrate).
   removed keys), engine tests for order, stop at the first failure and recovery
   in the middle of the list, the migration, and an e2e where two pre-hooks run
   in order and a failing first one keeps the second from running.
-
-### orphan-jobs
-
-Tell the operator when a job nops deployed is no longer in the repository but
-still runs in Nomad.
-
-- **Read first:** [dashboard.md](dashboard.md), [engine-detection.md](design/engine-detection.md),
-  the decision log (2026-09-25, "Orphan jobs").
-- **Decided** (with the maintainer, 2026-09-25): **alert only**, like Argo CD's
-  default "OutOfSync, requires pruning". nops never stops or deregisters an
-  orphan: the operator stops it in Nomad or puts the file back, and the alert
-  clears on its own. This builds the observation a later "Stop" action would
-  use; that action, and a guard against mass removals, are a separate task if
-  ever needed.
-- **An orphan** is a job that nops has deployed (a `completed` deployment),
-  that is not among the jobs *parsed* from the snapshot whatever their
-  classification (a job still in the repository without `nops_managed` is
-  **not** an orphan: that means "hands off"), and that exists in Nomad with
-  `Stop != true` (stopped or purged: not an orphan). In a cycle where any file
-  fails to parse, the orphan check is suspended: a broken file looks exactly
-  like a removed one.
-- **Scope:**
-  - `internal/store`: the jobs with at least one `completed` deployment in the
-    namespace.
-  - `internal/engine`: in `Detect`, the IDs of every parsed job; for each
-    deployed job not among them, `nomad.Job`; `Engine.Orphans()` in memory,
-    rebuilt every cycle like `Observations()`; `Status` gains `Orphans` and
-    `OrphanCheckSkipped`. A Nomad error on one candidate is an ERROR and skips
-    it.
-  - `internal/web`: sync state **Not in git** on Jobs (rows for orphans, which
-    have no observation), a Needs attention row "Removed from git, still
-    running in Nomad", a banner on the job page with what to do (`nomad job
-    stop <id>`, or restore the file), and the suspended check on the Overview.
-  - Docs: `vocabulary.md` (**orphan**), `dashboard.md`, `engine-detection.md`,
-    decision log.
-- **Done when:** engine tests with the fake Nomad (found; not when still parsed
-  but unmanaged; not when stopped; not when purged; not when never completed;
-  suspended with an unparsed file), page tests, and an e2e: deploy a job, remove
-  its file, see it; `nomad job stop` it, see it gone.

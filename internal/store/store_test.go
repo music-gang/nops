@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -796,5 +797,50 @@ func TestUpgradeFromV1(t *testing.T) {
 	}
 	if err := s.MarkRetried(context.Background(), "old", "iacopo"); err != nil {
 		t.Errorf("MarkRetried on an upgraded row: %v", err)
+	}
+}
+
+func TestLatestCompletedPerJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	end := func(d *Deployment, to State) *Deployment {
+		t.Helper()
+		if err := s.Transition(ctx, d.ID, to, Transition{From: StateDetected, Actor: "nops", Error: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	if got, err := s.LatestCompletedPerJob(ctx, "default"); err != nil || len(got) != 0 {
+		t.Fatalf("on an empty store = %+v, %v", got, err)
+	}
+
+	oldWeb := end(mustCreate(t, s, newDep("web")), StateCompleted)
+	newWeb := end(mustCreate(t, s, newDep("web")), StateCompleted)
+	end(mustCreate(t, s, newDep("web")), StateFailed) // newer, but not completed
+	db := end(mustCreate(t, s, newDep("db")), StateCompleted)
+	end(mustCreate(t, s, newDep("failed-only")), StateFailed)
+	end(mustCreate(t, s, newDep("superseded-only")), StateSuperseded)
+	mustCreate(t, s, newDep("active-only")) // detected
+	other := newDep("web")
+	other.Namespace = "staging"
+	end(mustCreate(t, s, other), StateCompleted)
+
+	got, err := s.LatestCompletedPerJob(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, d := range got {
+		ids = append(ids, d.JobID+"="+d.ID)
+	}
+	want := []string{"db=" + db.ID, "web=" + newWeb.ID}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("LatestCompletedPerJob(default) = %v, want %v (the last completed of each job, by job ID; oldWeb=%s is not it)", ids, want, oldWeb.ID)
+	}
+
+	staging, err := s.LatestCompletedPerJob(ctx, "staging")
+	if err != nil || len(staging) != 1 || staging[0].Namespace != "staging" {
+		t.Errorf("LatestCompletedPerJob(staging) = %+v, %v, want only the staging deployment", staging, err)
 	}
 }

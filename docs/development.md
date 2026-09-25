@@ -41,7 +41,8 @@
   read alongside it. `TestE2EApprovalFlow` covers create, approve, reject,
   superseding, a stale `spec_hash` (409) and an outside edit under policy
   `approval`; `TestE2EAutoRevertsOutsideEdit` the same edit under `auto`; the
-  `TestE2EPreHook*` tests the hook scenarios above; `TestE2ERetry*` the retry of
+  `TestE2EPreHook*` tests the hook scenarios above; `TestE2EOrphan*` a deployed job removed from git (shown, never stopped, gone
+  once stopped or restored); `TestE2ERetry*` the retry of
   a blocked job (a failed pre-hook fixed without a commit, and under `approval`
   the retry still waiting for a decision) and `TestE2EFetchNow` the "fetch now"
   button with a one-hour poll interval. The hooks write to a
