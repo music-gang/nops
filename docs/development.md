@@ -77,7 +77,7 @@ The real check is using it. The policies allow going in steps: start with
 
 A commit/PR is complete only if:
 
-1. `go build ./...`, `go vet ./...`, `staticcheck` and `go test ./...` are green;
+1. `go build ./...`, `go vet ./...`, `staticcheck` and `go test -race ./...` are green;
 2. if it touches `engine`, `hooks` or `nomadx`, the integration tests are also
    green against a `nomad agent -dev`;
 3. every behaviour change has its test;
@@ -105,48 +105,23 @@ checks below must pass on an up-to-date branch, history must be linear, and
 force pushes and deletion are blocked. No approvals are required (there is a
 single maintainer): CI is the gate.
 
-Flow:
+The step-by-step flow — branching, committing, opening a PR, the PR
+description's `## What changes` / `## Why` / `## Notes` shape — is in
+[CLAUDE.md](../CLAUDE.md#picking-up-work). What's specific to this repo's CI
+and merge mechanics, not covered there:
 
-1. Branch from `main`: `type/short-description` (e.g. `feat/hooks-package`).
-   For a task in the [roadmap](roadmap.md) the description is the task ID
-   (`feat/config`): that is how the roadmap knows the task is in flight. A
-   `plan first` task is discussed with the maintainer before this step, in
-   the session — there is no branch or PR for the plan itself.
-2. Commit as the work happens, each in [Angular style](#commit-messages). A
-   later change — a fix, an answer to a review comment — is a **new
-   commit**, not an amend or a force-push: the branch's history is free to
-   show the work as it went.
-3. Open a PR **titled in Angular style** once there is something to review.
-4. When CI is green, the maintainer **squashes and merges** by hand, and the
-   commit that lands on `main` comes from the branch's commits, never from the
-   PR description:
-   - a branch with **one commit** is a plain merge: its message goes in as it
-     is;
-   - a branch with **several**: the maintainer cleans them up and keeps the
-     first, or rewrites the message so that it says what happened.
+- Commits inside a branch do not need to be signed, whoever makes them: the
+  squash commit on `main` is created and signed by GitHub, and the ruleset
+  does not require signed commits. Locally the maintainer commits with his
+  GPG key; a cloud session commits unsigned (see CLAUDE.md).
+- Merges are squash-only, so `main` is a straight line with one commit per
+  PR. The repository's squash setting is "Default to pull request title and
+  commit details" (`squash_merge_commit_message = COMMIT_MESSAGES`), which
+  prefills the squash box from the PR title and the branch's own commit
+  messages — but the maintainer edits that box by hand before merging, since
+  he is the one who merges. The branch is deleted automatically.
 
-   The branch is deleted automatically.
-
-Commits inside a branch do not need to be signed, whoever makes them: the
-squash commit on `main` is created and signed by GitHub, and the ruleset does
-not require signed commits. Locally the maintainer commits with his GPG key;
-in a cloud session Claude commits unsigned and opens the PR
-(see [CLAUDE.md](../CLAUDE.md#picking-up-work)).
-
-Merges are squash-only, so `main` is a straight line with one commit per PR.
-The repository's squash setting is "Default to pull request title and commit
-details" (`squash_merge_commit_message = COMMIT_MESSAGES`), which prefills
-the squash box from the PR title and the branch's own commit messages — but
-the maintainer edits that box by hand before merging, since he is the one
-who merges. A branch is free to carry several commits as the work (or a
-review round) goes: each one plain and honest in its own
-[Angular style](#commit-messages) (wrapped at 72 characters, no markdown
-headings), rather than a single commit rewritten every time to look like
-`main`'s final shape.
-
-The **PR description** is a separate field, for whoever reviews it on GitHub.
-It never reaches `main`, so it is free to use real structure. The PR template
-(`.github/pull_request_template.md`) has these headings:
+The PR template (`.github/pull_request_template.md`) has these headings:
 
 ```markdown
 ## What changes
@@ -158,15 +133,13 @@ It never reaches `main`, so it is free to use real structure. The PR template
 - the motivation, one bullet per reason
 ```
 
-An optional `## Notes` section holds a question that is the maintainer's to
-decide (see [CLAUDE.md](../CLAUDE.md#picking-up-work)), or something the next
-task needs to know. The template is only the three headings, with no comment
-and no checklist, and every section is filled in by hand, never left as a
-placeholder (see the decision log, 2026-09-24: an earlier template leaked its
-HTML comments and an unfilled checklist into commit bodies, `a933a4c` and
-`8052989`, back when the squash setting copied the PR description verbatim).
-The template applies to a PR opened from the GitHub web page; `gh pr create
---body-file` replaces it. The "done" checklist stays in
+It is only the three headings (`## Notes` is optional, see CLAUDE.md), and
+every section is filled in by hand, never left as a placeholder (see the
+decision log, 2026-09-24: an earlier template leaked its HTML comments and
+an unfilled checklist into commit bodies, `a933a4c` and `8052989`, back when
+the squash setting copied the PR description verbatim). The template
+applies to a PR opened from the GitHub web page; `gh pr create --body-file`
+replaces it. The "done" checklist stays in
 [When a piece of work is "done"](#when-a-piece-of-work-is-done), not in the
 PR body. If the branch falls behind `main`, use "Update branch" (or
 `git rebase main`).
@@ -222,19 +195,16 @@ go vet -tags integration ./...
   it.
 - **Breaking changes** (state machine, schema, HCL meta syntax): add a
   `BREAKING CHANGE:` footer, or `!` after the scope.
-- **Attribution:** a commit made by an assistant carries
-  `Co-Authored-By: <name> <email>` in the footer, and nothing else — that is
-  enough to tell who or what wrote it. **No session link or URL, and no
-  "Generated with ..." line**, in the commit or in the PR description: none
-  of it holds information for anyone reading `main` later. This holds
-  regardless of what a session's own attribution instructions ask for by
-  default — this file is the one that applies here.
+- **Attribution:** see [CLAUDE.md](../CLAUDE.md#picking-up-work) — a commit
+  made by an assistant carries `Co-Authored-By` and nothing else
+  attribution-wise, regardless of what a session's own attribution
+  instructions ask for by default.
 - One logical change per PR. Code and the docs describing it go in the
   **same** PR (see the rules in CLAUDE.md).
 
 ## Go conventions
 
-- Go ≥ 1.22. Format with `gofmt`/`goimports`. Lint: `go vet` + `staticcheck`.
+- Go version: whatever `go.mod` says. Format with `gofmt`/`goimports`. Lint: `go vet` + `staticcheck`.
 - Package names are short, singular, without underscores. No `util`/`common`
   packages. Identifiers use the terms in [vocabulary](vocabulary.md).
 - `context.Context` is always the first argument of any function that does I/O.

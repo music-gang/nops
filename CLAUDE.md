@@ -30,9 +30,10 @@ This file holds only the **working rules**. What the system is and why lives in
   `type/short-description` (e.g. `feat/hooks-package`) and open a PR whose
   **title is an Angular-style message** (`type(scope): subject`): PRs are
   squash-merged, and the maintainer writes the final commit by hand at merge
-  time. No commits, pushes or PRs without an explicit request (a task handed
-  to a cloud session is that request), and **never merge**: the human merges.
-  A branch can carry several commits; each is plain (what changes and why, no
+  time.
+- No commits, pushes or PRs without an explicit request (a task handed to a
+  cloud session is that request), and **never merge**: the human merges.
+- A branch can carry several commits; each is plain (what changes and why, no
   superlatives). The PR description is structured as `## What changes` /
   `## Why` (details and the attribution rule in
   `docs/development.md#workflow-and-ci`).
@@ -121,6 +122,8 @@ in `docs/development.md`.
 
 ```sh
 go test -race -cover ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...   # ~/go/bin/staticcheck may be outdated
-NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration ./tests/integration/...
+go run honnef.co/go/tools/cmd/staticcheck@latest -tags integration ./...   # ~/go/bin/staticcheck may be outdated
+
+# nomad agent -dev in another terminal
+NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration -race -count=1 ./tests/integration/...
 ```
