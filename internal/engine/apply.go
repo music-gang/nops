@@ -97,10 +97,17 @@ func (e *Engine) applyStep(ctx context.Context, d *store.Deployment) {
 }
 
 // applyTransition wraps transition for apply's own steps: a store failure or
-// an illegal/conflicting move is logged here and does not stop the caller.
+// an illegal/conflicting move is logged here and does not stop the caller. A
+// deployment that ends here (completed or failed) asks for a detection cycle:
+// what the dashboard says about the job (in sync, blocked) comes from the last
+// cycle, which is from before the apply.
 func (e *Engine) applyTransition(ctx context.Context, log *slog.Logger, d *store.Deployment, to store.State, message string) {
 	if err := e.transition(ctx, log, d, to, message); err != nil {
 		log.ErrorContext(ctx, "transition", "to", to, "error", err)
+		return
+	}
+	if to == store.StateCompleted || to == store.StateFailed {
+		e.kickDetection()
 	}
 }
 
@@ -467,5 +474,6 @@ func (e *Engine) Reject(ctx context.Context, id, actor string) error {
 		return fmt.Errorf("reject %s: %w", id, err)
 	}
 	e.log.InfoContext(ctx, "deployment rejected", "deployment_id", id, "actor", actor)
+	e.kickDetection() // the job is now blocked, which the last cycle does not know
 	return nil
 }

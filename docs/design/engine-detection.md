@@ -9,7 +9,15 @@ revalidating deployments. It never applies anything — that is
 
 One detection cycle (`Engine.Detect`) runs once at startup, then again on
 every `gitwatch.Watcher.Changed()` signal and on every `-drift-interval` tick
-(`Engine.RunDetection`). A cycle:
+(`Engine.RunDetection`), and it is **asked for** (`Engine.kickDetection`, a
+channel of size 1: a cycle already queued is enough) when a deployment ends
+through apply (`completed` or `failed`), when a human rejects one and on a
+retry. Not from the moves detection makes itself (supersede, "already in
+sync"), which would only queue a cycle behind the one that is running. The
+reason: what the dashboard says about a job (in sync, blocked, its diff) is
+the last cycle's observation, taken before the apply, so without it a job
+that has just completed reads **Drift** until the next tick (five minutes by
+default) and one that has just failed reads Drift instead of Blocked. A cycle:
 
 1. Parses every file of the current `gitwatch.Snapshot` through Nomad
    (`nomadx.ParseHCL`), with a cache keyed by the hash of `(Content, Vars)` so
