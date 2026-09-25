@@ -177,7 +177,7 @@ it, so use a topic nobody can guess, or your own server with a token.
 | `-drift-interval` | `NOPS_DRIFT_INTERVAL` | `5m` | How often Nomad is checked for drift when there is no new commit. |
 | `-engine-interval` | `NOPS_ENGINE_INTERVAL` | `5s` | How often the engine advances active deployments. |
 | `-hook-poll-interval` | `NOPS_HOOK_POLL_INTERVAL` | `5s` | How often a running hook is checked. |
-| `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). |
+| `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may take, from the moment it starts: to register the job (a Nomad error is retried until then) and then to wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). |
 | `-log-level` | `NOPS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 
 The timeout of a hook is not here: it is set on the hook job, with

@@ -150,6 +150,8 @@ usual, `pending_approval` still waits for a human. For the rest:
 - `applying`: re-read the live job. If `JobModifyIndex == cas_index`, repeat
   the CAS register. If the index has changed and the plan of our spec is empty,
   the apply had already happened and we move on. Otherwise `failed` (conflict).
+  A Nomad error on the way is retried, until the apply timeout counted from the
+  `→ applying` event, then `failed`.
   To record `applied_index`, re-read the live job: the index in the register
   response is not reliable (see the decision log).
 - `applying` with `applied_index` set: wait for health as before, the timeout

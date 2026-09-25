@@ -105,6 +105,14 @@ CAS conflict actually closes the deployment.
   happened (a crash between `RegisterCAS` succeeding and the next step) — carry
   on as below without registering again. Any other mismatch → `Transition` to
   `failed` ("conflict: live job changed and our spec no longer applies").
+  A Nomad error before the register has gone through (reading the live job,
+  either `Plan`, `RegisterCAS` other than a CAS conflict) is retried next
+  tick, and once `ApplyTimeout` has passed since `AppliedSince(id)` the
+  deployment is `failed` ("could not register within <timeout>: <error>"; see
+  [Decisions](#decisions), 4). Without that bound an error that never heals (a
+  namespace no longer in Nomad, a token without `submit-job`, a spec Nomad
+  refuses) would leave the deployment `applying` and hold the job's only active
+  slot for good.
   Once registered (or found already applied): re-read the live job once more
   and call `SetApplied(id, JobModifyIndex, EvalID)` — never the index from the
   register response (decision log, 2026-09-23: "the register response can
@@ -202,11 +210,13 @@ expanded here.
    happened before a restart (decision 2's crash-recovery case, where there
    is no fresh eval to poll), and needs no new `nomadx.Evaluation` wrapper.
    Both paths are covered by an integration test against `nomad agent -dev`.
-4. **The apply timeout counts from the `→ applying` event.**
-   `Store.AppliedSince(ctx, id string) (time.Time, error)` reads the
+4. **The apply timeout counts from the `→ applying` event, and bounds the
+   whole state.** `Store.AppliedSince(ctx, id string) (time.Time, error)` reads the
    timestamp of that deployment's `→ applying` row in `events` (already
    written by `Transition`, no schema change). This survives a restart, same
-   rule as hook timeouts ("a restart does not extend it").
+   rule as hook timeouts ("a restart does not extend it"). It bounds the wait
+   for health and the register step alike: a Nomad error while registering is
+   retried until then, and fails the deployment after it.
 5. **An apply that does not become healthy in time is passive.** Only
    `Transition` to `failed` with a message, exactly like a hook timeout — no
    `nomad deployment fail` call, no automatic revert. This follows from
@@ -288,7 +298,7 @@ expanded here.
 table- and scenario-driven over every case in
 [Per-deployment step](#per-deployment-step) above (both hooks
 skipped/declared/failed/timed out, CAS conflict, already-applied-after-crash,
-Nomad deployment failed, apply timeout, the detection race in
+Nomad deployment failed, apply timeout (waiting for health and registering), the detection race in
 [Races with detection](#races-with-detection)), the anti-loop rule and
 `BlockedBy`/`BlockedReason` from decisions 6 and 7 (a job whose latest
 deployment failed after applying stays blocked across a live-index change,
