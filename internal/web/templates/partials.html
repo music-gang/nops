@@ -265,7 +265,7 @@
     <dl class="dl">
       <dt>Job</dt><dd><a href="{{.Deployment.JobPath}}">{{.Deployment.Title}}</a></dd>
       <dt>Policy</dt><dd>{{.Deployment.Policy}}</dd>
-      <dt>Commit</dt><dd class="mono" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</dd>
+      <dt>Commit</dt><dd class="mono">{{if .Deployment.CommitURL}}<a href="{{.Deployment.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</a>{{else}}<span title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</span>{{end}}</dd>
       <dt>Spec hash</dt><dd class="mono" title="{{.Deployment.SpecHash}}">{{.Deployment.SpecShort}}</dd>
       <dt>Live index</dt><dd class="mono" title="The job's index in Nomad when this was detected">{{.Deployment.CASIndex}}</dd>
       {{if .Deployment.EvalID}}<dt>Eval</dt><dd class="mono" title="{{.Deployment.EvalID}}">{{.Deployment.EvalShort}}</dd>{{end}}

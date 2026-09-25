@@ -2,6 +2,7 @@
 {{template "chrome_head" .}}
 <div class="pagehead"><h1 class="pagehead__title">Overview</h1></div>
 
+<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 <section class="box strip">
   <div class="strip__row">
     <span class="strip__label">Git</span>
@@ -10,11 +11,11 @@
       {{if .Git.URL}}<a class="mono" href="{{.Git.URL}}" target="_blank" rel="noopener noreferrer" title="{{.Git.SHA}}">{{.Git.Short}}</a>{{else}}<span class="mono" title="{{.Git.SHA}}">{{.Git.Short}}</span>{{end}}
       <span class="strip__text" title="{{.Git.Subject}}">{{.Git.Subject}}</span>
     </span>
-    <span class="strip__meta hide-sm">{{if .Git.Author}}{{.Git.Author}} &middot; {{end}}{{template "time" .Git.CommittedAt}}</span>
+    <span class="strip__meta hide-sm">{{if .Git.Author}}by {{.Git.Author}} &middot; {{end}}committed {{template "time" .Git.CommittedAt}}</span>
     {{else}}
     <span class="strip__main muted">no commit read yet</span>
     {{end}}
-    <span class="strip__meta">checked {{template "time" .Git.CheckedAt}}</span>
+    <span class="strip__meta">repository checked {{template "time" .Git.CheckedAt}}</span>
     {{if .Git.CanFetch}}
     <form method="post" action="/fetch" class="strip__action">
       <button type="submit" class="btn btn--sm">Fetch now</button>
@@ -96,5 +97,6 @@
   <p class="empty">No deployment is in progress.</p>
   {{end}}
 </section>
+</div>
 {{template "chrome_foot" .}}
 {{end}}

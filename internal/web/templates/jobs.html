@@ -4,6 +4,7 @@
   <h1 class="pagehead__title">Jobs</h1>
   <p class="pagehead__text">Every managed job, policy <span class="mono">none</span> included, against git: what nops last observed, rebuilt every detection cycle.</p>
 </div>
+<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 {{template "filters" .Filters}}
 {{if .Rows}}
 <div class="box">
@@ -33,5 +34,6 @@
 {{else}}
 <p class="empty box">{{if .Total}}No job matches this filter.{{else}}No managed job observed yet.{{end}}</p>
 {{end}}
+</div>
 {{template "chrome_foot" .}}
 {{end}}
