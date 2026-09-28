@@ -1081,3 +1081,31 @@ func TestDetectAbortsOnStoreFailure(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+// A pending approval is only worth deciding while the job's policy still asks
+// for one: docs/state-machine.md, "Revalidating pending deployments".
+func TestPolicyChangedToNoneSupersedesAPendingDeployment(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "approval", nil))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+	h.detect()
+	first := h.active("web")
+	if first.State != store.StatePendingApproval {
+		t.Fatalf("setup: deployment = %+v, want pending_approval", first)
+	}
+
+	h.nomad.setFile("web-v2", managed("web", "none", nil))
+	h.snap.set("c2", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v2"})
+	h.detect()
+
+	old, _ := h.store.GetDeployment(context.Background(), first.ID)
+	if old.State != store.StateSuperseded {
+		t.Fatalf("old deployment = %+v, want superseded", old)
+	}
+	evs, _ := h.store.Events(context.Background(), first.ID)
+	if last := evs[len(evs)-1]; last.Message != "policy changed to none" {
+		t.Errorf("last event message = %q, want %q", last.Message, "policy changed to none")
+	}
+	h.noActive("web") // under none nothing new is created, whatever the drift
+}

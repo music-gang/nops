@@ -54,6 +54,13 @@ scale", we don't build it.
    been saved to SQLite. If the DB write fails, we do not proceed.
    *Why:* after a crash we must know what we were about to do, otherwise
    recovery cannot be idempotent.
+   *Two stops have no intent of their own*, because what they act on is already
+   persisted: the stop of a hook run that timed out happens **before**
+   `timed_out` is saved (the deadline is `started_at` + timeout, both in
+   SQLite, and stopping is idempotent, so a crash in between just stops it
+   again; [decision log](design/decisions.md), 2026-09-23), and the garbage
+   collection of hook revisions derives what to stop from the non-terminal
+   deployments in the store.
 
 ## Patterns reused from nomad-gitops
 
@@ -63,13 +70,13 @@ these patterns.
 
 | Pattern | Notes for nops |
 |---|---|
-| Parse HCL via `/v1/jobs/parse` (`Jobs().ParseHCL(src, true)`) | No local HCL parser: Nomad is the only interpreter. |
+| Parse HCL via `/v1/jobs/parse` (`Jobs().ParseHCLOpts`, canonicalized, with the vars file as `Variables`) | No local HCL parser: Nomad is the only interpreter. |
 | Diff via `Jobs.Plan(job, diff=true)` | The same `JobDiff` drives the decision and the dashboard. |
 | CAS register with `JobModifyIndex` | See invariant 2. |
 | Detection and apply decoupled; the newest commit supersedes the old one | The queue is persistent (SQLite). |
 | Secret redaction in the diff (`Env[...]`, templates, *password/token/secret* keys) | Applied **before** the diff is saved to the DB or rendered in HTML. nops also covers headers, URL credentials and more names (*auth*, *credential*, *privatekey*, *apikey*): see [dashboard](dashboard.md#secret-redaction). |
 | In-memory git clone (go-git) + poll + webhook with a coalescing trigger (buffer-1 channel) | Read-only. |
-| `PreserveCounts`, and Count ignored for groups with a scaling policy | Don't fight the autoscaler. |
+| Count ignored for groups with a scaling policy | Don't fight the autoscaler: before the plan, such a group takes its `Count` from the live job ([engine-detection](design/engine-detection.md#spec_hash-is-computed-before-the-live-cluster-adjustment)). nops does **not** use Nomad's `PreserveCounts` register option: it keeps the count of *every* group, so a count changed on purpose in git would be silently undone. |
 
 **Deliberately dropped:** the stateless design (nops needs state for approvals
 and hooks), the `image-only` policy, flap guard and active rollback,

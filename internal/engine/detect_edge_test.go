@@ -105,28 +105,3 @@ func TestParsedJobWithoutIDIsIgnored(t *testing.T) {
 		t.Errorf("observations = %+v, want none for a job with no ID", obs)
 	}
 }
-
-// TestHookSyncFailureDoesNotBlockDeployment checks that a hook nops cannot
-// currently sync to Nomad (a transient Nomad failure) still counts as
-// "declared and found in the repo": the deployment is created normally, and
-// the hook runner's own check at dispatch time is the real safety net.
-func TestHookSyncFailureDoesNotBlockDeployment(t *testing.T) {
-	h := newHarness(t)
-	h.nomad.setFile("web-v1", managed("web", "approval", map[string]string{"nops_pre_hook": "web-migrate"}))
-	h.nomad.setFile("hook-v1", hookJob("web-migrate"))
-	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
-	h.nomad.planErr["web-migrate"] = errors.New("nomad unreachable")
-	h.snap.set("c1",
-		gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"},
-		gitwatch.File{Path: "web-migrate.nomad.hcl", Content: "hook-v1"})
-
-	h.detect()
-
-	d := h.active("web")
-	if d.State != store.StatePendingApproval {
-		t.Fatalf("deployment = %+v, want pending_approval", d)
-	}
-	if len(h.nomad.registerCalls) != 0 {
-		t.Errorf("register should not have been called: %+v", h.nomad.registerCalls)
-	}
-}

@@ -136,9 +136,12 @@ The PR template (`.github/pull_request_template.md`) has these headings:
 ## Why
 
 - the motivation, one bullet per reason
+
+## Notes
 ```
 
-It is only the three headings (`## Notes` is optional, see CLAUDE.md), and
+It is only the three headings (`## Notes` is optional, see CLAUDE.md: delete
+it when there is nothing to say), and
 every section is filled in by hand, never left as a placeholder (see the
 decision log, 2026-09-24: an earlier template leaked its HTML comments and
 an unfilled checklist into commit bodies, `a933a4c` and `8052989`, back when
@@ -236,9 +239,11 @@ The `release` workflow (`.github/workflows/release.yml`) then:
    without publishing, and runs the image's `-version`, which must print the
    tag;
 3. runs the real release: the `linux/amd64` binary as a `tar.gz`,
-   `checksums.txt` and a changelog from the commit subjects (features and
-   fixes; `docs`, `ci`, `chore`, `build`, `test` and `style` are left out) go
-   on the GitHub Release, and the image goes to `ghcr.io/music-gang/nops`.
+   `checksums.txt` and a changelog from the commit subjects (*Breaking
+   changes*, *Features*, *Fixes* and an *Other* group for what remains, such as
+   `refactor`, `perf` and `revert`; `docs`, `ci`, `chore`, `build`, `test` and
+   `style` are left out) go on the GitHub Release, and the image goes to
+   `ghcr.io/music-gang/nops`.
 
 It is the only job with write permissions (`contents` for the Release,
 `packages` for GHCR), and logs in to GHCR with its own `GITHUB_TOKEN`.

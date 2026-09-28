@@ -6,7 +6,8 @@ nops prefers to stop and say so rather than carry on with uncertain state.
 
 - **Every state transition goes through a single store function**
   (`Store.Transition`), which updates `deployments` and writes `events` in the
-  same transaction and logs at INFO. There are no "manual" transitions.
+  same transaction; the engine logs each one at INFO (a `failed` at ERROR, see
+  below). There are no "manual" transitions.
 - **Every `failed`** is logged at ERROR with `deployment_id`, `job`, `phase`
   and the cause, and sends a [notification](#notifications).
   `pending_approval` sends a notification too.

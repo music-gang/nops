@@ -55,7 +55,11 @@ gone; they are reported as unknown keys (WARN) that say what replaces them.
 - An **unknown key** under `nops_` (for example a typo like `nops_polcy`): a
   **WARN** log. It does not change behaviour.
 - An **invalid value** for a recognised key: an **ERROR** log and **policy
-  `none` for the whole job**: no deployment until the HCL is fixed.
+  `none` for the whole job**: no deployment until the HCL is fixed. The
+  Overview lists it as *Invalid meta*. The one exception is `nops_managed`
+  itself: with a value that is neither `"true"` nor `"false"` (`"True"`, say)
+  the job is not managed, so nops **ignores it** like any job without the key:
+  an ERROR in the log and nothing on the dashboard.
 - `nops_policy` without `nops_managed = "true"`, or `nops_timeout` on a job
   that is not a hook: WARN, the key is ignored.
 - A list of hooks with an **empty item** (`"backup,,migrate"`, a trailing
