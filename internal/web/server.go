@@ -102,6 +102,10 @@ type Options struct {
 	// incoming webhook request. Empty disables /webhook/git (a 404).
 	WebhookSecret string
 
+	// Version is the build shown in the dashboard's footer and in the
+	// /healthz body. Optional: empty shows none.
+	Version string
+
 	Log *slog.Logger
 }
 
@@ -115,6 +119,7 @@ type server struct {
 	commitURL func(sha string) string
 	now       func() time.Time
 	secret    []byte
+	version   string
 	log       *slog.Logger
 	tmpl      *template.Template
 	static    fs.FS
@@ -151,6 +156,7 @@ func New(o Options) (http.Handler, error) {
 		commitURL: o.CommitURL,
 		now:       o.Now,
 		secret:    []byte(o.WebhookSecret),
+		version:   o.Version,
 		log:       o.Log,
 		tmpl:      tmpl,
 		static:    staticDir,
@@ -200,11 +206,12 @@ func (s *server) routes() *http.ServeMux {
 }
 
 // healthz never requires a session: it is what an orchestrator or a load
-// balancer probes.
+// balancer probes. The body names the build ("ok v0.1.0"), so a probe or a
+// person can tell which release answers; a probe only reads the status.
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, "ok")
+	fmt.Fprintln(w, strings.TrimSpace("ok "+s.version))
 }
 
 // noStoreExempt serves static assets with a cacheable header instead of the

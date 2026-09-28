@@ -85,6 +85,21 @@ runnable ones, each paired with the job it deploys:
 The integration tests check that they still parse, that their hooks exist and
 that they need nothing but Nomad (no Consul).
 
+## Running it
+
+Each release publishes an image and a `linux/amd64` binary:
+
+```sh
+docker run --rm ghcr.io/music-gang/nops:0.1 -version
+```
+
+The binary, with its checksums, is on the
+[Releases](https://github.com/music-gang/nops/releases) page. Every option is
+a flag or a `NOPS_*` variable ([configuration](docs/configuration.md)), which
+also has a ready-made [Nomad job](docs/configuration.md#running-nops-as-a-nomad-job).
+While nops is at `v0`, a new minor may break the configuration: pin a minor
+(`0.1`), not `latest`.
+
 ## Design principles
 
 - **Plan before every write, CAS on every write.**

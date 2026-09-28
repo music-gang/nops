@@ -18,6 +18,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **deployment** | One attempt to bring a job to a given spec, a row in SQLite with a state machine. | The rolling-update tracker Nomad creates after a register. | Bare "deployment" is always the nops one. Write **Nomad deployment** for the other. |
 | **job** | A Nomad job, seen through nops. | The same. | Qualify it when it matters: **live job**, **target job**, **hook job**, **dispatched job**. |
 | **evaluation**, **allocation** | Not used as nops concepts. | Scheduler terms. | Only in code that talks to Nomad (`nomadx`, outcome detection). |
+| **version** | The build of nops: a release tag (`v0.1.0`) or, for a dev build, a Go pseudo-version ([releasing](development.md#releasing)). | A job's version (`Job.Version`), which Nomad bumps on a register that changes the job. | Write **nops version** or **job version** when both could be meant. |
 | **stop** | Deregistering a job without purge (`StopJob`): a dispatched job whose hook timed out, or a hook revision no deployment needs. | Same operation, `DELETE /v1/job/<id>`. | nops stops a dispatched job of a hook that timed out, and the hook revisions no deployment needs. It never deregisters anything else. |
 
 ## Jobs and specs
@@ -117,3 +118,4 @@ what to call them.
 | **ready / plan first** | Whether a task can be done unattended, or its open design questions still need the maintainer's answer before any branch exists. |
 | **decision log** | [`design/decisions.md`](design/decisions.md): one row per design decision, added in the PR that takes it. |
 | **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
+| **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and changelog on the GitHub Release ([releasing](development.md#releasing)). |

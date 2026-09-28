@@ -106,7 +106,8 @@ avoids the problem.
 `main` is protected by a repository ruleset: a pull request is required, the
 checks below must pass on an up-to-date branch, history must be linear, and
 force pushes and deletion are blocked. No approvals are required (there is a
-single maintainer): CI is the gate.
+single maintainer): CI is the gate. Release tags have their own two rulesets,
+described in [Releasing](#releasing).
 
 The step-by-step flow — branching, committing, opening a PR, the PR
 description's `## What changes` / `## Why` / `## Notes` shape — is in
@@ -150,19 +151,20 @@ PR body. If the branch falls behind `main`, use "Update branch" (or
 | Check | Required | What it runs |
 |---|---|---|
 | `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
-| `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`) |
+| `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`), `goreleaser check` of `.goreleaser.yaml` |
 | `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev`, runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
 | `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject (at most 72 characters) without trailing period |
 | `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
 
 CodeQL (default setup), secret scanning with push protection, and Dependabot
-(Go modules and GitHub Actions, weekly, titled `build(deps): ...` and
-`ci(deps): ...`) are enabled on the repository.
+(Go modules, GitHub Actions and the Dockerfile's base image, weekly, titled
+`build(deps): ...` and `ci(deps): ...`) are enabled on the repository.
 
 Supply-chain rules: every GitHub Action is pinned to a full commit SHA (the
 repository enforces it), and the workflow token is read-only. Dependabot
-proposes the SHA bumps. The versions of `staticcheck` and `govulncheck` are
-pinned in the workflows and bumped by hand.
+proposes the SHA bumps. The versions of `staticcheck`, `govulncheck` and
+goreleaser are pinned in the workflows and bumped by hand. The workflow token
+is read-only everywhere except the `release` job (see [Releasing](#releasing)).
 
 To run locally what CI runs, use the commands in [Commands](#commands), plus:
 
@@ -170,6 +172,115 @@ To run locally what CI runs, use the commands in [Commands](#commands), plus:
 test -z "$(gofmt -l .)" && go mod tidy && git diff --exit-code go.mod go.sum
 go vet -tags integration ./...
 ```
+
+## Releasing
+
+A release is a `vX.Y.Z` tag on a commit of `main`. There is no image of
+`main` itself.
+
+**Versions.** nops is at `v0`. While the major is 0, **a minor may break**
+(configuration, database, behaviour) and **a patch never does**; from `v1`,
+plain semver (a major breaks, a minor adds, a patch fixes). The maintainer
+decides when nops is stable enough for `v1`. A breaking change in a `v0`
+minor is named in the release notes.
+
+**Cutting one:**
+
+1. `main` is green and nothing you want in it is still open (`gh pr list`).
+2. Pick the number from what has landed since the last tag
+   (`git log <last-tag>..origin/main --oneline`): only `fix` is a patch,
+   anything else a minor (at `v0` breaking changes go in a minor, never a
+   patch).
+3. A risky change (a migration, a renamed option) goes out as a release
+   candidate first, `v0.2.0-rc.1`: it gets only its exact tag, is marked a
+   prerelease on GitHub and does not move `0.2` or `latest`. Try it on the
+   cluster, then tag the final one.
+4. Tag the commit of `origin/main`, not a local `main` that may be behind:
+
+   ```sh
+   git fetch origin
+   git tag -s v0.2.0 -m v0.2.0 origin/main
+   git push origin v0.2.0
+   ```
+
+5. Watch the run (`gh run watch`), then check the result:
+   `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version` and the Release
+   page.
+6. If the release breaks something, add an "Upgrade notes" section by hand
+   at the top of the Release (what to change in the job or the database).
+7. Update the image in nops's own Nomad job.
+8. If it goes wrong, **never move or recreate a tag** (the ruleset below
+   forbids it): go back to the previous image in the job and cut a patch.
+
+A breaking change is marked with `!` before the colon in its commit subject
+(`feat(config)!: rename -git-url`) **and** carries a `BREAKING CHANGE:` footer
+(see [Commit messages](#commit-messages)). The changelog lists the `!`
+commits first, under *Breaking changes*, whatever their type, but reads only
+the subject: the footer does not change where a commit goes, it is what
+explains the break to the person upgrading. The maintainer writes the final
+subject and footer at merge time.
+
+The `release` workflow (`.github/workflows/release.yml`) then:
+
+1. refuses a tag whose commit is not on `main`;
+2. builds everything with goreleaser (`.goreleaser.yaml`) as a snapshot,
+   without publishing, and runs the image's `-version`, which must print the
+   tag;
+3. runs the real release: the `linux/amd64` binary as a `tar.gz`,
+   `checksums.txt` and a changelog from the commit subjects (features and
+   fixes; `docs`, `ci`, `chore`, `build`, `test` and `style` are left out) go
+   on the GitHub Release, and the image goes to `ghcr.io/music-gang/nops`.
+
+It is the only job with write permissions (`contents` for the Release,
+`packages` for GHCR), and logs in to GHCR with its own `GITHUB_TOKEN`.
+
+**Who can tag.** Two rulesets cover the tags `v*`: "release tags: creation"
+lets only a repository admin create one (a bypass for the admin role, nobody
+else and no workflow), and "release tags: immutable" forbids updating or
+deleting one, with no bypass at all: a published version is never rewritten.
+A ruleset cannot check that the tagged commit is on `main`; the workflow does
+(step 1 above). If a tag was pushed by mistake and its workflow failed
+before publishing, an admin has to lift the ruleset to remove it, which is on
+purpose.
+
+**Image tags** for `vX.Y.Z`: `X.Y.Z`, `X.Y`, `latest` and, from `v1` only,
+`X`. A major-only tag at `v0` would move across breaking minors, so it is not
+published. A prerelease (`v0.2.0-rc.1`) gets only its exact tag.
+
+**The image** (`Dockerfile`) is `gcr.io/distroless/static-debian13:nonroot`,
+pinned by digest, with the binary goreleaser built copied in: the CA bundle,
+tzdata and the `nonroot` user (uid 65532), nothing else (no shell, no `git`,
+so a `file://` repository URL does not work in it). The working directory is
+`/home/nonroot`, writable, so a throwaway `docker run` works with the default
+`-db-path`. The Go toolchain is the `go` line of `go.mod`, installed by the
+SHA-pinned `setup-go`: nothing is compiled inside the image.
+
+**The version** comes from the tag, linked at build time:
+`-ldflags "-X github.com/music-gang/nops/internal/version.version=<tag>"`
+(`internal/version`). A build without it reports what the Go toolchain
+recorded: the tag for `go install ...@vX.Y.Z`, a pseudo-version
+(`v0.0.0-<date>-<commit>`, with `+dirty` for uncommitted changes) for a
+`go build` in a checkout. It shows in `nops -version`, the `starting` log
+line, the dashboard's footer and the `/healthz` body. The integration tests
+build the binary with the same `-X` flag.
+
+**Trying it locally**, with Docker running:
+
+```sh
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/src -w /src \
+  -e GOFLAGS=-buildvcs=false --entrypoint sh goreleaser/goreleaser:v2.18.2 \
+  -c 'git config --global --add safe.directory /src && goreleaser release --snapshot --clean'
+docker run --rm ghcr.io/music-gang/nops:<snapshot version>-amd64 -version
+```
+
+**Bumped by hand:** the goreleaser version (in `release.yml` and `ci.yml`,
+together), and the Debian release of the base image (`static-debian13` to a
+future `static-debian14`: a different image name, which Dependabot does not
+propose; it only bumps the digest).
+
+**Once, after the first release:** check that the GHCR package is linked to
+the repository (the `org.opencontainers.image.source` label does it) and
+public.
 
 ## Commit messages
 
@@ -196,8 +307,12 @@ go vet -tags integration ./...
   for how the maintainer turns them into the one commit that lands on
   `main`, and how the PR description, a separate and richer text, relates to
   it.
-- **Breaking changes** (state machine, schema, HCL meta syntax): add a
-  `BREAKING CHANGE:` footer, or `!` after the scope.
+- **Breaking changes** (state machine, schema, HCL meta syntax, flags and
+  environment variables): **both** `!` after the scope, and a
+  `BREAKING CHANGE:` footer saying what breaks and what to do about it. The
+  `!` is what puts the commit under *Breaking changes* in the release
+  changelog, which reads only the subject
+  ([Releasing](#releasing)); the footer is what a person reads there.
 - **Attribution:** see [CLAUDE.md](../CLAUDE.md#picking-up-work) — a commit
   or PR description made by an assistant carries `Co-Authored-By` (commits
   only) and nothing else attribution-wise, regardless of what a session's

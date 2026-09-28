@@ -156,6 +156,7 @@ time { white-space: nowrap; }
 .btn-link:hover { color: var(--header-fg); text-decoration: underline; }
 
 .page { max-width: 1280px; margin: 0 auto; padding: 24px; }
+.app-footer { max-width: 1280px; margin: 0 auto; padding: 0 24px 24px; font-size: 12px; }
 
 .pagehead { margin-bottom: 16px; }
 .pagehead__title {

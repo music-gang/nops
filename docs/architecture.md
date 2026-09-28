@@ -19,6 +19,7 @@ approval [dashboard](dashboard.md).
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Login, OIDC or local users depending on `-auth-mode` ([dashboard](dashboard.md#authentication)), the dashboard (`net/http` + `html/template`) and the git webhook. |
 | `internal/notify` | [Notifications](error-handling.md#notifications) on `pending_approval` and `failed`, through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |
+| `internal/version` | Which build is running: the release tag linked at build time, else what the Go toolchain recorded ([releasing](development.md#releasing)). |
 | `internal/redact` | Removes secret values from the plan diff before it is saved or shown ([rules](dashboard.md#secret-redaction)). A pure function, called by `engine` at detection. |
 
 ## Execution model: active, not lazy

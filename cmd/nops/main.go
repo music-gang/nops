@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/notify"
 	"github.com/music-gang/nops/internal/store"
+	"github.com/music-gang/nops/internal/version"
 	"github.com/music-gang/nops/internal/web"
 )
 
@@ -43,6 +45,10 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
 		}
+		if errors.Is(err, config.ErrVersion) {
+			fmt.Println(version.String())
+			os.Exit(0)
+		}
 		// Load only writes flag-parse errors and -h usage to os.Stderr
 		// itself; a validation error (a missing required option, and so
 		// on) is only ever returned, so it is on us to print it.
@@ -61,6 +67,7 @@ func main() {
 // It never logs cfg itself: it holds the Nomad and git tokens, the OIDC
 // client secret and the webhook secret.
 func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	log.Info("starting", startupAttrs(cfg)...)
 	if cfg.NomadTLSSkipVerify {
 		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
 	}
@@ -110,7 +117,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	handler, err := web.New(web.Options{
 		Auth: auth, Store: st, Engine: eng, Git: watcher, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
-		WebhookSecret: cfg.WebhookSecret, Log: log,
+		WebhookSecret: cfg.WebhookSecret, Version: version.String(), Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
@@ -158,6 +165,25 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	wg.Wait()
 	return runErr
+}
+
+// startupAttrs is what the "starting" line says: which build runs, and the
+// settings that tell one instance from another. Only addresses, names and
+// paths: never a secret, and not whether one is set either (a missing
+// required secret already stops Load).
+func startupAttrs(cfg *config.Config) []any {
+	return []any{
+		"version", version.String(),
+		"go", runtime.Version(),
+		"listen_addr", cfg.ListenAddr,
+		"nomad_addr", cfg.NomadAddr,
+		"namespaces", cfg.NomadNamespaces,
+		"git_url", gitwatch.StripCredentials(cfg.GitURL),
+		"git_branch", cfg.GitBranch,
+		"git_path", cfg.GitPath,
+		"auth_mode", cfg.AuthMode,
+		"db_path", cfg.DBPath,
+	}
 }
 
 // newAuthenticator builds the login backend config.check() approved:

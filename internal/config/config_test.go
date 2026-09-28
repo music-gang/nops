@@ -689,6 +689,25 @@ func TestLoadArguments(t *testing.T) {
 	}
 }
 
+// -version needs nothing else set, wins over invalid options and has no
+// environment variable.
+func TestLoadVersion(t *testing.T) {
+	if _, err := Load([]string{"-version"}, rawEnvOf(nil), io.Discard); !errors.Is(err, ErrVersion) {
+		t.Errorf("-version with nothing set: err = %v, want ErrVersion", err)
+	}
+	if _, err := Load([]string{"-version", "-apply-timeout=0s"}, rawEnvOf(nil), io.Discard); !errors.Is(err, ErrVersion) {
+		t.Errorf("-version with an invalid option: err = %v, want ErrVersion", err)
+	}
+	if _, err := Load(nil, envOf(map[string]string{"NOPS_GIT_URL": repo, "NOPS_VERSION": "true"}), io.Discard); err != nil {
+		t.Errorf("NOPS_VERSION: err = %v, want a normal load", err)
+	}
+	var out strings.Builder
+	_, _ = Load([]string{"-h"}, rawEnvOf(nil), &out)
+	if !strings.Contains(out.String(), "-version") {
+		t.Error("usage does not list -version")
+	}
+}
+
 func TestOptionsTable(t *testing.T) {
 	seen := make(map[string]bool)
 	for _, o := range options {
