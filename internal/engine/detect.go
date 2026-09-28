@@ -144,7 +144,11 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed
 			}
 			entry = parseEntry{job: job, err: err}
 		}
-		next[key] = entry
+		// Only a success is kept: a failure may be Nomad unreachable for a
+		// moment, and would otherwise stick until the content changed.
+		if entry.err == nil {
+			next[key] = entry
+		}
 
 		switch {
 		case entry.err != nil:
