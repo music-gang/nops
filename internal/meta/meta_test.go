@@ -8,14 +8,15 @@ import (
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		name       string
-		in         map[string]string
-		managed    bool
-		policy     Policy
-		pre, post  []string
-		isHook     bool
-		timeout    time.Duration
-		wantIssues []Issue
+		name            string
+		in              map[string]string
+		managed         bool
+		policy          Policy
+		pre, post       []string
+		isHook          bool
+		timeout         time.Duration
+		notifyCompleted bool
+		wantIssues      []Issue
 	}{
 		{
 			name:   "empty meta is unmanaged with policy none",
@@ -202,6 +203,37 @@ func TestParse(t *testing.T) {
 				{SeverityError, KeyRole, "invalid value \"worker\" (want \"hook\")"},
 			},
 		},
+		{
+			name:            "opt in to a notification on completed",
+			in:              map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyNotifyCompleted: "true"},
+			managed:         true,
+			policy:          PolicyAuto,
+			notifyCompleted: true,
+		},
+		{
+			name:    "explicit opt out is the same as not set",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyNotifyCompleted: "false"},
+			managed: true,
+			policy:  PolicyAuto,
+		},
+		{
+			name:    "invalid notify-completed value falls back to none",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyNotifyCompleted: "yes"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyNotifyCompleted, "invalid value \"yes\" (want \"true\" or \"false\")"},
+			},
+		},
+		{
+			name:            "notify-completed on an unmanaged job is a warning and still parses",
+			in:              map[string]string{KeyNotifyCompleted: "true"},
+			policy:          PolicyNone,
+			notifyCompleted: true,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyNotifyCompleted, "set but nops_managed is not \"true\": ignored"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -224,6 +256,9 @@ func TestParse(t *testing.T) {
 			}
 			if got.IsHook != tc.isHook {
 				t.Errorf("IsHook = %v, want %v", got.IsHook, tc.isHook)
+			}
+			if got.NotifyCompleted != tc.notifyCompleted {
+				t.Errorf("NotifyCompleted = %v, want %v", got.NotifyCompleted, tc.notifyCompleted)
 			}
 			if !reflect.DeepEqual(got.Issues, tc.wantIssues) {
 				t.Errorf("Issues = %+v, want %+v", got.Issues, tc.wantIssues)

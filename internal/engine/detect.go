@@ -445,10 +445,12 @@ func (e *Engine) supersedeRemoved(ctx context.Context, seen map[jobKey]bool) err
 	return nil
 }
 
-// transition moves d to `to` and, for the two states that need a human
-// (pending_approval and failed), notifies after the transition is persisted
-// (invariant 7). A conflict (someone else moved the deployment first, or an
-// illegal move) is logged and skipped rather than aborting the cycle.
+// transition moves d to `to` and notifies after the transition is persisted
+// (invariant 7): unconditionally for the two states that need a human
+// (pending_approval and failed), and for completed only when the job opted
+// in (notifyOnCompleted). A conflict (someone else moved the deployment
+// first, or an illegal move) is logged and skipped rather than aborting the
+// cycle.
 func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Deployment, to store.State, message string) error {
 	t := store.Transition{From: d.State, Actor: "nops", Message: message}
 	if to == store.StateFailed {
@@ -463,7 +465,11 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 	}
 	log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)
 
-	if to != store.StatePendingApproval && to != store.StateFailed {
+	notify := to == store.StatePendingApproval || to == store.StateFailed
+	if to == store.StateCompleted {
+		notify = notifyOnCompleted(ctx, d, log)
+	}
+	if !notify {
 		return nil
 	}
 	fresh, err := e.store.GetDeployment(ctx, d.ID)
@@ -473,6 +479,22 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 	}
 	go e.notifier.Notify(ctx, fresh)
 	return nil
+}
+
+// notifyOnCompleted reads the opt-in a completed deployment's own job froze
+// at detection (nops_notify_completed, docs/meta-keys.md): the spec is
+// already stored in JobSpec, so a later edit in git only ever affects the
+// *next* deployment, never one already on its way to completed. A JobSpec
+// that fails to parse is a bug or a corrupt database, not something to
+// notify about either way: it is logged and treated as opted out, exactly
+// like a failed delivery is a soft failure elsewhere.
+func notifyOnCompleted(ctx context.Context, d *store.Deployment, log *slog.Logger) bool {
+	var job api.Job
+	if err := json.Unmarshal([]byte(d.JobSpec), &job); err != nil {
+		log.ErrorContext(ctx, "parse job spec for the completed notification opt-in", "deployment_id", d.ID, "error", err)
+		return false
+	}
+	return meta.Parse(job.Meta).NotifyCompleted
 }
 
 func storePolicy(p meta.Policy) store.Policy {

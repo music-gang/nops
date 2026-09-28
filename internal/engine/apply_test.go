@@ -618,6 +618,25 @@ func TestStepHealthAllocationsPathNoNomadDeployment(t *testing.T) {
 	}
 }
 
+func TestStepHealthCompletedNotifiesWhenOptedIn(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", map[string]string{meta.KeyNotifyCompleted: "true"})
+	d := h.applyingWithIndex("web", job, 9)
+	h.liveApplied("web", job, 9, 3)
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running"})
+
+	h.step(d)
+
+	got := h.get(d.ID)
+	if got.State != store.StateCompleted {
+		t.Fatalf("state = %s, want completed", got.State)
+	}
+	calls := h.notifier.waitFor(t, 1)
+	if calls[0].ID != d.ID || calls[0].State != store.StateCompleted {
+		t.Errorf("notify called with = %+v", calls[0])
+	}
+}
+
 func TestStepHealthAllocationsPathFailedAlloc(t *testing.T) {
 	h := newHarness(t)
 	job := managed("web", "auto", nil)

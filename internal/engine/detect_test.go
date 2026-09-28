@@ -692,6 +692,55 @@ func TestRevalidationCompletesOnEmptyPlan(t *testing.T) {
 	h.noActive("web")
 }
 
+func TestRevalidationCompletedNotifiesWhenOptedIn(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "approval", map[string]string{meta.KeyNotifyCompleted: "true"}))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+	h.detect() // creates the pending_approval deployment, and notifies for it
+
+	// The job converges (someone applied it by hand): no more drift, the
+	// pending deployment completes without ever being approved.
+	delete(h.nomad.plan, "web")
+	h.detect()
+
+	calls := h.notifier.waitFor(t, 2) // pending_approval, then completed
+	var sawCompleted bool
+	for _, c := range calls {
+		if c.State == store.StateCompleted {
+			sawCompleted = true
+		}
+	}
+	if !sawCompleted {
+		t.Errorf("no notification for the completed deployment: %+v", calls)
+	}
+}
+
+// TestNotifyOnCompleted covers notifyOnCompleted directly: it reads the
+// opt-in from the job spec a deployment already froze at detection, and
+// treats a spec it cannot parse as opted out rather than failing anything.
+func TestNotifyOnCompleted(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tests := []struct {
+		name string
+		spec string
+		want bool
+	}{
+		{"opted in", mustMarshal(t, managed("web", "auto", map[string]string{meta.KeyNotifyCompleted: "true"})), true},
+		{"not set", mustMarshal(t, managed("web", "auto", nil)), false},
+		{"explicit false", mustMarshal(t, managed("web", "auto", map[string]string{meta.KeyNotifyCompleted: "false"})), false},
+		{"job spec does not parse", "not json", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &store.Deployment{ID: "d1", JobSpec: tt.spec}
+			if got := notifyOnCompleted(context.Background(), d, log); got != tt.want {
+				t.Errorf("notifyOnCompleted = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInFlightDeploymentIsUntouched(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "approval", nil))

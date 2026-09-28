@@ -68,6 +68,12 @@ var (
 	}
 )
 
+// completedEvent is a bare Event for the adapter-level completed checks
+// below (title, colour, priority): Notify itself is exercised for failed and
+// pending only, and completed only ever reaches an adapter when the job
+// opted in (internal/engine), which is not this package's concern.
+func completedEvent(job string) Event { return Event{Job: job, State: "completed"} }
+
 func decode(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -176,6 +182,14 @@ func TestDiscord(t *testing.T) {
 	if e := body.Embeds[0]; e.Color != colorPending || e.Title != "api waiting for approval" || e.Fields[0].Value != "-" {
 		t.Errorf("pending embed = %+v", e)
 	}
+
+	c, _ := discord(completedEvent("web"))
+	if err := json.Unmarshal(c.body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if e := body.Embeds[0]; e.Color != colorCompleted || e.Title != "web completed" {
+		t.Errorf("completed embed = %+v", e)
+	}
 }
 
 func TestSlack(t *testing.T) {
@@ -213,6 +227,13 @@ func TestNtfy(t *testing.T) {
 	if req.header.Get("Priority") != "3" || req.header.Get("Click") != "" || req.header.Get("Authorization") != "" {
 		t.Errorf("pending headers %v", req.header)
 	}
+
+	// Completed is low priority: it needs no action, so it must not compete
+	// with a failure or a pending approval for attention.
+	req, _ = ntfy(completedEvent("web"), "")
+	if req.header.Get("Priority") != "2" || req.header.Get("Tags") != "white_check_mark" || req.header.Get("Title") != "web completed" {
+		t.Errorf("completed headers %v", req.header)
+	}
 }
 
 func TestGotify(t *testing.T) {
@@ -237,6 +258,12 @@ func TestGotify(t *testing.T) {
 	m = decode(t, req.body)
 	if m["priority"] != float64(5) || m["extras"] != nil {
 		t.Errorf("pending body = %v", m)
+	}
+
+	req, _ = gotify(completedEvent("web"), "app")
+	m = decode(t, req.body)
+	if m["priority"] != float64(2) || m["title"] != "web completed" {
+		t.Errorf("completed body = %v", m)
 	}
 }
 
