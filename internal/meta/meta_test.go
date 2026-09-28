@@ -1,7 +1,10 @@
 package meta
 
 import (
+	"os"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -276,5 +279,51 @@ func TestHasErrors(t *testing.T) {
 	}
 	if Parse(map[string]string{"nops_typo": "x"}).HasErrors() {
 		t.Error("warning-only config reports errors")
+	}
+}
+
+// TestDocKeysTableMatchesTheKeys checks the table of docs/meta-keys.md against
+// the keys this package reads, in both directions, and the defaults it can
+// check: the policy of a managed job with no nops_policy, and the timeout of a
+// hook with no nops_timeout.
+func TestDocKeysTableMatchesTheKeys(t *testing.T) {
+	b, err := os.ReadFile("../../docs/meta-keys.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := regexp.MustCompile("^\\| `(nops_[a-z_]+)` \\|(.*)$")
+	documented := map[string][]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		m := row.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if _, dup := documented[m[1]]; dup {
+			t.Errorf("docs/meta-keys.md documents %s twice", m[1])
+		}
+		documented[m[1]] = strings.Split(m[2], "|") // values, default, meaning
+	}
+	for key := range documented {
+		if _, ok := knownKeys[key]; !ok {
+			t.Errorf("docs/meta-keys.md documents %s, which nops does not read", key)
+		}
+	}
+	for key := range knownKeys {
+		if _, ok := documented[key]; !ok {
+			t.Errorf("docs/meta-keys.md has no row for %s", key)
+		}
+	}
+
+	if cells := documented[KeyPolicy]; len(cells) > 1 {
+		want := string(Parse(map[string]string{KeyManaged: "true"}).Policy)
+		if got := strings.Trim(strings.TrimSpace(cells[1]), "`"); got != want {
+			t.Errorf("docs/meta-keys.md gives %s the default %q, a managed job without it gets %q", KeyPolicy, got, want)
+		}
+	}
+	if cells := documented[KeyTimeout]; len(cells) > 1 {
+		got, err := time.ParseDuration(strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		if err != nil || got != DefaultHookTimeout {
+			t.Errorf("docs/meta-keys.md gives %s the default %q, DefaultHookTimeout is %s", KeyTimeout, cells[1], DefaultHookTimeout)
+		}
 	}
 }

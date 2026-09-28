@@ -85,7 +85,7 @@ make them harder to reopen. Several PRs; this row is set to `done` by the last.
   `approval` (accept an index move when the redacted diff is unchanged,
   re-baseline `cas_index`, re-substitute the counts at apply).
 - **Then the guard:** tests that check `configuration.md` and `meta-keys.md`
-  against their source, that every `TestName` written in a doc exists, the audit
+  against their source, that every test a doc names exists, the audit
   procedure in `development.md`, and a reminder in `scripts/release.sh`.
 - **Done when:** every item above is merged or decided against in the log.
 

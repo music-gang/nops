@@ -2,7 +2,8 @@
 
 The canonical list of the meta keys nops reads from a job's HCL. The source of
 truth is [`internal/meta`](../internal/meta/meta.go): this page and that
-package must be updated together.
+package must be updated together (a test checks that the table below lists the
+keys the package reads, no more and no fewer, and the defaults it can check).
 
 nops uses **flat meta keys with the `nops_` prefix** in the job's `meta {}`
 block. A structured block (`nops { ... }`) is not possible: verified on Nomad
