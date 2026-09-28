@@ -944,3 +944,29 @@ func TestStepRegisterRegistersTheSpecUnchanged(t *testing.T) {
 		t.Errorf("registered meta = %v, want exactly git's %v", live.Meta, job.Meta)
 	}
 }
+
+// Invariant 3: a deployment under approval is only ever moved on by a human
+// (Engine.Approve). A `detected` one is transient there (detection moves it to
+// pending_approval right after creating it), but apply picks up every
+// `detected` deployment, so it must not touch one whose policy is approval.
+func TestStepDetectedNeverAdvancesADeploymentUnderApproval(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "approval", nil)
+	specJSON := mustMarshal(t, job)
+	d := &store.Deployment{
+		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyApproval, CASIndex: 0,
+	}
+	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+
+	h.step(d)
+
+	if got := h.get(d.ID); got.State != store.StateDetected {
+		t.Fatalf("state = %s, want detected: apply moved a deployment that needs a human", got.State)
+	}
+	if len(h.nomad.registerCalls) != 0 {
+		t.Errorf("nothing may be registered: %+v", h.nomad.registerCalls)
+	}
+}

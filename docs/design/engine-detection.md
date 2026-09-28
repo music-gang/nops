@@ -307,6 +307,10 @@ For each managed job, in order:
    - else the live index differs from `cas_index` → `superseded` ("job
      modified outside nops");
    - else there is no more drift → `completed` ("already in sync");
+   - else, if it is `detected` under `approval` (its move to
+     `pending_approval` did not land, and apply never advances it) → it is moved
+     now, with its notification: `pending_approval`, or `failed` when a hook it
+     declares is missing;
    - else it is left as is (still approvable).
 3. If the policy is `none`, or there is no drift, nothing more happens.
 4. If the retry rule applies (see above), nothing more happens.
