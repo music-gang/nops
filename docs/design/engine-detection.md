@@ -288,12 +288,13 @@ what matters is what Nomad says now.
   never registers hooks under their plain ID. Name hooks otherwise.
 - **A deployment made before hook revisions existed** and already in a hook
   phase has no frozen hook: it fails at its hook step, saying so.
-- **A Nomad parse failure on a file that used to parse** does not, by
-  itself, supersede that job's pending deployment: the job simply does not
-  appear in this cycle's "seen" set, which only matters once nothing at all
-  in the snapshot still produces its job ID (see "job removed from
-  repository" below). A transient or persistent parse error is logged at
-  ERROR every cycle until the file is fixed.
+- **A Nomad parse failure on a file that used to parse** does not supersede
+  that job's pending deployment: a file that does not parse looks exactly like
+  a removed one, so a cycle with any file that fails to parse (or that names a
+  namespace nops does not manage) does not look for removed jobs at all, as it
+  does not look for orphans. The removal is acted on by the first cycle in which
+  every file parses. A parse error is logged at ERROR every cycle until the
+  file is fixed.
 
 ## Per-job reconciliation
 
@@ -322,8 +323,9 @@ For each managed job, in order:
    hooks the job declares are frozen with it.
 
 Finally, every deployment still in `detected` or `pending_approval` whose job
-is no longer seen anywhere in the snapshot is `superseded` ("job removed from
-repository"): nops never deregisters a job on its own.
+is no longer among the managed jobs of the snapshot is `superseded` ("job
+removed from repo"): nops never deregisters a job on its own. Not in a cycle
+with a file that does not parse (see above).
 
 A store failure aborts the whole cycle (invariant 7: never act on Nomad with
 unpersisted state); a `redact.Diff` failure aborts it too (never store an
