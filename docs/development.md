@@ -78,6 +78,46 @@ The real check is using it. The policies allow going in steps: start with
 ≥ 80% on `engine`, `store`, `meta`, `hooks` (`go test -cover`). No target on
 `web` and `cmd`.
 
+## Doc audit
+
+The tests above catch names and defaults that drift. What they cannot catch is a
+claim that was never true, or stopped being: an invariant, a transition, what a
+page says a test covers. A **doc audit** checks those, and is run before a
+release (`scripts/release.sh` reminds you) or when someone asks for it. The code
+and its tests are the evidence; the docs, their cross-references and the
+decision log are only the claims being checked.
+
+**Scope.** The pages and packages changed since the last tag:
+`git diff --stat <last-tag>..HEAD -- '*.md' cmd internal scripts examples .github`.
+The first audit, or one with no tag, covers everything.
+
+**Procedure** (read-only until the report is answered):
+
+1. **Inventory the claims** of the pages in scope, plus the pages that describe
+   a package in scope: invariants and state transitions, defaults, flag and env
+   names, meta keys, errors and notifications, what the dashboard shows, what a
+   test is said to cover, and the decision-log rows still in force.
+2. **Check each against the code**, noting where it is implemented and which
+   test proves it, with one verdict: *OK* (code and a test agree), *UNTESTED*
+   (the code seems to do it, no test proves it), *DOC WRONG* (the code is
+   intentional, the doc is stale), *CODE WRONG?* (the doc is the intent, the
+   code does something else) or *UNCLEAR*. Skip what the guards already check.
+3. **Claims that depend on Nomad's own behaviour** (what bumps
+   `JobModifyIndex`, what a parse accepts) are settled by an integration test
+   against `nomad agent -dev`, not by reading: write it, run it, and keep it.
+4. **Report in the session, not in a file**: a table of the non-OK findings
+   grouped by verdict (claim, doc location, code location, proposed fix), the
+   number of OK claims per page, and for every *CODE WRONG?* and *UNCLEAR* the
+   options and a recommendation. The maintainer decides; nothing changes before.
+5. **Fix** as agreed: the doc-only fixes and the missing tests in one PR, every
+   behaviour change in its own, each with a test that fails before the fix and a
+   decision-log row.
+
+A finding that is a fact stated on several pages is fixed by stating it once and
+linking (as the notifications and *healthy* are), not by editing each copy.
+The first audit (decision log, 2026-09-28) found about 30 of these in roughly
+560 claims.
+
 ## When a piece of work is "done"
 
 A commit/PR is complete only if:
@@ -191,7 +231,8 @@ minor is named in the release notes.
 
 **Cutting one:**
 
-1. `main` is green and nothing you want in it is still open (`gh pr list`).
+1. `main` is green, nothing you want in it is still open (`gh pr list`) and
+   the [doc audit](#doc-audit) of what changed since the last tag is done.
 2. Run `scripts/release.sh`. It looks only at `origin/main`: it lists the
    commits since the last tag (breaking, features, fixes, the rest), checks
    that CI is green on the commit, and **suggests** a version, which you

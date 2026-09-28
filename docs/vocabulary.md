@@ -119,4 +119,5 @@ what to call them.
 | **ready / plan first** | Whether a task can be done unattended, or its open design questions still need the maintainer's answer before any branch exists. |
 | **decision log** | [`design/decisions.md`](design/decisions.md): one row per design decision, added in the PR that takes it. |
 | **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
+| **doc audit** | Checking the claims of the docs against the code and its tests, before a release or on request; a report of findings, then fixes as agreed ([procedure](development.md#doc-audit)). Not the tests that already compare tables and test names with the code. |
 | **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and changelog on the GitHub Release ([releasing](development.md#releasing)). |

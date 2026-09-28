@@ -55,39 +55,16 @@ page only tracks the tasks themselves.
 | `dashboard-base-path` | nops can be served under a sub path (e.g. `/nops`), read from `-public-url`'s own path with no separate flag: every generated URL (redirects, cookie paths, template links, static assets) carries it, `/healthz` stays reachable at the bare path too ([dashboard](dashboard.md#base-path), [decisions](design/decisions.md) 2026-09-28, #44) | `internal/config`, `internal/web`, `cmd/nops` |
 | `dashboard-recently-completed` | The Overview's "Recently completed" section: the 5 most recently completed deployments (by when they completed), so one does not vanish from "In progress" with no sign it succeeded ([dashboard](dashboard.md#pages), [decisions](design/decisions.md) 2026-09-28, #46) | `internal/store`, `internal/web` |
 | `notify-completed` | Opt-in per-job notification when a deployment becomes `completed` (`nops_notify_completed`), read from the job spec the deployment froze at detection; low priority and a green Discord embed, since it needs no action ([meta-keys](meta-keys.md), [error-handling](error-handling.md#notifications), [decisions](design/decisions.md) 2026-09-28, #45) | `internal/meta`, `internal/notify`, `internal/engine` |
+| `doc-code-sync` | An audit of every doc against the code and its tests, and what it found: the doc-only fixes and tests that pin today's behaviour (#51); a `detected` deployment under `approval` is never advanced by apply (#52); a file that fails to parse neither supersedes pending approvals (#53) nor is remembered as failed (#54); a `failed` deployment is logged at ERROR (#55); a target that never has an allocation is healthy once registered (#57); tests that compare the option and key tables and the test names with the code (#58); and the [doc audit](development.md#doc-audit) procedure with a reminder in `scripts/release.sh`. An autoscaler moving the job's index is accepted as documented while the scaled jobs are under `auto`: revisit before one moves to `approval` ([decisions](design/decisions.md) 2026-09-28) | `docs/`, `internal/engine`, `internal/config`, `internal/meta`, `tests/integration`, `scripts/` |
 
 ## Todo
 
 | Task | Depends on | Ready |
 |---|---|---|
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
-| [`doc-code-sync`](#doc-code-sync) | none | yes (answered) |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
-
-### doc-code-sync
-
-Close the gaps an audit of every doc against the code and its tests found, then
-make them harder to reopen. Several PRs; this row is set to `done` by the last.
-
-- **Done (PR 1, docs and tests that pin today's behaviour):** the doc-only
-  fixes, the stale test removed, integration tests for what depends on Nomad
-  (a scale bumps the job's index; the Nomad deployment health path; meta as
-  block and object).
-- **Left, one PR each (see the decision log, 2026-09-28):** a `detected`
-  deployment under `approval` must never be advanced by apply; a file that does
-  not parse must not supersede pending approvals nor be remembered as failed; a
-  `failed` deployment is logged at ERROR; a target that never has an allocation
-  (periodic, parameterized, all counts 0) completes when registered. An
-  autoscaler moving the job's index is **not** on this list: accepted as
-  documented while the scaled jobs are under `auto`; revisit before one moves to
-  `approval` (accept an index move when the redacted diff is unchanged,
-  re-baseline `cas_index`, re-substitute the counts at apply).
-- **Then the guard:** tests that check `configuration.md` and `meta-keys.md`
-  against their source, that every test a doc names exists, the audit
-  procedure in `development.md`, and a reminder in `scripts/release.sh`.
-- **Done when:** every item above is merged or decided against in the log.
 
 ### dashboard-polish
 
