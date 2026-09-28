@@ -21,7 +21,9 @@ default) and one that has just failed reads Drift instead of Blocked. A cycle:
 
 1. Parses every file of the current `gitwatch.Snapshot` through Nomad
    (`nomadx.ParseHCL`), with a cache keyed by the hash of `(Content, Vars)` so
-   an unchanged file is not re-sent on every drift tick. A job in a namespace
+   an unchanged file is not re-sent on every drift tick. Only a success is
+   cached: a failure is retried every cycle, since it may be Nomad being
+   unreachable for a moment. A job in a namespace
    that is not managed is refused here (see [Namespaces](#namespaces)).
 2. Classifies each parsed job with `meta.Parse`: `nops_role = "hook"` is a
    hook, `nops_managed = "true"` is a managed job, anything else is ignored.

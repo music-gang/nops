@@ -7,9 +7,10 @@ import (
 	"github.com/hashicorp/nomad/api"
 )
 
-// parseEntry is a cached nomadx.ParseHCL result, success or failure: content
-// unchanged means the same result, error included, so a broken file is not
-// re-sent to Nomad on every drift tick either.
+// parseEntry is a cached nomadx.ParseHCL result. Only a success is kept: a
+// failure can be Nomad being unreachable for a moment, and a remembered one
+// would stick to the file until its content changed. A file that really does
+// not parse costs one ParseHCL per detection cycle.
 type parseEntry struct {
 	job *api.Job
 	err error

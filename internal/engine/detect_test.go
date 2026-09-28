@@ -1196,3 +1196,34 @@ func TestAFileThatDoesNotParseDoesNotSupersedeAPendingDeployment(t *testing.T) {
 		t.Fatalf("deployment = %s once every file parses, want superseded", got.State)
 	}
 }
+
+// Only a successful parse is worth remembering. A failure can be Nomad being
+// unreachable for a moment, and if it were kept the file would stay "unparsed"
+// (an ERROR every cycle, no orphan check) until its content changed or nops
+// restarted.
+func TestAParseFailureIsRetriedNotRemembered(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "approval", nil))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+
+	h.nomad.setParseErr("web-v1", errors.New("nomad unreachable"))
+	h.detect()
+	h.noActive("web")
+	if st := h.engine.Status(); st.Unparsed != 1 {
+		t.Fatalf("Unparsed = %d, want 1 while Nomad fails", st.Unparsed)
+	}
+
+	delete(h.nomad.parseErr, "web-v1") // Nomad is back; the file did not change
+	h.detect()
+
+	if d := h.active("web"); d.State != store.StatePendingApproval {
+		t.Fatalf("deployment = %+v, want pending_approval once the file parses", d)
+	}
+	if st := h.engine.Status(); st.Unparsed != 0 {
+		t.Errorf("Unparsed = %d after Nomad recovered, want 0", st.Unparsed)
+	}
+	if n := h.nomad.parseCalls["web-v1"]; n != 2 {
+		t.Errorf("ParseHCL called %d times, want 2 (the failure is retried)", n)
+	}
+}
