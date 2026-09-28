@@ -20,16 +20,18 @@ Keys are read **from the HCL in the repo** and nops never writes them.
 | `nops_post_hook` | Same | — | Runs once the new version is healthy, in the order listed. |
 | `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and as something nops registers itself, as a [revision](hooks.md#hook-revisions), when a deployment needs it. |
 | `nops_timeout` | Go duration (`90s`, `10m`), on a hook job | `5m` | How long the hook may run; on expiry the dispatch is stopped and the deployment is `failed`. Must be > 0. Only with `nops_role = "hook"`. |
+| `nops_notify_completed` | `"true"` / `"false"` | `"false"` | Opt-in for a [notification](error-handling.md#notifications) when a deployment of this job becomes `completed`. Read from the spec a deployment froze at detection, so a later edit only affects the *next* deployment. Meaningless under policy `none` (no deployment ever reaches `completed`). |
 
 Values are **case-sensitive** strings (`"True"` is not valid).
 
 ```hcl
 job "api" {
   meta {
-    nops_managed   = "true"
-    nops_policy    = "approval"
-    nops_pre_hook  = "api-backup, api-migrate"
-    nops_post_hook = "api-smoke"
+    nops_managed          = "true"
+    nops_policy           = "approval"
+    nops_pre_hook         = "api-backup, api-migrate"
+    nops_post_hook        = "api-smoke"
+    nops_notify_completed = "true"
   }
   # ...
 }

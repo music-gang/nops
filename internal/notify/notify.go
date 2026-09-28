@@ -163,6 +163,8 @@ func title(e Event) string {
 		return e.Job + " waiting for approval"
 	case store.StateFailed:
 		return e.Job + " failed"
+	case store.StateCompleted:
+		return e.Job + " completed"
 	}
 	return e.Job + " " + e.State
 }
@@ -212,6 +214,9 @@ const (
 	discordFieldMax       = 1024
 	colorFailed           = 0xD03030
 	colorPending          = 0xE0A000
+	// colorCompleted matches the dashboard's own "completed" colour
+	// (docs/dashboard.md#look-and-technology, --success in app.css).
+	colorCompleted = 0x1A7F37
 )
 
 func discord(e Event) (request, error) {
@@ -229,8 +234,11 @@ func discord(e Event) (request, error) {
 		Timestamp   time.Time `json:"timestamp"`
 	}
 	color := colorPending
-	if store.State(e.State) == store.StateFailed {
+	switch store.State(e.State) {
+	case store.StateFailed:
 		color = colorFailed
+	case store.StateCompleted:
+		color = colorCompleted
 	}
 	return jsonRequest(struct {
 		Username string  `json:"username"`
@@ -271,14 +279,19 @@ func slackEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
-// ntfy priorities: 3 is default, 4 is high.
+// ntfy priorities: 3 is default, 4 is high, 2 is low (completed needs no
+// action, so it must not compete with a failure or an approval for attention).
 func ntfy(e Event, token string) (request, error) {
 	h := http.Header{}
 	h.Set("Title", title(e))
-	if store.State(e.State) == store.StateFailed {
+	switch store.State(e.State) {
+	case store.StateFailed:
 		h.Set("Priority", "4")
 		h.Set("Tags", "rotating_light")
-	} else {
+	case store.StateCompleted:
+		h.Set("Priority", "2")
+		h.Set("Tags", "white_check_mark")
+	default:
 		h.Set("Priority", "3")
 		h.Set("Tags", "hourglass")
 	}
@@ -289,11 +302,15 @@ func ntfy(e Event, token string) (request, error) {
 	return request{body: []byte(text(e)), contentType: "text/plain; charset=utf-8", header: h}, nil
 }
 
-// Gotify priorities: 5 is default, 8 and above is high.
+// Gotify priorities: 5 is default, 8 and above is high, 2 is low (completed
+// needs no action).
 func gotify(e Event, token string) (request, error) {
 	priority := 5
-	if store.State(e.State) == store.StateFailed {
+	switch store.State(e.State) {
+	case store.StateFailed:
 		priority = 8
+	case store.StateCompleted:
+		priority = 2
 	}
 	msg := map[string]any{"title": title(e), "message": text(e), "priority": priority}
 	if e.URL != "" {

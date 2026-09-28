@@ -39,7 +39,10 @@ Structured `log/slog`, with the standard keys `deployment_id`, `job`,
 
 nops tells people when a deployment needs them: it sends a notification when
 a deployment becomes `pending_approval` (someone must approve) and when it
-becomes `failed`. The engine calls
+becomes `failed`. A job can also opt in to a notification when a deployment
+of it becomes `completed` (`nops_notify_completed`, [meta-keys](meta-keys.md));
+unlike the other two this one is never sent by default, since a cluster with
+many `auto` jobs would otherwise get one per deploy. The engine calls
 [`internal/notify`](../internal/notify/notify.go) after the transition has been
 saved, never before.
 
@@ -50,10 +53,10 @@ its URL is set, and several can be on at once.
 | Adapter | What it sends |
 |---|---|
 | webhook | The generic JSON below, `Content-Type: application/json`, with `Authorization: Bearer` if there is a token. For n8n, Home Assistant or your own receiver. |
-| Discord | An embed: title `<job> waiting for approval` / `<job> failed`, the error as description, namespace and commit as fields, the link as the title URL. Red for `failed`, amber for `pending_approval`. Texts are cut to Discord's limits. |
+| Discord | An embed: title `<job> waiting for approval` / `<job> failed` / `<job> completed`, the error as description, namespace and commit as fields, the link as the title URL. Red for `failed`, amber for `pending_approval`, green for `completed`. Texts are cut to Discord's limits. |
 | Slack | A `text` message in mrkdwn: title, namespace, commit, the error as a quote, `<link\|Open in nops>`. |
-| ntfy | A plain-text body, with `Title`, `Priority` (4 for `failed`, 3 for `pending_approval`), `Tags`, and `Click` (the link) headers, and `Authorization: Bearer` if there is a token. |
-| Gotify | `{title, message, priority}` (8 for `failed`, 5 for `pending_approval`), the link as `extras.client::notification.click.url`, and the app token in `X-Gotify-Key`. |
+| ntfy | A plain-text body, with `Title`, `Priority` (4 for `failed`, 3 for `pending_approval`, 2 for `completed`: it needs no action, so it must not compete for attention), `Tags`, and `Click` (the link) headers, and `Authorization: Bearer` if there is a token. |
+| Gotify | `{title, message, priority}` (8 for `failed`, 5 for `pending_approval`, 2 for `completed`), the link as `extras.client::notification.click.url`, and the app token in `X-Gotify-Key`. |
 
 The generic JSON, which is also the data every adapter formats:
 

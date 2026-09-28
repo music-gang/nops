@@ -15,19 +15,20 @@ const prefix = "nops_"
 
 // Meta keys.
 const (
-	KeyManaged  = "nops_managed"
-	KeyPolicy   = "nops_policy"
-	KeyPreHook  = "nops_pre_hook"
-	KeyPostHook = "nops_post_hook"
-	KeyRole     = "nops_role"
-	KeyTimeout  = "nops_timeout"
+	KeyManaged         = "nops_managed"
+	KeyPolicy          = "nops_policy"
+	KeyPreHook         = "nops_pre_hook"
+	KeyPostHook        = "nops_post_hook"
+	KeyRole            = "nops_role"
+	KeyTimeout         = "nops_timeout"
+	KeyNotifyCompleted = "nops_notify_completed"
 )
 
 // DefaultHookTimeout applies to a hook job that has no nops_timeout.
 const DefaultHookTimeout = 5 * time.Minute
 
 var knownKeys = map[string]struct{}{
-	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {},
+	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {}, KeyNotifyCompleted: {},
 }
 
 // removedKeys are keys that used to exist, with what replaces them: still
@@ -76,6 +77,9 @@ type Config struct {
 	PostHooks []string
 	// IsHook marks a job with nops_role = "hook".
 	IsHook bool
+	// NotifyCompleted opts the job into a notification when a deployment of it
+	// becomes completed (nops_notify_completed = "true"; docs/error-handling.md#notifications).
+	NotifyCompleted bool
 	// Timeout is how long a hook job may run (nops_timeout, or
 	// DefaultHookTimeout); zero for a job that is not a hook.
 	Timeout time.Duration
@@ -136,6 +140,19 @@ func Parse(m map[string]string) Config {
 		}
 		if !c.Managed {
 			add(SeverityWarn, KeyPolicy, "set but %s is not \"true\": ignored", KeyManaged)
+		}
+	}
+
+	if v, ok := m[KeyNotifyCompleted]; ok {
+		switch v {
+		case "true":
+			c.NotifyCompleted = true
+		case "false":
+		default:
+			add(SeverityError, KeyNotifyCompleted, "invalid value %q (want \"true\" or \"false\")", v)
+		}
+		if !c.Managed {
+			add(SeverityWarn, KeyNotifyCompleted, "set but %s is not \"true\": ignored", KeyManaged)
 		}
 	}
 
