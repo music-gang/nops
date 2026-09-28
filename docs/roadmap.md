@@ -79,8 +79,11 @@ make them harder to reopen. Several PRs; this row is set to `done` by the last.
   deployment under `approval` must never be advanced by apply; a file that does
   not parse must not supersede pending approvals nor be remembered as failed; a
   `failed` deployment is logged at ERROR; a target that never has an allocation
-  (periodic, parameterized, all counts 0) completes when registered; what to do
-  about an autoscaler moving the job's index (open: maintainer to decide).
+  (periodic, parameterized, all counts 0) completes when registered. An
+  autoscaler moving the job's index is **not** on this list: accepted as
+  documented while the scaled jobs are under `auto`; revisit before one moves to
+  `approval` (accept an index move when the redacted diff is unchanged,
+  re-baseline `cas_index`, re-substitute the counts at apply).
 - **Then the guard:** tests that check `configuration.md` and `meta-keys.md`
   against their source, that every `TestName` written in a doc exists, the audit
   procedure in `development.md`, and a reminder in `scripts/release.sh`.

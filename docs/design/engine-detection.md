@@ -221,8 +221,12 @@ Nomad's scale API also bumps the live job's `JobModifyIndex` and `Version`
 between detection and approval still supersedes the pending deployment ("job
 modified outside nops"), makes the retry rule see a different live index, and
 an apply that meets it fails once with "conflict" (its stored counts are the
-detection-time ones) before the next cycle creates a fresh deployment. Not
-solved yet: see the decision log, 2026-09-28.
+detection-time ones) before the next cycle creates a fresh deployment. This
+is accepted for now (decision log, 2026-09-28): while the jobs with a scaling
+group are under `auto` it costs at most one spurious `failed` (Nomad itself
+refuses a scale while a Nomad deployment is active). It has to be revisited
+before such a job moves to `approval`, where every scale during a review
+replaces the pending deployment.
 
 ### Supersede is keyed on `spec_hash`, not on the commit
 
