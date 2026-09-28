@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -953,5 +954,112 @@ func TestGitPath(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("gitPath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// docOptionRow matches a row of the option tables of docs/configuration.md:
+// | `-flag` | `NOPS_FLAG` | default | meaning |
+var docOptionRow = regexp.MustCompile("^\\| `-([a-z0-9-]+)` \\| `(NOPS_[A-Z0-9_]+)` \\| ([^|]*?) \\|")
+
+// docDefault reads the default cell of an option row: a value in backticks is
+// the default itself; "none", "**required**" (with or without "none,") and
+// "derived from ..." stand for an option with no default of its own.
+func docDefault(cell string) (string, bool) {
+	if strings.HasPrefix(cell, "`") {
+		if end := strings.Index(cell[1:], "`"); end >= 0 {
+			return cell[1 : 1+end], true
+		}
+		return "", false
+	}
+	for _, none := range []string{"none", "**required**", "derived from"} {
+		if strings.HasPrefix(cell, none) {
+			return "", true
+		}
+	}
+	return "", false
+}
+
+// TestDocTablesMatchTheOptions checks the option tables of
+// docs/configuration.md against the options table, in both directions: every
+// option has a row, every row is an option, and the variable and the default
+// of a row are the option's. (Which options are required is not checked: it
+// depends on the other options, see check().)
+func TestDocTablesMatchTheOptions(t *testing.T) {
+	b, err := os.ReadFile("../../docs/configuration.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]option, len(options))
+	for _, o := range options {
+		byName[o.name] = o
+	}
+	documented := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		m := docOptionRow.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		name, env, cell := m[1], m[2], m[3]
+		o, ok := byName[name]
+		switch {
+		case !ok:
+			t.Errorf("docs/configuration.md documents -%s, which is not an option", name)
+			continue
+		case documented[name]:
+			t.Errorf("docs/configuration.md documents -%s twice", name)
+		}
+		documented[name] = true
+		if env != o.env() {
+			t.Errorf("docs/configuration.md gives -%s the variable %s, the option has %s", name, env, o.env())
+		}
+		def, ok := docDefault(cell)
+		if !ok {
+			t.Errorf("docs/configuration.md: the default of -%s (%q) is not a value in backticks, \"none\", \"**required**\" or \"derived from ...\"", name, cell)
+		} else if def != o.def {
+			t.Errorf("docs/configuration.md gives -%s the default %q, the option has %q", name, def, o.def)
+		}
+	}
+	for _, o := range options {
+		if !documented[o.name] {
+			t.Errorf("docs/configuration.md has no table row for -%s", o.name)
+		}
+	}
+}
+
+// TestDocSecretsTableMatchesTheSecretValues checks the "secrets without a file"
+// table of docs/configuration.md against secretValues, in both directions.
+func TestDocSecretsTableMatchesTheSecretValues(t *testing.T) {
+	b, err := os.ReadFile("../../docs/configuration.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := regexp.MustCompile("^\\| `(NOPS_[A-Z0-9_]+_FILE)` \\(`-([a-z0-9-]+)`\\) \\| `(NOPS_[A-Z0-9_]+)` \\|")
+	byName := make(map[string]option, len(options))
+	for _, o := range options {
+		byName[o.name] = o
+	}
+	documented := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		m := row.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		fileVar, flagName, plain := m[1], m[2], m[3]
+		documented[plain] = true
+		if o, ok := byName[flagName]; !ok || o.env() != fileVar {
+			t.Errorf("docs/configuration.md: %s (-%s) is not an option and its variable", fileVar, flagName)
+		}
+		if plain != strings.TrimSuffix(fileVar, "_FILE") {
+			t.Errorf("docs/configuration.md: the plain variable of %s is %s, want %s", fileVar, plain, strings.TrimSuffix(fileVar, "_FILE"))
+		}
+	}
+	for _, sv := range secretValues {
+		if !documented[sv.envVar] {
+			t.Errorf("docs/configuration.md has no row for %s in the secrets table", sv.envVar)
+		}
+		delete(documented, sv.envVar)
+	}
+	for extra := range documented {
+		t.Errorf("docs/configuration.md lists %s as a secret variable, which is not one", extra)
 	}
 }

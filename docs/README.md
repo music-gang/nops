@@ -37,7 +37,7 @@ New here? Start with the [project README](../README.md).
 
 | Change | Update |
 |---|---|
-| New meta key or different valid values | `internal/meta` **and** `meta-keys.md` |
+| New meta key or different valid values | `internal/meta` **and** `meta-keys.md` (its table is tested against the keys) |
 | Behaviour of a policy | `policies.md` |
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | A scenario in `examples/` | `TestExamplesParse` checks every example; a new scenario needs nothing else unless it shows new behaviour worth an end-to-end test |
@@ -47,8 +47,9 @@ New here? Start with the [project README](../README.md).
 | Which files are read from git, the git watcher | `internal/gitwatch` **and** `design/gitwatch.md` |
 | A dashboard page, route, sync state or login | `internal/web` **and** `dashboard.md` |
 | What is logged, or which transition notifies | `error-handling.md` (the one place that says it: other pages link to it) |
-| Flag or env var | `internal/config` **and** `configuration.md` |
+| Flag or env var | `internal/config` **and** `configuration.md` (its tables are tested against the options: name, variable, default) |
 | Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
+| A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
 | New concept, or a renamed term | `vocabulary.md` |
 | A task is finished, added or reshaped | `roadmap.md` |
 | Design decision | `design/decisions.md` (and the relevant document) |

@@ -2,8 +2,9 @@
 
 nops is configured with command-line flags or environment variables. The
 source of truth is [`internal/config`](../internal/config/config.go): this
-page and that package must be updated together (a test checks that every
-option is listed here).
+page and that package must be updated together (tests check that every
+option has a row in the tables below, that every row is an option, and that its
+variable and default are the option's; and the same for the secrets table).
 
 ## Rules
 
