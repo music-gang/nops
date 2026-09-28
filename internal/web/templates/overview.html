@@ -97,6 +97,27 @@
   <p class="empty">No deployment is in progress.</p>
   {{end}}
 </section>
+
+<section class="box">
+  <header class="box__header">
+    <h2 class="box__title">Recently completed</h2>
+    {{if .RecentlyCompleted}}<span class="box__count">{{len .RecentlyCompleted}}</span>{{end}}
+  </header>
+  {{if .RecentlyCompleted}}
+  <ul class="rows">
+    {{range .RecentlyCompleted}}
+    <li class="row row--progress">
+      {{template "state_badge" .State}}
+      <a class="row__title" href="{{.Path}}" title="{{.Title}}">{{.Title}}</a>
+      <span class="row__detail" title="{{.CommitSubj}}">{{if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="mono">{{.CommitShort}}</span>{{end}}</span>
+      <span class="row__when">{{template "time" .UpdatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">No deployment has completed yet.</p>
+  {{end}}
+</section>
 </div>
 {{template "chrome_foot" .}}
 {{end}}

@@ -105,7 +105,8 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/jobs/default/web/retry"},
 				{Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: "default/old", Path: "/jobs/default/old", Detail: "d"},
 			},
-			InProgress: []deploymentCard{dc},
+			InProgress:        []deploymentCard{dc},
+			RecentlyCompleted: []deploymentCard{dc},
 		},
 		"jobs": jobsData{
 			baseData: baseData{Nav: "jobs"}, Rows: []jobRow{row}, Total: 1,
