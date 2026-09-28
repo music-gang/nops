@@ -1160,3 +1160,39 @@ func TestADetectedDeploymentUnderApprovalIsRepairedToPending(t *testing.T) {
 		t.Errorf("notify called with = %+v", calls[0])
 	}
 }
+
+// A file Nomad cannot parse (a typo in the HCL, Nomad unreachable for the
+// parse) looks exactly like a removed one, so it must not supersede what is
+// waiting for approval: docs/design/engine-detection.md, "Not covered by a
+// rule". The removal is acted on once nothing fails to parse any more.
+func TestAFileThatDoesNotParseDoesNotSupersedeAPendingDeployment(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "approval", nil))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+	h.detect()
+	first := h.active("web")
+
+	// The next commit breaks the file: it no longer parses.
+	h.nomad.setParseErr("web-typo", errors.New("invalid HCL"))
+	h.snap.set("c2", gitwatch.File{Path: "web.nomad.hcl", Content: "web-typo"})
+	h.detect()
+
+	if got := h.get(first.ID); got.State != store.StatePendingApproval {
+		t.Fatalf("deployment = %s (%s), want it still pending_approval: a broken file is not a removed job", got.State, got.Error)
+	}
+
+	// The job is removed for real, but another file still fails: nothing yet.
+	h.snap.set("c3", gitwatch.File{Path: "broken.nomad.hcl", Content: "web-typo"})
+	h.detect()
+	if got := h.get(first.ID); got.State != store.StatePendingApproval {
+		t.Fatalf("deployment = %s with a file still failing to parse, want pending_approval", got.State)
+	}
+
+	// Nothing fails any more: the removal is seen.
+	h.snap.set("c4")
+	h.detect()
+	if got := h.get(first.ID); got.State != store.StateSuperseded {
+		t.Fatalf("deployment = %s once every file parses, want superseded", got.State)
+	}
+}

@@ -89,8 +89,14 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	}
 	e.replaceObservations(observations)
 
-	if err := e.supersedeRemoved(ctx, seen); err != nil {
-		return st, err
+	// A file that does not parse looks exactly like a removed one, so with any
+	// nothing is read as removed (the same suspension as the orphan check
+	// below): a typo in the HCL, or Nomad unreachable for a parse, must not
+	// supersede what is waiting for approval.
+	if unparsed == 0 {
+		if err := e.supersedeRemoved(ctx, seen); err != nil {
+			return st, err
+		}
 	}
 	if err := e.gcHookRevisions(ctx); err != nil {
 		return st, err
