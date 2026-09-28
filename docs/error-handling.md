@@ -9,7 +9,8 @@ nops prefers to stop and say so rather than carry on with uncertain state.
   same transaction; the engine logs each one at INFO (a `failed` at ERROR, see
   below). There are no "manual" transitions.
 - **Every `failed`** is logged at ERROR with `deployment_id`, `job`, `phase`
-  and the cause, and sends a [notification](#notifications).
+  (where it was when it failed: `detection`, `pre`, `apply` or `post`) and the
+  cause (`error`), and sends a [notification](#notifications).
   `pending_approval` sends a notification too.
 - **Never swallow an error** from Nomad or SQLite. The only "soft" exception is
   the notification: if it fails, log at WARN and do not block the state

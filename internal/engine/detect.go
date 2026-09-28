@@ -487,7 +487,12 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 		}
 		return fmt.Errorf("transition %s to %s: %w", d.ID, to, err)
 	}
-	log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)
+	if to == store.StateFailed {
+		// Fail loud (docs/error-handling.md): what failed, where and why.
+		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", failedPhase(d.State), "error", message)
+	} else {
+		log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)
+	}
 
 	notify := to == store.StatePendingApproval || to == store.StateFailed
 	if to == store.StateCompleted {
@@ -503,6 +508,20 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 	}
 	go e.notifier.Notify(ctx, fresh)
 	return nil
+}
+
+// failedPhase names where a deployment was when it failed, for the log:
+// detection (a declared hook missing), pre, apply or post.
+func failedPhase(from store.State) string {
+	switch from {
+	case store.StatePreHook:
+		return "pre"
+	case store.StateApplying:
+		return "apply"
+	case store.StatePostHook:
+		return "post"
+	}
+	return "detection"
 }
 
 // notifyOnCompleted reads the opt-in a completed deployment's own job froze
