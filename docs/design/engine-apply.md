@@ -225,7 +225,11 @@ expanded here.
    health check behind it (a Nomad deployment is what brings those), the number
    of allocations is not compared with the counts (a group only partly placed
    reads as healthy), and `complete` counts whatever the job type. A job with
-   no allocation yet is still waiting.
+   no allocation yet is still waiting, except one that never has any: a
+   periodic job (it only spawns child jobs), a parameterized one (it waits to be
+   dispatched) or one whose groups all have count 0 is healthy as soon as it is
+   registered at the applied index (`neverHasAllocations`); waiting for an
+   allocation would fail it at the apply timeout.
 4. **The apply timeout counts from the `→ applying` event, and bounds the
    whole state.** `Store.AppliedSince(ctx, id string) (time.Time, error)` reads the
    timestamp of that deployment's `→ applying` row in `events` (already

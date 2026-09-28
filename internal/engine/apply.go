@@ -438,6 +438,9 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 		return false, true, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
 			liveIndex, d.AppliedIndex), nil
 	}
+	if neverHasAllocations(live) {
+		return true, false, "", nil // registered at the applied index: nothing to wait for
+	}
 	version := derefUint64(live.Version)
 	allocs, err := e.nomad.Allocations(ctx, d.Namespace, d.JobID)
 	if err != nil {
@@ -463,6 +466,26 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 		}
 	}
 	return true, false, "", nil
+}
+
+// neverHasAllocations reports whether a job has no allocation of its own to
+// wait for: a periodic job only spawns child jobs, a parameterized one waits to
+// be dispatched, and a job whose groups all have count 0 places nothing. Once
+// registered it is healthy: the allocations path would wait for one that never
+// comes and fail the deployment at the apply timeout.
+func neverHasAllocations(job *api.Job) bool {
+	if job.IsPeriodic() || job.IsParameterized() {
+		return true
+	}
+	if len(job.TaskGroups) == 0 {
+		return false
+	}
+	for _, g := range job.TaskGroups {
+		if g == nil || g.Count == nil || *g.Count > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Approve moves a pending_approval deployment forward: pre_hook if the

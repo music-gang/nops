@@ -61,6 +61,13 @@ job %q {
 
 func newEngine(t *testing.T, snap staticSnapshot) (*engine.Engine, *store.Store) {
 	t.Helper()
+	return newEngineWithApplyTimeout(t, snap, time.Minute)
+}
+
+// newEngineWithApplyTimeout is newEngine with the apply timeout a test needs
+// (a deployment that can never become healthy should not take a minute to fail).
+func newEngineWithApplyTimeout(t *testing.T, snap staticSnapshot, applyTimeout time.Duration) (*engine.Engine, *store.Store) {
+	t.Helper()
 	c, _ := newClient(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"))
 	if err != nil {
@@ -72,7 +79,7 @@ func newEngine(t *testing.T, snap staticSnapshot) (*engine.Engine, *store.Store)
 	e := engine.New(engine.Options{
 		Store: st, Nomad: c, Snapshots: snap, Notifier: noopNotifier{},
 		Hooks:      hooks.New(c, st, log, 200*time.Millisecond),
-		Namespaces: []string{"default"}, DriftInterval: time.Hour, EngineInterval: 200 * time.Millisecond, ApplyTimeout: time.Minute,
+		Namespaces: []string{"default"}, DriftInterval: time.Hour, EngineInterval: 200 * time.Millisecond, ApplyTimeout: applyTimeout,
 		Log: log,
 	})
 	return e, st

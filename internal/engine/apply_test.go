@@ -1033,3 +1033,46 @@ func TestAFailedDeploymentIsLoggedAtError(t *testing.T) {
 		t.Errorf("pending_approval must be logged, at INFO:\n%s", out)
 	}
 }
+
+// A target that never has an allocation of its own has nothing to wait for
+// once registered: a periodic or parameterized job only spawns children (or
+// waits to be dispatched), and a job whose groups all have count 0 places
+// nothing. Waiting for an allocation would fail it after -apply-timeout.
+func TestStepHealthOfATargetThatNeverHasAnAllocationCompletes(t *testing.T) {
+	periodic := managed("web", "auto", nil, taskGroup("g", 1, false))
+	periodic.Periodic = &api.PeriodicConfig{SpecType: strPtr("cron"), Spec: strPtr("0 0 1 1 *")}
+	parameterized := managed("web", "auto", nil, taskGroup("g", 1, false))
+	parameterized.ParameterizedJob = &api.ParameterizedJobConfig{}
+	zero := managed("web", "auto", nil, taskGroup("g", 0, false), taskGroup("h", 0, false))
+
+	for name, job := range map[string]*api.Job{"periodic": periodic, "parameterized": parameterized, "zero count": zero} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3) // no allocation, and there never will be
+
+			h.step(d)
+
+			if got := h.get(d.ID); got.State != store.StateCompleted {
+				t.Fatalf("state = %s (%s), want completed", got.State, got.Error)
+			}
+		})
+	}
+}
+
+// The other side: a job that does place allocations still waits for them, and
+// a group with count 0 next to one with a count does not make it healthy.
+func TestStepHealthStillWaitsForAJobThatPlacesAllocations(t *testing.T) {
+	job := managed("web", "auto", nil, taskGroup("g", 0, false), taskGroup("h", 2, false))
+	h := newHarness(t)
+	d := h.applyingWithIndex("web", job, 9)
+	h.liveApplied("web", job, 9, 3) // scheduling has not produced an allocation yet
+
+	h.step(d)
+
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("state = %s, want applying (still waiting)", got.State)
+	}
+}
+
+func strPtr(s string) *string { return &s }
