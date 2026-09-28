@@ -14,6 +14,7 @@
 | `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers, with fakes for the store, the engine and git and a fixed clock: every page in every state it has (empty, pending, blocked, failed, invalid meta, a store error), the helpers (relative times, the diff summary, sync state, the plan steps), that the whole `spec_hash` is in the approve form and `job_spec` never on a page; the login against a fake OIDC provider (`httptest` serving discovery, keys, token and userinfo, signing real ID tokens), cross-origin refusals and 401/403. No coverage target. |
 | `cmd/nops` | Almost entirely straight-line wiring, so almost entirely covered by the integration smoke test below, not unit tests: a unit test only for the one piece of actual logic (`newAuthenticator` picking the login backend by `-auth-mode`). No coverage target. |
+| `scripts/release.sh` | `scripts/release_test.sh` (plain bash, run by the `lint` job) covers the pure functions: the suggested bump, the next version, the release candidate number, semver validation and order. `shellcheck` on every script. The flow around them (git, `gh`, prompts) is looked at with `--dry-run`, never in CI: it would tag. |
 | Real interaction with Nomad | Integration. |
 
 ## Integration
@@ -151,7 +152,7 @@ PR body. If the branch falls behind `main`, use "Update branch" (or
 | Check | Required | What it runs |
 |---|---|---|
 | `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
-| `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`), `goreleaser check` of `.goreleaser.yaml` |
+| `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`), `shellcheck` and the tests of `scripts/`, `goreleaser check` of `.goreleaser.yaml` |
 | `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev`, runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
 | `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject (at most 72 characters) without trailing period |
 | `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
@@ -187,15 +188,23 @@ minor is named in the release notes.
 **Cutting one:**
 
 1. `main` is green and nothing you want in it is still open (`gh pr list`).
-2. Pick the number from what has landed since the last tag
-   (`git log <last-tag>..origin/main --oneline`): only `fix` is a patch,
-   anything else a minor (at `v0` breaking changes go in a minor, never a
-   patch).
+2. Run `scripts/release.sh`. It looks only at `origin/main`: it lists the
+   commits since the last tag (breaking, features, fixes, the rest), checks
+   that CI is green on the commit, and **suggests** a version, which you
+   confirm or change (patch, minor, major, release candidate or one you type).
+   Then it signs the tag with your GPG key and pushes it. `--dry-run` only
+   shows the list and the suggestion: nothing is tagged, no prompt.
+   The suggestion follows the rules above: at `v0` a release with only `fix`,
+   `docs`, `ci`, `chore`, `build`, `test` and `style` commits is a patch,
+   anything else (a `feat`, a `refactor`, a `perf`, a `revert`, a breaking
+   change) is a minor; from `v1`, `!` is a major, `feat` a minor, the rest a
+   patch. A commit that does not follow the Angular style counts as `other`.
 3. A risky change (a migration, a renamed option) goes out as a release
-   candidate first, `v0.2.0-rc.1`: it gets only its exact tag, is marked a
-   prerelease on GitHub and does not move `0.2` or `latest`. Try it on the
-   cluster, then tag the final one.
-4. Tag the commit of `origin/main`, not a local `main` that may be behind:
+   candidate first, `v0.2.0-rc.1` (the script's "rc" choice): it gets only its
+   exact tag, is marked a prerelease on GitHub and does not move `0.2` or
+   `latest`. Try it on the cluster, then tag the final one.
+4. What the script does, if you ever need it by hand: tag the commit of
+   `origin/main`, not a local `main` that may be behind:
 
    ```sh
    git fetch origin

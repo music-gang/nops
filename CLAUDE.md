@@ -110,6 +110,7 @@ internal/redact/       removal of secret values from the plan diff
 internal/version/      the build's version (release tag via -ldflags -X)
 tests/integration/     tests against nomad agent -dev (build tag `integration`)
 examples/              example HCL jobs and hooks
+scripts/               maintainer tooling (release.sh) and its bash tests
 docs/                  documentation (index in docs/README.md)
 ```
 
