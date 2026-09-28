@@ -342,6 +342,13 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 					return "", "", err
 				}
 			default:
+				if active.State == store.StateDetected && active.Policy == store.PolicyApproval {
+					// Left `detected` under approval: the write that moves it to
+					// pending_approval did not land (a store error aborted that
+					// cycle). Apply never advances it (invariant 3), so this is the
+					// only way it gets to a human.
+					return "", "", e.leaveDetected(ctx, log, active, problem, commit.sha)
+				}
 				return "", "", nil // still approvable / still pending: nothing to do
 			}
 		}
@@ -379,13 +386,20 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
 	}
 
-	if problem != "" {
-		return "", "", e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, commit.sha))
-	}
-	if cfg.Policy == meta.PolicyApproval {
-		return "", "", e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
+	if cfg.Policy == meta.PolicyApproval || problem != "" {
+		return "", "", e.leaveDetected(ctx, log, d, problem, commit.sha)
 	}
 	return "", "", nil
+}
+
+// leaveDetected moves a `detected` deployment that `auto` apply must not pick
+// up: to failed when a hook it declares is missing or invalid (nothing to
+// approve), else to pending_approval.
+func (e *Engine) leaveDetected(ctx context.Context, log *slog.Logger, d *store.Deployment, problem, sha string) error {
+	if problem != "" {
+		return e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, sha))
+	}
+	return e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
 }
 
 // blockedRetry decides whether a job's drift is blocked from a new

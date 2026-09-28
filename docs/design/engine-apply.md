@@ -68,11 +68,16 @@ its current state for the next tick to retry (the "fail loud, retry" pattern
 `hooks.Runner.Run`'s own contract already uses) — only a hook `Result` or a
 CAS conflict actually closes the deployment.
 
-- **`detected`** (only reached here for `auto`; `pending_approval` is moved by
-  `Engine.Approve`, see [Decisions](#decisions), 1, which runs the same rule
-  below): read `nops_pre_hook` from `meta.Parse` on the stored `job_spec`'s
-  meta. Declared → `Transition` to `pre_hook`. Not declared → `Transition`
-  straight to `applying`.
+- **`detected`** (for `auto`; `pending_approval` is moved by `Engine.Approve`,
+  see [Decisions](#decisions), 1, which runs the same rule below): read
+  `nops_pre_hook` from `meta.Parse` on the stored `job_spec`'s meta. Declared →
+  `Transition` to `pre_hook`. Not declared → `Transition` straight to
+  `applying`. A `detected` deployment whose policy is `approval` is **left
+  alone** (invariant 3): detection creates it `detected` and moves it to
+  `pending_approval` in a second write, so apply can meet it in between, or find
+  one the second write never reached (a store error aborted that cycle). Apply
+  asks detection for a cycle, which moves it (see
+  [engine-detection](engine-detection.md#per-job-reconciliation)).
 - **`pre_hook`**: read the frozen hooks of the phase (`Store.DeploymentHooks`;
   none means a deployment made before hooks were frozen, which is `failed` with
   a message saying so) and walk them in position order. For each: register its
