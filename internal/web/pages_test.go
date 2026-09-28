@@ -202,6 +202,7 @@ func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testS
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
 		Now:       func() time.Time { return testNow },
+		Version:   "v0.0.0-test",
 		Log:       log,
 	})
 	if err != nil {
@@ -318,6 +319,9 @@ func TestHealthzAndStaticAreOpen(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("healthz: status %d", rec.Code)
 	}
+	if got := rec.Body.String(); got != "ok v0.0.0-test\n" {
+		t.Errorf("healthz body = %q, want the version", got)
+	}
 
 	rec = ts.do("GET", "/static/app.css", nil)
 	if rec.Code != http.StatusOK {
@@ -325,6 +329,29 @@ func TestHealthzAndStaticAreOpen(t *testing.T) {
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=86400" {
 		t.Errorf("static Cache-Control = %q", got)
+	}
+}
+
+// Every page's footer names the build; a dashboard built without a version
+// shows no footer and a bare "ok" on /healthz.
+func TestVersionFooter(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	for _, p := range []string{"/", "/jobs", "/history"} {
+		if body := ts.get(p); !strings.Contains(body, `<footer class="app-footer muted">nops v0.0.0-test</footer>`) {
+			t.Errorf("GET %s: no version footer", p)
+		}
+	}
+
+	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts.h = h
+	if body := ts.get("/"); strings.Contains(body, "app-footer") {
+		t.Error("footer shown without a version")
+	}
+	if got := ts.do("GET", "/healthz", nil).Body.String(); got != "ok\n" {
+		t.Errorf("healthz body without a version = %q, want \"ok\\n\"", got)
 	}
 }
 

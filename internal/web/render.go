@@ -58,11 +58,13 @@ type baseData struct {
 	Actor string
 	Nav   string // which nav tab is active: "overview", "jobs" or "history"
 	Self  string // this request's URL (path and query): what a live page polls
+	// Version is the build the footer shows; empty shows no footer.
+	Version string
 }
 
 func (s *server) base(r *http.Request, nav string) baseData {
 	actor, _ := UserFrom(r.Context())
-	return baseData{Actor: actor, Nav: nav, Self: r.URL.RequestURI()}
+	return baseData{Actor: actor, Nav: nav, Self: r.URL.RequestURI(), Version: s.version}
 }
 
 // duration writes d the way a person would: "10m", not Go's "10m0s".

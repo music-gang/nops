@@ -57,6 +57,13 @@ jobs:
       # Pinned version: bump it by hand (Dependabot does not track `go run` targets).
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags integration ./...
+      # A broken .goreleaser.yaml fails here, not when a release is tagged.
+      # Same pinned version as release.yml: bump both by hand.
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.18.2
+          args: check
 
   integration:
     name: integration

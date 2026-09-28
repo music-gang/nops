@@ -47,6 +47,11 @@ option is listed here).
   `-git-url / NOPS_GIT_URL: required` when neither was set).
 - Durations use Go syntax (`90s`, `5m`, `1h`) and must be positive.
 - `nops -h` prints every flag with its variable and default.
+- `nops -version` prints the version and exits, whatever else is set or
+  missing. It is not a setting, so it is the one flag without a variable. The
+  same version is in the `starting` log line, the dashboard's footer and the
+  `/healthz` body (see [development](development.md#releasing) for where it
+  comes from).
 
 ### Secrets without a file, at a glance
 
@@ -106,7 +111,8 @@ error, not a silent default.
 | `-git-token-file` | `NOPS_GIT_TOKEN_FILE` | none | File holding the HTTPS token. Unset: public repository. Requires an `https://` URL. |
 
 A private repository is read over HTTPS with a token (basic auth). SSH is not
-supported. Which files under `-git-path` are read as jobs is described in
+supported. A `file://` URL works only where a `git` executable is installed
+(go-git runs it for that transport): not in the release image, which has none. Which files under `-git-path` are read as jobs is described in
 [gitwatch](design/gitwatch.md#which-files-are-read).
 
 ## Dashboard
@@ -185,40 +191,83 @@ The timeout of a hook is not here: it is set on the hook job, with
 
 ## Running nops as a Nomad job
 
-The tokens come from Nomad Variables through a `template`, and the variables
-point at the rendered files:
+The release image is `ghcr.io/music-gang/nops` (see
+[development](development.md#releasing) for its tags). It runs as the
+`nonroot` user (uid 65532), so the volume holding the database must be
+writable by that uid. Pin a minor (`0.3`) or an exact version (`0.3.1`), not
+`latest`: while the major is 0 a new minor may break the configuration or the
+database, and `latest` would take it on the next restart.
+
+A group running it. The tokens come from Nomad Variables through a
+`template`, and the variables point at the rendered files:
 
 ```hcl
-task "nops" {
-  template {
-    destination = "secrets/git-token"
-    data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .git_token }}{{ end }}"
-    change_mode = "restart"
+group "nops" {
+  network {
+    port "http" { to = 8080 }
   }
 
-  template {
-    destination = "secrets/discord-url"
-    data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .discord_url }}{{ end }}"
-    change_mode = "restart"
+  # A host volume (or a CSI one) for the SQLite database and its -wal/-shm
+  # files, writable by uid 65532.
+  volume "nops-data" {
+    type   = "host"
+    source = "nops-data"
   }
 
-  template {
-    destination = "secrets/oidc-secret"
-    data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .oidc_client_secret }}{{ end }}"
-    change_mode = "restart"
+  service {
+    name = "nops"
+    port = "http"
+    check {
+      type     = "http"
+      path     = "/healthz"
+      interval = "10s"
+      timeout  = "2s"
+    }
   }
 
-  env {
-    NOPS_GIT_URL                 = "https://git.example.com/ops/jobs.git"
-    NOPS_GIT_TOKEN_FILE          = "${NOMAD_SECRETS_DIR}/git-token"
-    NOPS_NOTIFY_DISCORD_URL_FILE = "${NOMAD_SECRETS_DIR}/discord-url"
-    NOPS_PUBLIC_URL              = "https://nops.example.com"
-    NOPS_OIDC_ISSUER_URL         = "https://auth.example.com/application/o/nops/"
-    NOPS_OIDC_CLIENT_ID          = "nops"
-    NOPS_OIDC_CLIENT_SECRET_FILE = "${NOMAD_SECRETS_DIR}/oidc-secret"
-    NOPS_OIDC_ALLOWED_GROUPS     = "nops-approvers"
-    NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
-    NOPS_DB_PATH                 = "/data/nops.db"
+  task "nops" {
+    driver = "docker"
+
+    config {
+      image = "ghcr.io/music-gang/nops:0.1"
+      ports = ["http"]
+    }
+
+    volume_mount {
+      volume      = "nops-data"
+      destination = "/data"
+    }
+
+    template {
+      destination = "secrets/git-token"
+      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .git_token }}{{ end }}"
+      change_mode = "restart"
+    }
+
+    template {
+      destination = "secrets/discord-url"
+      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .discord_url }}{{ end }}"
+      change_mode = "restart"
+    }
+
+    template {
+      destination = "secrets/oidc-secret"
+      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .oidc_client_secret }}{{ end }}"
+      change_mode = "restart"
+    }
+
+    env {
+      NOPS_GIT_URL                 = "https://git.example.com/ops/jobs.git"
+      NOPS_GIT_TOKEN_FILE          = "${NOMAD_SECRETS_DIR}/git-token"
+      NOPS_NOTIFY_DISCORD_URL_FILE = "${NOMAD_SECRETS_DIR}/discord-url"
+      NOPS_PUBLIC_URL              = "https://nops.example.com"
+      NOPS_OIDC_ISSUER_URL         = "https://auth.example.com/application/o/nops/"
+      NOPS_OIDC_CLIENT_ID          = "nops"
+      NOPS_OIDC_CLIENT_SECRET_FILE = "${NOMAD_SECRETS_DIR}/oidc-secret"
+      NOPS_OIDC_ALLOWED_GROUPS     = "nops-approvers"
+      NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
+      NOPS_DB_PATH                 = "/data/nops.db"
+    }
   }
 }
 ```

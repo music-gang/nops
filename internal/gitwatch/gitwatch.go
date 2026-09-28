@@ -305,6 +305,22 @@ func CommitURL(repoURL, sha string) string {
 	return u.String()
 }
 
+// StripCredentials returns repoURL without the user info a person may have
+// embedded in it (https://user:token@host/...), for a log line. A value
+// url.Parse refuses (the scp form git@host:path, or a malformed URL) keeps
+// only what follows its last "@", so a token never survives either way.
+func StripCredentials(repoURL string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Scheme == "" {
+		if i := strings.LastIndex(repoURL, "@"); i >= 0 {
+			return repoURL[i+1:]
+		}
+		return repoURL
+	}
+	u.User = nil
+	return u.String()
+}
+
 // auth returns the HTTPS basic auth credentials, or nil for a public
 // repository. The token never becomes part of a URL, so it never reaches a
 // log line or an error.

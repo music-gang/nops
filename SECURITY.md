@@ -12,8 +12,10 @@ basis: nops is maintained by a small team.
 
 ## Supported versions
 
-nops is in early development and has no releases yet. Only the latest commit on
-`main` is supported.
+Only the latest release is supported, and while nops is at `v0` that means the
+latest minor: a fix goes into a new patch or minor of the current line, never
+into an older one (see
+[docs/development.md](docs/development.md#releasing)).
 
 ## Scope notes
 

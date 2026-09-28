@@ -48,4 +48,5 @@ New here? Start with the [project README](../README.md).
 | New concept, or a renamed term | `vocabulary.md` |
 | A task is finished, added or reshaped | `roadmap.md` |
 | Design decision | `design/decisions.md` (and the relevant document) |
+| Build or release (`Dockerfile`, `.goreleaser.yaml`, `release.yml`), image tags, semver policy | `development.md#releasing` |
 | Invariant | `philosophy.md` **and** the list in CLAUDE.md |

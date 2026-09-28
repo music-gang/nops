@@ -1,0 +1,77 @@
+# Release build of nops: runs on a vX.Y.Z tag (.github/workflows/release.yml).
+# What it publishes and why: docs/development.md#releasing.
+version: 2
+
+project_name: nops
+
+builds:
+  - id: nops
+    main: ./cmd/nops
+    binary: nops
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/music-gang/nops/internal/version.version={{ .Tag }}
+
+archives:
+  - formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  # A subject with "!" before the colon (feat(config)!: ...) is a breaking
+  # change and goes first, whatever its type. The groups are tried in order.
+  groups:
+    - title: Breaking changes
+      regexp: '^[a-z]+(\(.+\))?!:'
+      order: 0
+    - title: Features
+      regexp: '^feat(\(.+\))?:'
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\(.+\))?:'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^(docs|ci|chore|build|test|style)(\(.+\))?:'
+
+dockers_v2:
+  - images:
+      - ghcr.io/music-gang/nops
+    # While the major is 0 every minor may break (docs/development.md#releasing),
+    # so the major-only tag is published only from v1. A prerelease gets its
+    # exact tag only.
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if and (not .Prerelease) (gt .Major 0) }}{{ .Major }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+    # The SBOM goes on the published image; the snapshot image is only loaded
+    # locally for the smoke test, where an attestation may not be loadable.
+    sbom: "{{ not .IsSnapshot }}"
+    labels:
+      org.opencontainers.image.title: nops
+      org.opencontainers.image.description: Semi-automatic GitOps controller for HashiCorp Nomad
+      # Links the GHCR package to the repository.
+      org.opencontainers.image.source: https://github.com/music-gang/nops
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.licenses: Apache-2.0
+
+release:
+  prerelease: auto

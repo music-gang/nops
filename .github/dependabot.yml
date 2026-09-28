@@ -15,3 +15,14 @@ updates:
     commit-message:
       prefix: ci
       include: scope
+
+  # The distroless base of the release image, pinned by digest in the
+  # Dockerfile. A new Debian release (static-debian13 -> 14) is a different
+  # image name: that bump is by hand (docs/development.md#releasing).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope

@@ -71,6 +71,10 @@ var (
 	nopsBinErr  error
 )
 
+// testVersion is linked into the test binary the way a release links its
+// tag (.goreleaser.yaml), so the tests exercise the same -X path.
+const testVersion = "v0.0.0-integration"
+
 // buildNopsBinary builds ./cmd/nops once per test run and returns its path.
 func buildNopsBinary(t *testing.T) string {
 	t.Helper()
@@ -86,7 +90,8 @@ func buildNopsBinary(t *testing.T) string {
 			return
 		}
 		nopsBinPath = filepath.Join(nopsBinDir, "nops")
-		cmd := exec.Command("go", "build", "-o", nopsBinPath, "./cmd/nops")
+		cmd := exec.Command("go", "build", "-o", nopsBinPath,
+			"-ldflags", "-X github.com/music-gang/nops/internal/version.version="+testVersion, "./cmd/nops")
 		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
 			nopsBinErr = fmt.Errorf("go build ./cmd/nops: %v\n%s", err, out)

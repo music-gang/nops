@@ -262,6 +262,22 @@ func TestCommitURL(t *testing.T) {
 	}
 }
 
+func TestStripCredentials(t *testing.T) {
+	cases := []struct{ name, repo, want string }{
+		{"plain", "https://git.example.com/ops/jobs.git", "https://git.example.com/ops/jobs.git"},
+		{"user and token", "https://user:secret@git.example.com/ops/jobs.git", "https://git.example.com/ops/jobs.git"},
+		{"token only", "https://secret@git.example.com/ops/jobs.git", "https://git.example.com/ops/jobs.git"},
+		{"malformed with a token", "https://user:se%zzret@git.example.com/ops/jobs.git", "git.example.com/ops/jobs.git"},
+		{"ssh scp form", "git@github.com:music-gang/nops.git", "github.com:music-gang/nops.git"},
+		{"file transport", "file:///srv/git/jobs.git", "file:///srv/git/jobs.git"},
+	}
+	for _, c := range cases {
+		if got := StripCredentials(c.repo); got != c.want {
+			t.Errorf("%s: StripCredentials(%q) = %q, want %q", c.name, c.repo, got, c.want)
+		}
+	}
+}
+
 func TestPollNewCommit(t *testing.T) {
 	r := newTestRepo(t, "main")
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})

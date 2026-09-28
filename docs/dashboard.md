@@ -19,7 +19,7 @@ plus the **git webhook** that triggers an out-of-turn fetch.
 
 Every page below needs a login (see [authentication](#authentication)); the
 header shows the current tab (Overview, Jobs, Activity), the actor and a
-logout button. Times read relative ("3m ago"), with the absolute UTC time on
+logout button, and the footer the nops version. Times read relative ("3m ago"), with the absolute UTC time on
 hover; long identifiers (a spec hash, an evaluation ID) read short, with the
 whole value on hover.
 
@@ -35,7 +35,7 @@ whole value on hover.
 | `POST /deployments/{id}/reject` | Calls `Engine.Reject(ctx, id, actor)`. |
 | `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` back to the page named by the form's `back` (`overview`, `jobs`, `activity` or `job`; anything else is the Overview); `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for a namespace nops does not manage. |
 | `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` to `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
-| `GET /healthz` | `200 ok`, no session needed: what an orchestrator or a load balancer probes. |
+| `GET /healthz` | `200` with `ok <version>` (`ok v0.1.0`), no session needed: what an orchestrator or a load balancer probes. |
 
 ### Sync state of a job
 
