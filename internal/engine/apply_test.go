@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/hashicorp/nomad/api"
 
+	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/hooks"
 	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
@@ -968,5 +971,65 @@ func TestStepDetectedNeverAdvancesADeploymentUnderApproval(t *testing.T) {
 	}
 	if len(h.nomad.registerCalls) != 0 {
 		t.Errorf("nothing may be registered: %+v", h.nomad.registerCalls)
+	}
+}
+
+// docs/error-handling.md: every failed deployment is logged at ERROR with the
+// deployment, the job, the phase it failed in and the cause; the other
+// transitions stay at INFO.
+func TestAFailedDeploymentIsLoggedAtError(t *testing.T) {
+	var buf bytes.Buffer
+	h := newHarness(t)
+	h.engine.log = slog.New(slog.NewTextHandler(&buf, nil)).With("job", "web", "namespace", testNamespace)
+
+	// Failed while applying the pre-hook.
+	job := managed("web", "auto", map[string]string{"nops_pre_hook": "web-migrate"})
+	specJSON := mustMarshal(t, job)
+	d := &store.Deployment{
+		JobID: "web", Namespace: testNamespace, CommitSHA: "c1", SpecHash: "h1",
+		JobSpec: specJSON, Hooks: frozenFromSpec(specJSON), Policy: store.PolicyAuto,
+	}
+	if err := h.store.CreateDeployment(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Transition(context.Background(), d.ID, store.StatePreHook,
+		store.Transition{From: store.StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	d = h.get(d.ID)
+	h.hooks.setResult(d.ID, "pre", hooks.Result{State: store.HookFailed, Error: "exit code 1"})
+	h.step(d)
+
+	out := buf.String()
+	for _, want := range []string{"level=ERROR", "deployment failed", "deployment_id=" + d.ID, "phase=pre", "exit code 1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the failure of the pre-hook is not logged with %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "level=INFO msg=\"deployment failed\"") {
+		t.Errorf("a failed deployment is logged at INFO:\n%s", out)
+	}
+
+	// Failed at detection: a declared hook is not in the repository.
+	buf.Reset()
+	h.nomad.setFile("api-v1", managed("api", "auto", map[string]string{"nops_pre_hook": "api-migrate"}))
+	h.nomad.setDrift("api", &api.JobDiff{Type: "Edited", ID: "api"})
+	h.snap.set("c1", gitwatch.File{Path: "api.nomad.hcl", Content: "api-v1"})
+	h.detect()
+	out = buf.String()
+	for _, want := range []string{"level=ERROR", "deployment failed", "phase=detection", "not found in repo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the failure at detection is not logged with %q:\n%s", want, out)
+		}
+	}
+
+	// A move that is not a failure is not an error.
+	buf.Reset()
+	h.nomad.setFile("db-v1", managed("db", "approval", nil))
+	h.nomad.setDrift("db", &api.JobDiff{Type: "Edited", ID: "db"})
+	h.snap.set("c2", gitwatch.File{Path: "db.nomad.hcl", Content: "db-v1"})
+	h.detect()
+	if out := buf.String(); strings.Contains(out, "level=ERROR") || !strings.Contains(out, "deployment pending_approval") {
+		t.Errorf("pending_approval must be logged, at INFO:\n%s", out)
 	}
 }
