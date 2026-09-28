@@ -48,8 +48,9 @@ downtime and break the CAS sequence.
 
 `applying` ends when the job is [healthy](vocabulary.md#deployment-lifecycle):
 the Nomad deployment is `successful` or, if the job produces none, every
-allocation of the new version is `running` or `complete`. The timeout is
-configurable.
+allocation of the new version is `running` or `complete` (a periodic or
+parameterized job, or one whose groups all have count 0, has none: it is healthy
+once registered). The timeout is configurable.
 
 ## What nops does not do
 
