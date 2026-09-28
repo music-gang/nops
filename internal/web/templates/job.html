@@ -2,7 +2,7 @@
 {{template "chrome_head" .}}
 <div id="live-head" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-head" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 <div class="pagehead">
-  <p class="crumbs"><a href="/jobs">Jobs</a></p>
+  <p class="crumbs"><a href="{{.Base}}/jobs">Jobs</a></p>
   <h1 class="pagehead__title">{{.Title}} {{if or .InRepo .Orphan}}<span class="pill {{.SyncClass}}">{{.SyncLabel}}</span>{{end}}</h1>
   <p class="pagehead__sub">
     {{if .InRepo}}
@@ -29,7 +29,7 @@
 <section class="flash flash--error flash--action">
   <div>
     <strong>Blocked.</strong> {{.BlockedReason}}
-    <a href="/deployments/{{.BlockedBy}}">See the deployment.</a>
+    <a href="{{.Base}}/deployments/{{.BlockedBy}}">See the deployment.</a>
   </div>
   <form method="post" action="{{.RetryPath}}">
     <input type="hidden" name="back" value="job">

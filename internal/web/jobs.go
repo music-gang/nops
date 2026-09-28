@@ -136,7 +136,7 @@ type jobRow struct {
 func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 	k := jobSync(o, latest)
 	row := jobRow{
-		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: jobPath(o.Namespace, o.JobID),
+		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: s.jobPath(o.Namespace, o.JobID),
 		Policy: o.Policy, Sync: k, SyncLabel: k.label(), SyncClass: k.class(),
 		BlockedReason: o.BlockedReason, File: o.FilePath, Observed: s.when(o.ObservedAt),
 	}
@@ -156,7 +156,7 @@ func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 // what it has is what nops deployed, and what Nomad says about it.
 func (s *server) orphanRow(o engine.Orphan, latest *store.Deployment) jobRow {
 	row := jobRow{
-		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: jobPath(o.Namespace, o.JobID),
+		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: s.jobPath(o.Namespace, o.JobID),
 		Policy: meta.Policy(o.Policy), Sync: syncOrphan, SyncLabel: syncOrphan.label(), SyncClass: syncOrphan.class(),
 		BlockedReason: orphanReason, Observed: s.when(o.ObservedAt),
 	}
@@ -334,7 +334,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
 		if data.Blocked {
-			data.RetryPath = jobPath(ns, id) + "/retry"
+			data.RetryPath = s.jobPath(ns, id) + "/retry"
 		}
 		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, summarize(diff), obs.Issues
 	}
@@ -389,7 +389,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		blocking[o.BlockedBy] = true
 		it := attentionItem{
 			Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: o.Namespace + "/" + o.JobID,
-			Path: jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason, RetryPath: jobPath(o.Namespace, o.JobID) + "/retry",
+			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry",
 		}
 		if d := latest[jobKey(o.Namespace, o.JobID)]; d != nil {
 			it.When = s.when(d.UpdatedAt)
@@ -421,7 +421,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 				continue
 			}
 			items = append(items, attentionItem{
-				Kind: "invalid", KindLabel: "Invalid meta", KindClass: "state-failed", Title: o.Namespace + "/" + o.JobID, Path: jobPath(o.Namespace, o.JobID),
+				Kind: "invalid", KindLabel: "Invalid meta", KindClass: "state-failed", Title: o.Namespace + "/" + o.JobID, Path: s.jobPath(o.Namespace, o.JobID),
 				Detail: iss.Key + ": " + iss.Message, When: s.when(o.ObservedAt),
 			})
 			break // one line per job: its page lists them all
@@ -433,7 +433,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 	for _, o := range s.engine.Orphans() {
 		items = append(items, attentionItem{
 			Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
-			Path: jobPath(o.Namespace, o.JobID), Detail: "Removed from git, still running in Nomad",
+			Path: s.jobPath(o.Namespace, o.JobID), Detail: "Removed from git, still running in Nomad",
 		})
 	}
 	return items

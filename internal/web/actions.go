@@ -48,7 +48,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 // Like retry it always goes back to "/".
 func (s *server) fetchNow(w http.ResponseWriter, r *http.Request) {
 	s.trigger()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, s.basePath+"/", http.StatusSeeOther)
 }
 
 // backTo is the page a write returns to, chosen from a fixed list by the name
@@ -59,17 +59,17 @@ func (s *server) fetchNow(w http.ResponseWriter, r *http.Request) {
 func (s *server) backTo(name, namespace, jobID string) string {
 	switch name {
 	case "jobs":
-		return "/jobs"
+		return s.basePath + "/jobs"
 	case "activity":
-		return "/history"
+		return s.basePath + "/history"
 	case "job":
 		// The job's own page, from the engine's copy of its name, not the
 		// request's.
 		for _, o := range s.engine.Observations() {
 			if o.Namespace == namespace && o.JobID == jobID {
-				return jobPath(o.Namespace, o.JobID)
+				return s.jobPath(o.Namespace, o.JobID)
 			}
 		}
 	}
-	return "/"
+	return s.basePath + "/"
 }

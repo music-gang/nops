@@ -23,7 +23,8 @@ import (
 // context, the cookie itself — lives here once.
 type session struct {
 	cookie  *securecookie.SecureCookie
-	secure  bool // cookies are Secure: the public URL is https
+	secure  bool   // cookies are Secure: the public URL is https
+	base    string // the dashboard's base path (docs/dashboard.md#base-path), "" at the domain root
 	xorigin *http.CrossOriginProtection
 	now     func() time.Time
 	log     *slog.Logger
@@ -45,7 +46,7 @@ type sessionData struct {
 // newSession creates the login's session mechanism. The key that signs and
 // encrypts the cookies is random and lives only in this process: a restart
 // logs everybody out, whichever backend they logged in with.
-func newSession(secure bool, log *slog.Logger) (*session, error) {
+func newSession(secure bool, base string, log *slog.Logger) (*session, error) {
 	hash, block := make([]byte, 32), make([]byte, 32)
 	if _, err := rand.Read(hash); err != nil {
 		return nil, fmt.Errorf("web: session key: %w", err)
@@ -63,6 +64,7 @@ func newSession(secure bool, log *slog.Logger) (*session, error) {
 	return &session{
 		cookie:  sc,
 		secure:  secure,
+		base:    base,
 		xorigin: http.NewCrossOriginProtection(),
 		now:     time.Now,
 		log:     log,
@@ -94,7 +96,7 @@ func (s *session) Require(next http.Handler) http.Handler {
 		user, ok := s.currentUser(r)
 		if !ok {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
-				http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, s.base+loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 				return
 			}
 			http.Error(w, "login required", http.StatusUnauthorized)
@@ -108,13 +110,13 @@ func (s *session) Require(next http.Handler) http.Handler {
 // successful login, whichever backend performed it.
 func (s *session) start(w http.ResponseWriter, actor string) bool {
 	sess := sessionData{User: actor, Expires: s.now().Add(sessionTTL).Unix()}
-	return s.setCookie(w, sessionCookie, "/", sess, sessionTTL)
+	return s.setCookie(w, sessionCookie, s.base+"/", sess, sessionTTL)
 }
 
 func (s *session) logout(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	s.clearCookie(w, sessionCookie, "/")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.clearCookie(w, sessionCookie, s.base+"/")
+	http.Redirect(w, r, s.base+"/", http.StatusSeeOther)
 }
 
 // currentUser reads the user of a valid, unexpired session cookie.

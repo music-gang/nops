@@ -431,6 +431,27 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
+// TestLoginFlowWithBasePath covers docs/dashboard.md#base-path on the OIDC
+// backend: the redirect to the login, the redirect back to "next" after the
+// callback, and the session cookie's Path all carry the base path.
+func TestLoginFlowWithBasePath(t *testing.T) {
+	a := newApp(t, func(o *AuthOptions) { o.BasePath = "/nops" })
+
+	rec := a.do("GET", "/page?x=1", nil)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/nops/auth/login?next=%2Fpage%3Fx%3D1" {
+		t.Fatalf("no session: status %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	rec = a.callback("/page?x=1", alice())
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/nops/page?x=1" {
+		t.Fatalf("callback: status %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+	sess := cookie(rec, sessionCookie)
+	if sess == nil || sess.Path != "/nops/" {
+		t.Fatalf("session cookie = %+v", sess)
+	}
+}
+
 func TestLoginAsksForTheGroupsScopeOnlyWithGroups(t *testing.T) {
 	a := newApp(t)
 	loc, _ := a.startLogin("")

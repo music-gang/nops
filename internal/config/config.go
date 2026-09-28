@@ -92,6 +92,10 @@ type Config struct {
 	// PublicURL is the dashboard's external URL, without trailing slash. If
 	// not set explicitly, check() derives it from ListenAddr.
 	PublicURL string
+	// BasePath is the sub path the dashboard is served under (e.g. "/nops"),
+	// read by check() from PublicURL's own path component: "" when it has
+	// none. See docs/dashboard.md#base-path.
+	BasePath string
 
 	GitPollInterval  time.Duration
 	DriftInterval    time.Duration
@@ -245,7 +249,7 @@ var options = []option{
 		}},
 	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
 		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
-	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it (default: derived from -listen-addr)",
+	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr)",
 		set: func(c *Config, v string) (err error) {
 			c.PublicURL, err = optionalURL(v)
 			return
@@ -405,6 +409,7 @@ func (c *Config) check() []error {
 	if c.PublicURL == "" {
 		c.PublicURL = publicURLDefault(c.ListenAddr)
 	}
+	c.BasePath = basePathOf(c.PublicURL)
 	if c.GitToken != "" {
 		if c.GitURL != "" && !strings.HasPrefix(strings.ToLower(c.GitURL), "https://") {
 			errs = append(errs, fmt.Errorf("a git token needs an https:// -git-url, got %q", c.GitURL))
@@ -596,6 +601,24 @@ func publicURLDefault(listenAddr string) string {
 		host = "localhost"
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+// basePathOf reads the dashboard's base path from -public-url's own path
+// component: a public URL of "https://host/nops" mounts the dashboard under
+// /nops, exactly what a reverse proxy must forward to it unstripped
+// (docs/dashboard.md#base-path). publicURL is assumed already validated as
+// an http(s) URL by the -public-url option; a parse failure here is
+// unreachable and just yields no base path, same as none set.
+func basePathOf(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil {
+		return ""
+	}
+	p := path.Clean(u.Path)
+	if p == "." || p == "/" {
+		return ""
+	}
+	return p
 }
 
 // urlFile reads a URL that carries a secret (a Discord or Slack webhook

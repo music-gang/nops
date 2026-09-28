@@ -120,7 +120,7 @@ func dayLabel(today, t time.Time) string {
 // drift keeps the old address working: the drift of every managed job is the
 // Jobs page now.
 func (s *server) drift(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/jobs", http.StatusMovedPermanently)
+	http.Redirect(w, r, s.basePath+"/jobs", http.StatusMovedPermanently)
 }
 
 // -- GET /deployments/{id} : review, decision, hooks, timeline --------------
@@ -237,7 +237,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	}
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {
-			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: jobPath(o.Namespace, o.JobID) + "/retry"}
+			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry"}
 			break
 		}
 	}
@@ -311,7 +311,7 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, approve bool) {
 	}
 	switch {
 	case err == nil:
-		http.Redirect(w, r, "/deployments/"+id, http.StatusSeeOther)
+		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
 	case errors.Is(err, engine.ErrStaleApproval):

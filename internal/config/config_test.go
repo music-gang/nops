@@ -466,6 +466,45 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	}
 }
 
+// TestLoadBasePath covers BasePath, derived from -public-url's own path
+// component: there is no separate flag (docs/dashboard.md#base-path).
+func TestLoadBasePath(t *testing.T) {
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	args := func(publicURL string) []string {
+		return []string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile, "-public-url", publicURL}
+	}
+	tests := []struct {
+		publicURL string
+		want      string
+	}{
+		{"https://nops.example.com", ""},
+		{"https://nops.example.com/", ""},
+		{"https://nops.example.com/nops", "/nops"},
+		{"https://nops.example.com/nops/", "/nops"},
+		{"https://nops.example.com/a/b", "/a/b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.publicURL, func(t *testing.T) {
+			c, err := Load(args(tt.publicURL), rawEnvOf(nil), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.BasePath != tt.want {
+				t.Errorf("BasePath = %q, want %q", c.BasePath, tt.want)
+			}
+		})
+	}
+
+	// No -public-url at all: the derived default has no path either.
+	c, err := Load([]string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile}, rawEnvOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BasePath != "" {
+		t.Errorf("BasePath = %q, want empty with no -public-url", c.BasePath)
+	}
+}
+
 func checkErr(t *testing.T, err error, prefix, want string) {
 	t.Helper()
 	if err == nil {

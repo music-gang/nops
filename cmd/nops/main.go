@@ -117,7 +117,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	handler, err := web.New(web.Options{
 		Auth: auth, Store: st, Engine: eng, Git: watcher, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
-		WebhookSecret: cfg.WebhookSecret, Version: version.String(), Log: log,
+		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
@@ -183,6 +183,7 @@ func startupAttrs(cfg *config.Config) []any {
 		"git_path", cfg.GitPath,
 		"auth_mode", cfg.AuthMode,
 		"db_path", cfg.DBPath,
+		"base_path", cfg.BasePath,
 	}
 }
 
@@ -196,10 +197,11 @@ func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, 
 			RedirectURL:   cfg.PublicURL + "/auth/callback",
 			AllowedUsers:  cfg.OIDCAllowedUsers,
 			AllowedGroups: cfg.OIDCAllowedGroups,
+			BasePath:      cfg.BasePath,
 			Log:           log,
 		})
 	case "basic":
-		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, Log: log})
+		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, BasePath: cfg.BasePath, Log: log})
 	default:
 		// config.Load's check() already refuses any other value.
 		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)

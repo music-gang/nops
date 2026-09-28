@@ -106,6 +106,16 @@ type Options struct {
 	// /healthz body. Optional: empty shows none.
 	Version string
 
+	// BasePath is the sub path the dashboard is served under (e.g. "/nops"),
+	// or "" for the domain root. It is stripped from every incoming request
+	// (except /healthz, reachable at the bare path too: an orchestrator
+	// probes the task's own port, bypassing whatever prefix a reverse proxy
+	// mounts it under) and prepended to every generated URL: redirects,
+	// cookie paths, template links and static asset addresses. There is no
+	// separate flag for it: config.Config reads it from -public-url's own
+	// path. See docs/dashboard.md#base-path.
+	BasePath string
+
 	Log *slog.Logger
 }
 
@@ -120,6 +130,7 @@ type server struct {
 	now       func() time.Time
 	secret    []byte
 	version   string
+	basePath  string
 	log       *slog.Logger
 	tmpl      *template.Template
 	static    fs.FS
@@ -157,12 +168,35 @@ func New(o Options) (http.Handler, error) {
 		now:       o.Now,
 		secret:    []byte(o.WebhookSecret),
 		version:   o.Version,
+		basePath:  o.BasePath,
 		log:       o.Log,
 		tmpl:      tmpl,
 		static:    staticDir,
 		started:   time.Now(),
 	}
-	return securityHeaders(s.routes()), nil
+	return s.handler(), nil
+}
+
+// handler wraps the routes with the security headers and, if the dashboard
+// is served under a base path, strips it from every incoming request before
+// they reach the routes below, which are registered at their bare paths:
+// docs/dashboard.md#base-path has the reasoning. /healthz stays reachable at
+// the bare path too, without the prefix, since an orchestrator's health
+// check hits the task's own port directly.
+func (s *server) handler() http.Handler {
+	h := securityHeaders(s.routes())
+	if s.basePath == "" {
+		return h
+	}
+	stripped := http.StripPrefix(s.basePath, h)
+	healthz := http.HandlerFunc(s.healthz)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			healthz.ServeHTTP(w, r)
+			return
+		}
+		stripped.ServeHTTP(w, r)
+	})
 }
 
 // parseTemplates parses every template once, shared by New (fail loud at
