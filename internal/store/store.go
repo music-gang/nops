@@ -740,6 +740,18 @@ func (s *Store) ListHistory(ctx context.Context, limit int) ([]*Deployment, erro
 		ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
 }
 
+// ListRecentCompleted returns the most recently completed deployments, by
+// when they completed (not when they were created: an approval can sit
+// pending for a while before that). What the Overview's "Recently completed"
+// section shows, so a deployment that just finished does not simply vanish
+// from "In progress" with nothing to say it succeeded
+// (docs/dashboard.md#pages).
+func (s *Store) ListRecentCompleted(ctx context.Context, limit int) ([]*Deployment, error) {
+	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE state = 'completed'
+		ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+}
+
 // Events returns the audit log of a deployment in order.
 func (s *Store) Events(ctx context.Context, deploymentID string) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,

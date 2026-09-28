@@ -33,11 +33,16 @@ var templateFiles embed.FS
 // deployments to need one, and adding it now would be overengineering.
 const historyLimit = 200
 
+// recentCompletedLimit is how many deployments the Overview's "Recently
+// completed" section shows.
+const recentCompletedLimit = 5
+
 // Store is what the dashboard reads from SQLite. *store.Store implements it.
 type Store interface {
 	GetDeployment(ctx context.Context, id string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	ListHistory(ctx context.Context, limit int) ([]*store.Deployment, error)
+	ListRecentCompleted(ctx context.Context, limit int) ([]*store.Deployment, error)
 	ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error)
 	LatestPerJob(ctx context.Context) ([]*store.Deployment, error)
 	Events(ctx context.Context, deploymentID string) ([]store.Event, error)

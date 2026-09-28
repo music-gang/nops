@@ -26,6 +26,8 @@ type fakeStore struct {
 	activeErr  error
 	history    []*store.Deployment
 	historyErr error
+	recent     []*store.Deployment // what ListRecentCompleted returns
+	recentErr  error
 	byJob      []*store.Deployment // what ListByJob returns, whatever the job
 	byJobErr   error
 	latest     []*store.Deployment
@@ -68,6 +70,10 @@ func (f *fakeStore) ListActive(ctx context.Context) ([]*store.Deployment, error)
 
 func (f *fakeStore) ListHistory(ctx context.Context, limit int) ([]*store.Deployment, error) {
 	return f.history, f.historyErr
+}
+
+func (f *fakeStore) ListRecentCompleted(ctx context.Context, limit int) ([]*store.Deployment, error) {
+	return f.recent, f.recentErr
 }
 
 func (f *fakeStore) ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error) {

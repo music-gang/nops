@@ -223,8 +223,25 @@ func TestOverviewEmpty(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	page := ts.get("/")
 	mustContain(t, page, "Overview", "Nothing needs your attention.", "No deployment is in progress.",
-		"no commit read yet", "waiting for the first cycle")
+		"No deployment has completed yet.", "no commit read yet", "waiting for the first cycle")
 	mustNotContain(t, page, specMarker)
+}
+
+// TestOverviewRecentlyCompleted covers the section a completed deployment
+// moves into once it drops out of "In progress" (#46): it is listed, linked,
+// and ordered exactly as the store returns it (newest completion first,
+// Store.ListRecentCompleted's job).
+func TestOverviewRecentlyCompleted(t *testing.T) {
+	c1 := dep("c1", "web", store.StateCompleted, time.Hour)
+	c2 := dep("c2", "db", store.StateCompleted, 3*time.Hour)
+	ts := newTestServer(t, &fakeStore{recent: []*store.Deployment{c1, c2}}, &fakeEngine{}, "")
+
+	page := ts.get("/")
+	mustContain(t, page, "Recently completed", `href="/deployments/c1"`, `href="/deployments/c2"`, "1h ago", "3h ago")
+	mustNotContain(t, page, "No deployment has completed yet.", specMarker)
+	if strings.Index(page, `href="/deployments/c1"`) > strings.Index(page, `href="/deployments/c2"`) {
+		t.Error("recently completed deployments are not shown in the store's own order")
+	}
 }
 
 func TestOverviewGitAndCycle(t *testing.T) {
@@ -358,6 +375,7 @@ func TestOverviewErrors(t *testing.T) {
 	for name, st := range map[string]*fakeStore{
 		"active": {activeErr: fmt.Errorf("database is locked")},
 		"latest": {latestErr: fmt.Errorf("database is locked")},
+		"recent": {recentErr: fmt.Errorf("database is locked")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, st, &fakeEngine{}, "")

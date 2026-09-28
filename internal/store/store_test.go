@@ -343,6 +343,37 @@ func TestLists(t *testing.T) {
 	if hist, _ := s.ListHistory(ctx, 1); len(hist) != 1 {
 		t.Errorf("ListHistory limit not applied: %d rows", len(hist))
 	}
+
+	recent, err := s.ListRecentCompleted(ctx, 10)
+	if err != nil || len(recent) != 1 || recent[0].ID != c.ID {
+		t.Errorf("ListRecentCompleted = %+v, %v", recent, err)
+	}
+	if recent, _ := s.ListRecentCompleted(ctx, 0); len(recent) != 0 {
+		t.Errorf("ListRecentCompleted limit not applied: %d rows", len(recent))
+	}
+}
+
+// TestListRecentCompletedOrdersByCompletion covers what TestLists's single
+// completed row cannot: a deployment created earlier that completes later
+// sorts by when it completed, not by when it was created.
+func TestListRecentCompletedOrdersByCompletion(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	first := mustCreate(t, s, newDep("a")) // created first, completes last
+	second := mustCreate(t, s, newDep("b"))
+
+	if err := s.Transition(ctx, second.ID, StateCompleted, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Transition(ctx, first.ID, StateCompleted, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := s.ListRecentCompleted(ctx, 10)
+	if err != nil || len(recent) != 2 || recent[0].ID != first.ID || recent[1].ID != second.ID {
+		t.Errorf("ListRecentCompleted = %+v, %v, want %s then %s", recent, err, first.ID, second.ID)
+	}
 }
 
 func TestHookRunLifecycle(t *testing.T) {

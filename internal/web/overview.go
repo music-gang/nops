@@ -31,10 +31,11 @@ type cycleView struct {
 
 type overviewData struct {
 	baseData
-	Git        gitView
-	Cycle      cycleView
-	Attention  []attentionItem
-	InProgress []deploymentCard // detected, pre_hook, applying, post_hook
+	Git               gitView
+	Cycle             cycleView
+	Attention         []attentionItem
+	InProgress        []deploymentCard // detected, pre_hook, applying, post_hook
+	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
 }
 
 func (s *server) gitView() gitView {
@@ -71,6 +72,11 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "list latest deployments", err)
 		return
 	}
+	recent, err := s.store.ListRecentCompleted(r.Context(), recentCompletedLimit)
+	if err != nil {
+		s.serverError(w, r, "list recently completed deployments", err)
+		return
+	}
 	data := overviewData{
 		baseData:  s.base(r, "overview"),
 		Git:       s.gitView(),
@@ -81,6 +87,9 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		if d.State != store.StatePendingApproval {
 			data.InProgress = append(data.InProgress, s.card(d))
 		}
+	}
+	for _, d := range recent {
+		data.RecentlyCompleted = append(data.RecentlyCompleted, s.card(d))
 	}
 	s.render(w, r, "overview", data)
 }
