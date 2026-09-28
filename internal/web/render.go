@@ -58,13 +58,18 @@ type baseData struct {
 	Actor string
 	Nav   string // which nav tab is active: "overview", "jobs" or "history"
 	Self  string // this request's URL (path and query): what a live page polls
+	// Base is the dashboard's base path (docs/dashboard.md#base-path), "" at
+	// the domain root: templates prepend it to every hard-coded absolute
+	// link, since a computed one (JobPath, a deploymentCard's Path, ...)
+	// already carries it.
+	Base string
 	// Version is the build the footer shows; empty shows no footer.
 	Version string
 }
 
 func (s *server) base(r *http.Request, nav string) baseData {
 	actor, _ := UserFrom(r.Context())
-	return baseData{Actor: actor, Nav: nav, Self: r.URL.RequestURI(), Version: s.version}
+	return baseData{Actor: actor, Nav: nav, Self: s.basePath + r.URL.RequestURI(), Base: s.basePath, Version: s.version}
 }
 
 // duration writes d the way a person would: "10m", not Go's "10m0s".
@@ -81,8 +86,8 @@ func duration(d time.Duration) string {
 
 // jobPath is where a job's page lives. ns and job are path-escaped: both can
 // hold characters a URL path does not.
-func jobPath(namespace, jobID string) string {
-	return "/jobs/" + url.PathEscape(namespace) + "/" + url.PathEscape(jobID)
+func (s *server) jobPath(namespace, jobID string) string {
+	return s.basePath + "/jobs/" + url.PathEscape(namespace) + "/" + url.PathEscape(jobID)
 }
 
 // deploymentCard is a deployment as shown in a list or on its own page. It
@@ -131,8 +136,8 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		JobID:        d.JobID,
 		Namespace:    d.Namespace,
 		Title:        d.Namespace + "/" + d.JobID,
-		JobPath:      jobPath(d.Namespace, d.JobID),
-		Path:         "/deployments/" + url.PathEscape(d.ID),
+		JobPath:      s.jobPath(d.Namespace, d.JobID),
+		Path:         s.basePath + "/deployments/" + url.PathEscape(d.ID),
 		Policy:       d.Policy,
 		State:        d.State,
 		StateLabel:   stateLabel(d.State),

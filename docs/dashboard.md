@@ -67,6 +67,32 @@ The handlers work from small interfaces over `*store.Store`, `*engine.Engine`
 and `*gitwatch.Watcher` (`web.Store`, `web.Engine`, `web.Git`), so tests use
 fakes instead of a real database, Nomad client or repository.
 
+## Base path
+
+nops can be served under a sub path of a shared domain
+(`https://domain.example.org/nops`) instead of a dedicated one: give
+`-public-url` a path and that becomes the dashboard's base path
+([configuration](configuration.md#dashboard)) — there is no separate flag,
+since the browser-facing URL is the only place that matters.
+
+The reverse proxy in front of nops must forward the request path
+**unstripped**, prefix included (`https://domain.example.org/nops/jobs`
+must reach nops as `/nops/jobs`, not `/jobs`): nops does its own stripping,
+once, at the edge (`http.StripPrefix`), and prepends the base path back to
+every URL it generates itself — redirects, the session and login cookies'
+`Path`, every link and form action a page renders, and the static assets —
+so the browser and the proxy always see the full, prefixed address. Getting
+this backwards (a proxy that already strips the prefix) makes every link
+nops renders double it.
+
+`/healthz` is the one exception: it answers at the bare path too, without
+the base path, since an orchestrator's health check
+([configuration](configuration.md#running-nops-as-a-nomad-job)'s example)
+hits the task's own port directly, bypassing whatever prefix a reverse
+proxy mounts the dashboard under.
+
+See the [decision log](design/decisions.md), 2026-09-28.
+
 ## Look and technology
 
 No JS framework, no build step: `html/template` renders every page (all

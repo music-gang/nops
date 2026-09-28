@@ -10,22 +10,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
 <title>nops</title>
-<link rel="stylesheet" href="{{asset "app.css"}}">
-<script src="{{asset "htmx.min.js"}}" defer></script>
+<link rel="stylesheet" href="{{.Base}}{{asset "app.css"}}">
+<script src="{{.Base}}{{asset "htmx.min.js"}}" defer></script>
 </head>
 <body hx-boost="true">
 <header class="app-header">
   <div class="app-header__inner">
-    <a class="app-header__brand" href="/">nops</a>
+    <a class="app-header__brand" href="{{.Base}}/">nops</a>
     <nav class="app-nav">
-      <a class="app-nav__link{{if eq .Nav "overview"}} is-active{{end}}" href="/">Overview</a>
-      <a class="app-nav__link{{if eq .Nav "jobs"}} is-active{{end}}" href="/jobs">Jobs</a>
-      <a class="app-nav__link{{if eq .Nav "history"}} is-active{{end}}" href="/history">Activity</a>
+      <a class="app-nav__link{{if eq .Nav "overview"}} is-active{{end}}" href="{{.Base}}/">Overview</a>
+      <a class="app-nav__link{{if eq .Nav "jobs"}} is-active{{end}}" href="{{.Base}}/jobs">Jobs</a>
+      <a class="app-nav__link{{if eq .Nav "history"}} is-active{{end}}" href="{{.Base}}/history">Activity</a>
     </nav>
     <div class="app-header__actor">
       {{if .Actor}}
       <span class="app-header__actor-name">{{.Actor}}</span>
-      <form method="post" action="/auth/logout" class="app-header__logout">
+      <form method="post" action="{{.Base}}/auth/logout" class="app-header__logout">
         <button type="submit" class="btn-link">Log out</button>
       </form>
       {{end}}
@@ -197,7 +197,7 @@
      {{if not (isTerminal .Deployment.State)}}hx-trigger="every 3s"{{end}}
      hx-swap="outerHTML">
   <div class="pagehead">
-    <p class="crumbs"><a href="/jobs">Jobs</a> / <a href="{{.Deployment.JobPath}}">{{.Deployment.Title}}</a></p>
+    <p class="crumbs"><a href="{{.Base}}/jobs">Jobs</a> / <a href="{{.Deployment.JobPath}}">{{.Deployment.Title}}</a></p>
     <h1 class="pagehead__title">{{.Deployment.Title}} {{template "state_badge" .Deployment.State}}</h1>
     <p class="pagehead__sub">
       {{if .Deployment.CommitURL}}<a class="mono" href="{{.Deployment.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</a>{{else}}<span class="mono" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</span>{{end}}

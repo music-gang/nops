@@ -5,11 +5,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nops</title>
-<link rel="stylesheet" href="{{asset "app.css"}}">
+<link rel="stylesheet" href="{{.Base}}{{asset "app.css"}}">
 </head>
 <body>
 <main class="login-page">
-  <form class="login-card" method="post" action="/auth/login">
+  <form class="login-card" method="post" action="{{.Base}}/auth/login">
     <h1 class="login-card__title">nops</h1>
     {{if .Error}}<p class="login-card__error">{{.Error}}</p>{{end}}
     <input type="hidden" name="next" value="{{.Next}}">

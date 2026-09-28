@@ -28,7 +28,10 @@ type BasicAuthOptions struct {
 	UsersFile string
 	// PublicURL decides whether cookies are Secure, like OIDC's RedirectURL.
 	PublicURL string
-	Log       *slog.Logger
+	// BasePath is the dashboard's base path (docs/dashboard.md#base-path),
+	// "" at the domain root.
+	BasePath string
+	Log      *slog.Logger
 }
 
 // BasicAuth is the local-users login: no external identity provider, an
@@ -60,7 +63,7 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("web: invalid public URL %q", o.PublicURL)
 	}
-	sess, err := newSession(u.Scheme == "https", o.Log)
+	sess, err := newSession(u.Scheme == "https", o.BasePath, o.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +126,7 @@ func (b *BasicAuth) Register(mux *http.ServeMux) {
 type loginPageData struct {
 	Error string
 	Next  string
+	Base  string // the dashboard's base path (docs/dashboard.md#base-path)
 }
 
 func (b *BasicAuth) loginForm(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +136,7 @@ func (b *BasicAuth) loginForm(w http.ResponseWriter, r *http.Request) {
 
 func (b *BasicAuth) renderLogin(w http.ResponseWriter, errMsg, next string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := b.tmpl.ExecuteTemplate(w, "login_basic", loginPageData{Error: errMsg, Next: next}); err != nil {
+	if err := b.tmpl.ExecuteTemplate(w, "login_basic", loginPageData{Error: errMsg, Next: next, Base: b.base}); err != nil {
 		b.log.Error("render login page", "error", err)
 	}
 }
@@ -164,5 +168,5 @@ func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.log.InfoContext(r.Context(), "login", "user", username)
-	http.Redirect(w, r, next, http.StatusFound)
+	http.Redirect(w, r, b.base+next, http.StatusFound)
 }

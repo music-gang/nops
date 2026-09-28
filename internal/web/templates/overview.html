@@ -17,7 +17,7 @@
     {{end}}
     <span class="strip__meta">repository checked {{template "time" .Git.CheckedAt}}</span>
     {{if .Git.CanFetch}}
-    <form method="post" action="/fetch" class="strip__action">
+    <form method="post" action="{{.Base}}/fetch" class="strip__action">
       <button type="submit" class="btn btn--sm">Fetch now</button>
     </form>
     {{end}}

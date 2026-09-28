@@ -38,7 +38,12 @@ type AuthOptions struct {
 	AllowedUsers, AllowedGroups []string
 	// HTTPClient talks to the provider. Nil: a client with a 10 second timeout.
 	HTTPClient *http.Client
-	Log        *slog.Logger
+	// BasePath is the dashboard's base path (docs/dashboard.md#base-path),
+	// "" at the domain root. It is not part of RedirectURL: the caller
+	// already builds that from the full public URL, which carries any base
+	// path as its own path component.
+	BasePath string
+	Log      *slog.Logger
 }
 
 // Auth is the OIDC login of the dashboard. It never contacts the provider
@@ -68,7 +73,7 @@ func NewAuth(o AuthOptions) (*Auth, error) {
 	if err != nil || redirect.Host == "" {
 		return nil, fmt.Errorf("web: invalid redirect URL %q", o.RedirectURL)
 	}
-	sess, err := newSession(redirect.Scheme == "https", o.Log)
+	sess, err := newSession(redirect.Scheme == "https", o.BasePath, o.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +116,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		Next:     safeNext(r.URL.Query().Get("next")),
 		Expires:  a.now().Add(loginTTL).Unix(),
 	}
-	if !a.setCookie(w, loginCookie, "/auth", st, loginTTL) {
+	if !a.setCookie(w, loginCookie, a.base+"/auth", st, loginTTL) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -123,7 +128,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var st loginState
 	err := a.cookie.Decode(loginCookie, cookieValue(r, loginCookie), &st)
-	a.clearCookie(w, loginCookie, "/auth") // single use, whatever happens next
+	a.clearCookie(w, loginCookie, a.base+"/auth") // single use, whatever happens next
 	if err != nil || a.now().Unix() > st.Expires {
 		http.Error(w, "login expired: start again", http.StatusBadRequest)
 		return
@@ -187,7 +192,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.log.InfoContext(ctx, "login", "user", who.actor())
-	http.Redirect(w, r, st.Next, http.StatusFound)
+	http.Redirect(w, r, a.base+st.Next, http.StatusFound)
 }
 
 // discover returns the OAuth2 configuration and the verifier, contacting the

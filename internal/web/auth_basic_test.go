@@ -251,6 +251,29 @@ func TestBasicAuthLogout(t *testing.T) {
 	}
 }
 
+// TestBasicAuthLoginFlowWithBasePath covers docs/dashboard.md#base-path on
+// the local-users backend: the session cookie's Path and the redirects after
+// login and after Require carry the base path, while the routes themselves
+// stay at their bare address (the base path is stripped before the request
+// reaches the mux; see basepath_test.go for that half of the mechanism).
+func TestBasicAuthLoginFlowWithBasePath(t *testing.T) {
+	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n", func(o *BasicAuthOptions) { o.BasePath = "/nops" })
+
+	rec := ba.login("alice", "s3cret")
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/nops/" {
+		t.Fatalf("status %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+	sess := cookie(rec, sessionCookie)
+	if sess == nil || sess.Path != "/nops/" {
+		t.Fatalf("session cookie = %+v", sess)
+	}
+
+	rec = ba.do("GET", "/page", nil, nil)
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/nops/auth/login") {
+		t.Errorf("unauthenticated: status %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 func TestBasicAuthLoginRefusesCrossOrigin(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
 	rec := ba.do("POST", "/auth/login",
