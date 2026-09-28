@@ -1,8 +1,7 @@
 -- The hooks a deployment runs, frozen when it is created: which hook, the hash
 -- of its spec, the spec itself, and the ID of the Nomad job that is registered
 -- from it (`<hook-id>-<8 hex of the hash>`) right before the hook is dispatched.
--- position orders the hooks of one phase; it is always 0 until a phase can have
--- more than one hook.
+-- position orders the hooks of one phase, from 0 (a phase may have several).
 CREATE TABLE deployment_hooks (
     deployment_id TEXT    NOT NULL REFERENCES deployments (id),
     phase         TEXT    NOT NULL CHECK (phase IN ('pre', 'post')),

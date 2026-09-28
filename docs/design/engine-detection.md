@@ -213,8 +213,16 @@ before the plan is run (see below), so nops does not fight the autoscaler
 (see [philosophy](../philosophy.md#patterns-reused-from-nomad-gitops)).
 `spec_hash` is
 computed on the job exactly as parsed from git, before that substitution, so
-the autoscaler moving a count never supersedes a pending approval or
-triggers the retry rule to reset.
+the autoscaler moving a count never changes the *hash* of a pending approval.
+
+**Known limit.** The hash is not the only thing compared. Moving a count with
+Nomad's scale API also bumps the live job's `JobModifyIndex` and `Version`
+(verified on Nomad 2.0.3, `TestScaleChangesTheLiveJobsIndex`), so a scale
+between detection and approval still supersedes the pending deployment ("job
+modified outside nops"), makes the retry rule see a different live index, and
+an apply that meets it fails once with "conflict" (its stored counts are the
+detection-time ones) before the next cycle creates a fresh deployment. Not
+solved yet: see the decision log, 2026-09-28.
 
 ### Supersede is keyed on `spec_hash`, not on the commit
 

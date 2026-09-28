@@ -1,7 +1,8 @@
 // Package meta parses and validates the nops_* job meta keys.
 //
-// It is the source of truth for the HCL syntax documented in CLAUDE.md: any
-// change to keys, values or defaults here must be reflected there.
+// It is the source of truth for the HCL syntax documented in
+// docs/meta-keys.md: any change to keys, values or defaults here must be
+// reflected there.
 package meta
 
 import (

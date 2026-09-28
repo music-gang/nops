@@ -172,7 +172,8 @@ options for each are in [configuration](configuration.md#dashboard):
 
 **Every page needs a login**, reads included: the diff of a deployment says
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
-the [git webhook](#git-webhook) (its own secret) and `/healthz`.
+the [git webhook](#git-webhook) (its own secret), `/healthz` and `/static/*`
+(the stylesheet and htmx, embedded in the binary: nothing in them is secret).
 
 After a login, either backend sends the browser back to the page it asked for
 (`?next=`), but only if it is a path on the dashboard itself: anything with a

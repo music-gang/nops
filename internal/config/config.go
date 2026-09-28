@@ -263,7 +263,7 @@ var options = []option{
 		set: func(c *Config, v string) (err error) { c.EngineInterval, err = positiveDuration(v); return }},
 	{name: "hook-poll-interval", def: "5s", usage: "how often a running hook is checked",
 		set: func(c *Config, v string) (err error) { c.HookPollInterval, err = positiveDuration(v); return }},
-	{name: "apply-timeout", def: "10m", usage: "how long an apply may wait for the Nomad deployment to succeed",
+	{name: "apply-timeout", def: "10m", usage: "how long an apply may take, from its start: to register the job and to wait until it is healthy",
 		set: func(c *Config, v string) (err error) { c.ApplyTimeout, err = positiveDuration(v); return }},
 
 	{name: "log-level", def: "info", usage: "log level: debug, info, warn or error",

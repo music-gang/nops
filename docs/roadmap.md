@@ -61,9 +61,30 @@ page only tracks the tasks themselves.
 | Task | Depends on | Ready |
 |---|---|---|
 | [`dashboard-polish`](#dashboard-polish) | `dashboard-ux` | yes |
+| [`doc-code-sync`](#doc-code-sync) | none | yes (answered) |
 
 What else remains is using nops on a real cluster; what that turns up becomes
 new tasks here.
+
+### doc-code-sync
+
+Close the gaps an audit of every doc against the code and its tests found, then
+make them harder to reopen. Several PRs; this row is set to `done` by the last.
+
+- **Done (PR 1, docs and tests that pin today's behaviour):** the doc-only
+  fixes, the stale test removed, integration tests for what depends on Nomad
+  (a scale bumps the job's index; the Nomad deployment health path; meta as
+  block and object).
+- **Left, one PR each (see the decision log, 2026-09-28):** a `detected`
+  deployment under `approval` must never be advanced by apply; a file that does
+  not parse must not supersede pending approvals nor be remembered as failed; a
+  `failed` deployment is logged at ERROR; a target that never has an allocation
+  (periodic, parameterized, all counts 0) completes when registered; what to do
+  about an autoscaler moving the job's index (open: maintainer to decide).
+- **Then the guard:** tests that check `configuration.md` and `meta-keys.md`
+  against their source, that every `TestName` written in a doc exists, the audit
+  procedure in `development.md`, and a reminder in `scripts/release.sh`.
+- **Done when:** every item above is merged or decided against in the log.
 
 ### dashboard-polish
 

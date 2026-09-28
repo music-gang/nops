@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -915,5 +916,31 @@ func TestApplyStepDropsSilentlyOnDetectionRace(t *testing.T) {
 	got := h.get(d.ID)
 	if got.State != store.StateSuperseded {
 		t.Fatalf("state = %s, want superseded (untouched)", got.State)
+	}
+}
+
+// nops registers the spec git holds and nothing else: no meta of its own in
+// the live job (invariant 5), and no Nomad PreserveCounts, which keeps the
+// count of every group (docs/philosophy.md, patterns reused from nomad-gitops).
+func TestStepRegisterRegistersTheSpecUnchanged(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", map[string]string{"owner": "team-a"})
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	d := h.createApplying("web", job, 0)
+
+	h.step(d)
+
+	if len(h.nomad.registerCalls) != 1 {
+		t.Fatalf("register calls = %+v, want 1", h.nomad.registerCalls)
+	}
+	if h.nomad.registerCalls[0].preserve {
+		t.Error("register asked Nomad to preserve the counts of every group")
+	}
+	live, ok := h.nomad.live["web"]
+	if !ok {
+		t.Fatal("nothing was registered")
+	}
+	if !reflect.DeepEqual(live.Meta, job.Meta) {
+		t.Errorf("registered meta = %v, want exactly git's %v", live.Meta, job.Meta)
 	}
 }

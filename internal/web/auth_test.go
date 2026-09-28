@@ -777,3 +777,20 @@ func TestUserFromWithoutRequire(t *testing.T) {
 		t.Errorf("UserFrom on a plain context = %q, %v", u, ok)
 	}
 }
+
+// The allowlist is checked at login only (docs/dashboard.md, "OpenID Connect"):
+// removing someone takes effect when their session ends, not before.
+func TestAnAllowlistChangeDoesNotEndASession(t *testing.T) {
+	a := newApp(t)
+	sess := a.loggedIn(alice())
+
+	a.auth.opts.AllowedUsers = []string{"bob@example.com"} // alice is no longer listed
+	a.auth.opts.AllowedGroups = nil
+
+	if rec := a.do("GET", "/page", []*http.Cookie{sess}); rec.Code != http.StatusOK || rec.Body.String() != "user=alice" {
+		t.Errorf("session after leaving the allowlist: status %d, %q, want it kept until it expires", rec.Code, rec.Body.String())
+	}
+	if rec := a.callback("", alice()); rec.Code != http.StatusForbidden {
+		t.Errorf("a new login after leaving the allowlist: status %d, want 403", rec.Code)
+	}
+}

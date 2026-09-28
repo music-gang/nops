@@ -18,7 +18,7 @@ approval [dashboard](dashboard.md).
 | `internal/engine` | State machine, reconciler, recovery on restart. Detection ([design](design/engine-detection.md)) parses, plans, and creates, supersedes or revalidates deployments; apply ([design](design/engine-apply.md)) advances them, and its first cycle is recovery. |
 | `internal/hooks` | Dispatch, wait, timeout and stop of hook jobs: `Runner.Run` is blocking, idempotent and resumable, and is driven by `engine`. |
 | `internal/web` | Login, OIDC or local users depending on `-auth-mode` ([dashboard](dashboard.md#authentication)), the dashboard (`net/http` + `html/template`) and the git webhook. |
-| `internal/notify` | [Notifications](error-handling.md#notifications) on `pending_approval` and `failed`, through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |
+| `internal/notify` | [Notifications](error-handling.md#notifications) (which transitions send one is defined there), through built-in adapters (generic webhook, Discord, Slack, ntfy, Gotify). A failed delivery is a WARN, never an error for the engine. |
 | `internal/version` | Which build is running: the release tag linked at build time, else what the Go toolchain recorded ([releasing](development.md#releasing)). |
 | `internal/redact` | Removes secret values from the plan diff before it is saved or shown ([rules](dashboard.md#secret-redaction)). A pure function, called by `engine` at detection. |
 
@@ -46,8 +46,9 @@ update (rolling, canary or destructive) is carried out by Nomad according to
 the job's `update` stanza. nops issues no explicit stops: they would add
 downtime and break the CAS sequence.
 
-`applying` ends when the Nomad deployment is `successful`; if the job produces
-none, when the allocations of the new version are `running`. The timeout is
+`applying` ends when the job is [healthy](vocabulary.md#deployment-lifecycle):
+the Nomad deployment is `successful` or, if the job produces none, every
+allocation of the new version is `running` or `complete`. The timeout is
 configurable.
 
 ## What nops does not do

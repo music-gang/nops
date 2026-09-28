@@ -209,7 +209,18 @@ expanded here.
    avoids requiring an `EvalID` at all on the path where the register already
    happened before a restart (decision 2's crash-recovery case, where there
    is no fresh eval to poll), and needs no new `nomadx.Evaluation` wrapper.
-   Both paths are covered by an integration test against `nomad agent -dev`.
+   Both paths are covered by an integration test against `nomad agent -dev`:
+   the allocations one by `TestEngineApplyAgainstRealNomad` (a batch job), the
+   Nomad deployment one by `TestEngineApplyWaitsForTheNomadDeployment` (a
+   service with an `update` block, whose Nomad deployment must carry the
+   applied index).
+
+   "Healthy" on the allocations path is deliberately weak: every allocation of
+   the applied version is `running` or `complete`, nothing more. There is no
+   health check behind it (a Nomad deployment is what brings those), the number
+   of allocations is not compared with the counts (a group only partly placed
+   reads as healthy), and `complete` counts whatever the job type. A job with
+   no allocation yet is still waiting.
 4. **The apply timeout counts from the `→ applying` event, and bounds the
    whole state.** `Store.AppliedSince(ctx, id string) (time.Time, error)` reads the
    timestamp of that deployment's `→ applying` row in `events` (already
@@ -314,6 +325,6 @@ a real `hooks.Runner` over a fake hook Nomad for a crash between `Dispatch` and
 the saved dispatched job ID (the dispatched job is adopted, or the hook
 fails, and is never dispatched again). `tests/integration`: one full cycle against a real
 `nomad agent -dev` for a job with no hooks (register → healthy →
-`completed`) and one with both hooks, plus whichever health path from
-decision 3 is not already covered by an existing `nomadx`/`hooks` integration
-test.
+`completed`) and one with both hooks, and one for each health path of
+decision 3 (`TestEngineApplyAgainstRealNomad`,
+`TestEngineApplyWaitsForTheNomadDeployment`).

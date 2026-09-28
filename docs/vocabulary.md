@@ -60,6 +60,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **needs attention** | What the Overview lists for a person to act on: approvals waiting, blocked jobs, failures nobody retried, meta errors, orphans. Not drift under policy `none`: that is a sync state. |
 | **orphan** | A job nops deployed (it has a `completed` deployment) that is no longer in the repository but still exists in Nomad, not stopped and not `dead`. Reported (`Engine.Orphans()`, sync state **Not in git**, a line in **needs attention**), never stopped by nops ([engine-detection](design/engine-detection.md#orphan-jobs)). A job still in the repository without `nops_managed` is not one. |
 | **apply** | The CAS register of the target spec, always preceded by a plan. Nomad carries out the update. |
+| **healthy** | What ends `applying` ([engine-apply](design/engine-apply.md#decisions), 3): the Nomad deployment that tracks the applied index is `successful`; when there is none (a `batch` job, or no `update` block), every allocation of the applied job version is `running` or `complete`. That is a weaker test than a health check: nops does not compare the number of allocations with the counts. |
 | **CAS** | Compare-and-set on the job's modify index. |
 | **cas index** | The live `JobModifyIndex` captured at detection (`cas_index`). `0` means "the job must not exist". |
 | **applied index** | The live `JobModifyIndex` re-read after the apply (`applied_index`), never the one in the register response. |
@@ -67,7 +68,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
 | **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
 | **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
-| **notification** | The message nops sends when a deployment becomes `pending_approval` or `failed`. Not delivered is a WARN, never an error. See [notifications](error-handling.md#notifications). |
+| **notification** | The message nops sends when a deployment needs a person. Which transitions send one is defined in [notifications](error-handling.md#notifications). Not delivered is a WARN, never an error. |
 | **notification adapter** | One way to deliver a notification: `webhook` (generic JSON), `discord`, `slack`, `ntfy`, `gotify`. Each has its own options and is on when its URL is set. |
 
 ## Hooks
