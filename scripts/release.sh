@@ -297,6 +297,9 @@ main() {
   if [ "$open_prs" != 0 ]; then
     echo "warning: $open_prs open pull request(s): is nothing you want in this release still open?" >&2
   fi
+  # A prompt, not a gate: what the docs claim is only checked by an audit.
+  echo "reminder: audit the docs for what changed since $last (docs/development.md#doc-audit):" >&2
+  echo "  git diff --stat $range -- '*.md' cmd internal scripts examples .github" >&2
 
   local kind suggested
   kind=$(cut -f2 "$commits" | suggest_bump "$last")
