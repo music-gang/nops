@@ -397,6 +397,22 @@ func TestApprove(t *testing.T) {
 	}
 }
 
+// Invariant 3: an approval is valid for the spec_hash the person saw. The
+// handler passes on the one in the form, never the one the store holds now: with
+// the stored one a spec that changed after the page loaded would be approved.
+func TestApprovePassesOnTheHashOfTheFormNotTheStoredOne(t *testing.T) {
+	st := &fakeStore{deployment: sampleDeployment()} // spec-hash-1 in the store
+	en := &fakeEngine{}
+	ts := newTestServer(t, st, en, "")
+	cookie := mintSession(t, ts.auth, "alice")
+
+	ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"what-the-page-showed"}}), cookie)
+
+	if len(en.approveCalls) != 1 || en.approveCalls[0] != (approveCall{"d1", "what-the-page-showed", "alice"}) {
+		t.Errorf("Approve calls = %+v, want the form's hash, not the stored spec-hash-1", en.approveCalls)
+	}
+}
+
 func TestApproveStaleSpecHashConflict(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{approveErr: engine.ErrStaleApproval}
