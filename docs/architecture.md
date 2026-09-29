@@ -1,6 +1,6 @@
 # Architecture
 
-nops reads a git repo of HCL jobs, compares them with the Nomad cluster and
+Nops reads a git repo of HCL jobs, compares them with the Nomad cluster and
 moves changes forward according to each job's [policy](policies.md), with
 persistent state in SQLite, pre/post deployment [hooks](hooks.md) and an
 approval [dashboard](dashboard.md).
@@ -11,7 +11,7 @@ approval [dashboard](dashboard.md).
 |---|---|
 | `cmd/nops` | Entrypoint: wiring of config, store, engine, web. Starts the git watcher, detection and apply loops in their own goroutines and the dashboard's `http.Server`, all off one `context.Context` cancelled on `SIGINT`/`SIGTERM`, and waits for them to unwind before exiting. |
 | `internal/config` | Flags and env vars (`NOPS_*`), validation. |
-| `internal/gitwatch` | In-memory clone, polling, webhook trigger ([design](design/gitwatch.md)). Read-only: nops never writes to git. |
+| `internal/gitwatch` | In-memory clone, polling, webhook trigger ([design](design/gitwatch.md)). Read-only: Nops never writes to git. |
 | `internal/nomadx` | Nomad client wrapper: parse, plan, CAS register, dispatch (and lookup of a dispatched job by token), allocations, stop. Register has no variant without the index check, and Nomad's plain HTTP 500 errors become sentinels (`ErrCASConflict`, `ErrJobNotFound`). Consumers such as `engine` define their own small interfaces over it. |
 | `internal/meta` | Parsing and validation of the `nops_*` meta keys: the [source of truth](meta-keys.md) for the HCL syntax. |
 | `internal/store` | SQLite, embedded migrations: see [state machine](state-machine.md). |
@@ -24,7 +24,7 @@ approval [dashboard](dashboard.md).
 
 ## Execution model: active, not lazy
 
-nops moves deployments forward on its own, without waiting for anyone to open
+Nops moves deployments forward on its own, without waiting for anyone to open
 the dashboard. There are three loops, all with configurable intervals:
 
 1. **Detection.** Git polling, webhook, and a fixed interval for Nomad-side
@@ -43,7 +43,7 @@ design (invariant 3 in [philosophy.md](philosophy.md)).
 
 Apply is **just a CAS register**, the same effect as `nomad job run`: the
 update (rolling, canary or destructive) is carried out by Nomad according to
-the job's `update` stanza. nops issues no explicit stops: they would add
+the job's `update` stanza. Nops issues no explicit stops: they would add
 downtime and break the CAS sequence.
 
 `applying` ends when the job is [healthy](vocabulary.md#deployment-lifecycle):
@@ -52,7 +52,7 @@ allocation of the new version is `running` or `complete` (a periodic or
 parameterized job, or one whose groups all have count 0, has none: it is healthy
 once registered). The timeout is configurable.
 
-## What nops does not do
+## What Nops does not do
 
 - It does not write to Git, and does not write meta into the live job.
 - It does not roll back automatically and does not deregister jobs (for now): a job removed from the repository is reported as an [orphan](design/engine-detection.md#orphan-jobs), never stopped. The only things it stops are a hook run that timed out and the [hook revisions](hooks.md#hook-revisions) no deployment needs.

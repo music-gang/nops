@@ -43,7 +43,7 @@ default) and one that has just failed reads Drift instead of Blocked. A cycle:
 ## Interfaces
 
 `engine` declares its own small interfaces over the packages it consumes
-(the pattern used everywhere else in nops, see
+(the pattern used everywhere else in Nops, see
 [architecture.md](../architecture.md)):
 
 - `Nomad`: `ParseHCL`, `Job`, `Plan`, `RegisterCAS`, `ListJobs`, `StopJob` (and,
@@ -64,7 +64,7 @@ expanded here.
 
 ### Namespaces
 
-nops manages the namespaces of `-nomad-namespaces` (`Options.Namespaces`) from
+Nops manages the namespaces of `-nomad-namespaces` (`Options.Namespaces`) from
 one instance and one token: `nomadx.Client` is not bound to a namespace, each
 request carries its own (a per-request parameter of Nomad's API).
 
@@ -72,7 +72,7 @@ request carries its own (a per-request parameter of Nomad's API).
   the HCL names none (Nomad's own canonicalization; detection also fills it in
   if a parse ever returned none, so nothing downstream sees a job without one).
   A job whose namespace is not on the list is an ERROR (`job declares a
-  namespace nops does not manage`) and counts in `Status.Unparsed`, like a file
+  namespace Nops does not manage`) and counts in `Status.Unparsed`, like a file
   that does not parse: in particular the orphan check is suspended for the
   cycle. It is not silently managed under another namespace, and nothing about
   it reaches Nomad.
@@ -94,7 +94,7 @@ request carries its own (a per-request parameter of Nomad's API).
 
 ### `job_spec` keeps the full, unredacted spec
 
-`deployments.job_spec` holds the JSON of the parsed job nops will register at
+`deployments.job_spec` holds the JSON of the parsed job Nops will register at
 apply time, exactly as read from git (after the scaling-count substitution
 below). It is not redacted, so it can carry the same secrets as the plan
 diff. This is accepted, not worked around: the database is local to the host
@@ -206,14 +206,14 @@ every single cycle. A new deployment is not created when the job's latest
 one (`Store.LatestDeployment`) is `failed` or `rejected` with the same
 `spec_hash` **and** the same live index (`cas_index`): nothing that produced
 the earlier outcome has changed. A new commit (different `spec_hash`) or a
-change to the live job (a different index — including nops's own apply, once
+change to the live job (a different index — including Nops's own apply, once
 `engine-apply` exists) makes a new deployment again, which matches invariant
 2's "a CAS conflict leads to `failed` and a re-detection".
 
 ### `spec_hash` is computed before the live-cluster adjustment
 
 A task group with a `scaling` block takes its `Count` from the *live* job
-before the plan is run (see below), so nops does not fight the autoscaler
+before the plan is run (see below), so Nops does not fight the autoscaler
 (see [philosophy](../philosophy.md#patterns-reused-from-nomad-gitops)).
 `spec_hash` is
 computed on the job exactly as parsed from git, before that substitution, so
@@ -223,7 +223,7 @@ the autoscaler moving a count never changes the *hash* of a pending approval.
 Nomad's scale API also bumps the live job's `JobModifyIndex` and `Version`
 (`TestScaleChangesTheLiveJobsIndex`), so a scale
 between detection and approval still supersedes the pending deployment ("job
-modified outside nops"), makes the retry rule see a different live index, and
+modified outside Nops"), makes the retry rule see a different live index, and
 an apply that meets it fails once with "conflict" (its stored counts are the
 detection-time ones) before the next cycle creates a fresh deployment. This
 is accepted for now (decision log, 2026-09-28): while the jobs with a scaling
@@ -242,8 +242,8 @@ the identity of what was approved.
 
 ### Orphan jobs
 
-A job nops deployed and that is then removed from the repository stays live
-in Nomad: nops never deregisters a job it deploys. Rather than let that pass
+A job Nops deployed and that is then removed from the repository stays live
+in Nomad: Nops never deregisters a job it deploys. Rather than let that pass
 unseen, every cycle ends by looking for **orphans** and keeping them in
 memory (`Engine.Orphans()`, rebuilt every cycle like `Observations()`, with
 `Status.Orphans`). They are reported, never acted on: the operator stops the
@@ -251,9 +251,9 @@ job in Nomad, or puts the file back, and the report clears by itself.
 
 A job is an orphan when all of these hold:
 
-- nops has a **`completed` deployment** for it in its namespace
+- Nops has a **`completed` deployment** for it in its namespace
   (`Store.LatestCompletedPerJob`, asked once per managed namespace): only what
-  nops put into production is its business, the rest of the cluster is not;
+  Nops put into production is its business, the rest of the cluster is not;
 - it is **not among the jobs parsed from the snapshot**, whatever their
   classification. A job still in the repository without `nops_managed` means
   "hands off", not "removed"; two files with the same job ID are both still
@@ -277,25 +277,25 @@ Two things keep it from lying:
   cycle; a store failure is returned like any other (never swallow a SQLite
   error).
 
-The cost is one `GET /v1/job/<id>?namespace=<ns>` per job that nops deployed, is not in git
+The cost is one `GET /v1/job/<id>?namespace=<ns>` per job that Nops deployed, is not in git
 and is not yet purged, every cycle. It is not cached: the list is short and
 what matters is what Nomad says now.
 
 ### Not covered by a rule (accepted, documented)
 
 - **A job stopped by hand** (`nomad job stop`) plans as a difference from
-  git. Under `auto` nops restarts it: git is the source of truth (invariant
+  git. Under `auto` Nops restarts it: git is the source of truth (invariant
   4). Use `approval` or `none` for a job you intend to stop by hand.
 - **A hook registered by hand under an ID that looks like a revision** (a
   hook file named `backup-1a2b3c4d`, registered in Nomad by someone) is
-  stopped by the GC; it would only be dispatched by nops as a revision, and it
+  stopped by the GC; it would only be dispatched by Nops as a revision, and it
   never registers hooks under their plain ID. Name hooks otherwise.
 - **A deployment made before hook revisions existed** and already in a hook
   phase has no frozen hook: it fails at its hook step, saying so.
 - **A Nomad parse failure on a file that used to parse** does not supersede
   that job's pending deployment: a file that does not parse looks exactly like
   a removed one, so a cycle with any file that fails to parse (or that names a
-  namespace nops does not manage) does not look for removed jobs at all, as it
+  namespace Nops does not manage) does not look for removed jobs at all, as it
   does not look for orphans. The removal is acted on by the first cycle in which
   every file parses. A parse error is logged at ERROR every cycle until the
   file is fixed. Meanwhile the deployment of a job that was really removed stays
@@ -313,9 +313,9 @@ For each managed job, in order:
    - policy is now `none` → `superseded` ("policy changed to none");
    - else `spec_hash` differs → `superseded` ("newer spec at commit `<sha>`");
    - else the live index differs from `cas_index` → `superseded` ("job
-     modified outside nops");
+     modified outside Nops");
    - else there is no more drift → `completed` ("already in sync");
-   - else, if it is `detected` under `approval` (created by a nops that moved it
+   - else, if it is `detected` under `approval` (created by a Nops that moved it
      to `pending_approval` in a second write, which did not land; apply never
      advances it) → it is moved now, with its notification: `pending_approval`,
      or `failed` when a hook it declares is missing;
@@ -333,7 +333,7 @@ For each managed job, in order:
 
 Finally, every deployment still in `detected` or `pending_approval` whose job
 is no longer among the managed jobs of the snapshot is `superseded` ("job
-removed from repo"): nops never deregisters a job on its own. Not in a cycle
+removed from repo"): Nops never deregisters a job on its own. Not in a cycle
 with a file that does not parse (see above).
 
 A store failure aborts the whole cycle (invariant 7: never act on Nomad with
@@ -364,7 +364,7 @@ and scenario-driven over the cases in [Decisions](#decisions) and
 and the observation map never growing across cycles. `tests/integration`:
 one cycle against a real `nomad agent -dev` — real parse and plan, the hook
 frozen and nothing of it in Nomad, a redacted diff with the secret confirmed
-absent, and revalidation once the live job changes outside nops; the hook
+absent, and revalidation once the live job changes outside Nops; the hook
 revision lifecycle end to end (`e2e_hookrev_test.go`: not in Nomad before
 approval, registered and dispatched after it, deregistered without purge once
 unused, a changed hook superseding a pending deployment) and the Nomad

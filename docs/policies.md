@@ -1,12 +1,12 @@
 # Policies
 
-A job's policy says what nops does when it finds a difference between the repo
+A job's policy says what Nops does when it finds a difference between the repo
 and the cluster. It is declared with `nops_policy` (see
 [meta-keys](meta-keys.md)).
 
 | Value | Behaviour |
 |---|---|
-| `auto` | nops applies on its own: plan → (pre-hook) → CAS register → (post-hook). |
+| `auto` | Nops applies on its own: plan → (pre-hook) → CAS register → (post-hook). |
 | `approval` | A `pending_approval` deployment is created with the diff; a human OK from the [dashboard](dashboard.md) is required. **Never** auto-applied. |
 | `none` | Drift is shown but never applied, and no deployment is created. This is the default. |
 
@@ -34,6 +34,6 @@ decides *who* gives the go-ahead, not *how* it is applied.
 - An approval is valid for `(deployment_id, spec_hash)`. If the spec changes,
   the old pending deployment becomes `superseded` and a new one is created to
   approve.
-- If the live job changes outside nops, the pending deployment is
+- If the live job changes outside Nops, the pending deployment is
   revalidated automatically (see
   [state machine](state-machine.md#revalidating-pending-deployments)).

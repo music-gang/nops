@@ -24,10 +24,10 @@ is the engine's job, through Nomad.
 
 A Nomad job can declare HCL2 variables (`variable "image_tag" {}`) and use
 them (`var.image_tag`). The CLI takes their values from
-`nomad job run -var-file=...` or `-var`. nops runs no CLI: it sends the job
+`nomad job run -var-file=...` or `-var`. Nops runs no CLI: it sends the job
 text to `/v1/jobs/parse`, which takes the values in its `Variables` field
 (see [meta keys](../meta-keys.md#syntax-and-parsing)). The vars file is the
-convention that tells nops which values to send.
+convention that tells Nops which values to send.
 
 It is optional. Without it, every variable needs a default, otherwise the
 parse answers `Unset variable` and the job is skipped with an ERROR. A job
@@ -52,7 +52,7 @@ A hook named by `nops_pre_hook` / `nops_post_hook` is looked up by its
 **parsed job ID** in the same snapshot, among the hooks of the namespace of the
 job that declares it, never by file name. Two files that parse to the same job
 (same namespace and ID) are both ignored, with an ERROR: the conservative
-reading, since nops cannot tell which one is meant. The same ID in two
+reading, since Nops cannot tell which one is meant. The same ID in two
 namespaces is two jobs.
 
 ## Interface
@@ -120,7 +120,7 @@ With go-git (`github.com/go-git/go-git/v5`, Apache-2.0):
 
 ## Failures
 
-- **Initial clone** fails: `Start` returns the error and nops exits. There is
+- **Initial clone** fails: `Start` returns the error and Nops exits. There is
   nothing to work on.
 - **Later fetch** fails (network, expired token): ERROR with the cause, keep
   the last good snapshot, record it in `Status` (`Error`, `ErrorAt`, with

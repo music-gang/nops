@@ -1,6 +1,6 @@
-# nops documentation
+# Nops documentation
 
-nops is a semi-automatic GitOps controller for HashiCorp Nomad: it reads HCL
+Nops is a semi-automatic GitOps controller for HashiCorp Nomad: it reads HCL
 jobs from a git repo, compares them with the cluster and applies them
 according to a per-job policy (`auto` / `approval` / `none`), with state in
 SQLite, an approval dashboard and pre/post deployment hooks.
@@ -9,7 +9,7 @@ New here? Start with the [project README](../README.md).
 
 ## Index
 
-**Understanding nops**
+**Understanding Nops**
 - [vocabulary.md](vocabulary.md): the terms used in code, docs and PRs.
 - [roadmap.md](roadmap.md): what is done, in flight and left.
 - [philosophy.md](philosophy.md): principles and invariants, with the reasoning.

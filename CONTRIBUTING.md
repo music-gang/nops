@@ -1,4 +1,4 @@
-# Contributing to nops
+# Contributing to Nops
 
 Thanks for your interest. The full guide is in
 [docs/development.md](docs/development.md); the short version:
