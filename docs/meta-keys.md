@@ -6,8 +6,8 @@ package must be updated together (a test checks that the table below lists the
 keys the package reads, no more and no fewer, and the defaults it can check).
 
 nops uses **flat meta keys with the `nops_` prefix** in the job's `meta {}`
-block. A structured block (`nops { ... }`) is not possible: verified on Nomad
-2.0.3, `/v1/jobs/parse` answers `Unsupported block type`.
+block. A structured block (`nops { ... }`) is not possible: `/v1/jobs/parse` answers
+`Unsupported block type` (`TestParseHCL`).
 
 Keys are read **from the HCL in the repo** and nops never writes them.
 
@@ -74,7 +74,7 @@ gone; they are reported as unknown keys (WARN) that say what replaces them.
 
 ## Syntax and parsing
 
-**HCL2 variables.** Verified on Nomad 2.0.3: `/v1/jobs/parse` accepts the
+**HCL2 variables.** `/v1/jobs/parse` accepts the
 contents of a var-file in the `Variables` field; with no value and no default
 it answers `Unset variable`. Rule: if a `<name>.vars.hcl` exists next to the
 job file `<name>.nomad.hcl` (or `<name>.nomad`), nops passes it as

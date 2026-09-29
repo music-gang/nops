@@ -27,7 +27,8 @@ var (
 )
 
 // casConflictMarker is the prefix Nomad puts on every enforce-index failure.
-// Verified on Nomad 2.0.3, all three variants answer HTTP 500:
+// All three variants answer HTTP 500 (TestPlanAndRegisterCAS reaches each one
+// against a real Nomad):
 //
 //	Enforcing job modify index 0: job already exists
 //	Enforcing job modify index 999: job exists with conflicting job modify index: 11
@@ -136,8 +137,9 @@ type RegisterResult struct {
 	EvalID string
 	// JobModifyIndex is what Nomad returned in the register response. Do not
 	// treat it as the live job's index: registering a spec identical to the
-	// live one leaves the live index unchanged, yet Nomad 2.0.3 can answer with
-	// a newer number (seen over the raw HTTP API: response 62, live 61).
+	// live one leaves the live index unchanged, yet Nomad can answer with a
+	// newer number (seen over the raw HTTP API: response 62, live 61; see
+	// TestRegisterIdenticalSpecKeepsLiveIndex).
 	// Re-read the job with Job() when the live index matters.
 	JobModifyIndex uint64
 }
@@ -181,8 +183,8 @@ type JobStub struct {
 
 // ListJobs lists every job of namespace ns, children of parameterized and
 // periodic jobs included (they carry their parent's meta), ordered by ID.
-// Nomad leaves the meta out of a listing unless asked for it, verified on
-// 2.0.3.
+// Nomad leaves the meta out of a listing unless asked for it
+// (TestListJobsCarriesMetaAndStop).
 func (c *Client) ListJobs(ctx context.Context, ns string) ([]JobStub, error) {
 	q, err := c.query(ctx, ns)
 	if err != nil {
@@ -209,8 +211,8 @@ type DispatchResult struct {
 
 // Dispatch dispatches a parameterized job. A non-empty idempotencyToken makes
 // Nomad return the existing child, without a new evaluation, if a child with
-// the same token already exists (verified on Nomad 2.0.3, also after the child
-// has finished). Nomad rejects meta keys the job does not declare.
+// the same token already exists (TestDispatch, also after the child has
+// finished: TestHookRunSucceedsAndRerunDoesNotDispatch). Nomad rejects meta keys the job does not declare.
 func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
 	wq, err := c.write(ctx, ns)
 	if err != nil {

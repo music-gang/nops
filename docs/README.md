@@ -50,6 +50,7 @@ New here? Start with the [project README](../README.md).
 | Flag or env var | `internal/config` **and** `configuration.md` (its tables are tested against the options: name, variable, default) |
 | Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
 | A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
+| The Nomad version CI tests against | `ci.yml` (`NOMAD_VERSION`, `NOMAD_SHA256`) **and** the README's *Nomad compatibility* (`docs/docs_test.go` fails otherwise); steps in `development.md#nomad-version` |
 | New concept, or a renamed term | `vocabulary.md` |
 | A task is finished, added or reshaped | `roadmap.md` |
 | Design decision | `design/decisions.md` (and the relevant document) |

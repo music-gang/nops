@@ -14,7 +14,7 @@
 | `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers, with fakes for the store, the engine and git and a fixed clock: every page in every state it has (empty, pending, blocked, failed, invalid meta, a store error), the helpers (relative times, the diff summary, sync state, the plan steps), that the whole `spec_hash` is in the approve form and `job_spec` never on a page; the login against a fake OIDC provider (`httptest` serving discovery, keys, token and userinfo, signing real ID tokens), cross-origin refusals and 401/403. No coverage target. |
 | `cmd/nops` | Almost entirely straight-line wiring, so almost entirely covered by the integration smoke test below, not unit tests: a unit test only for the one piece of actual logic (`newAuthenticator` picking the login backend by `-auth-mode`). No coverage target. |
-| The docs | Tests inside `go test ./...` that read the pages: the option tables of `configuration.md` and the key table of `meta-keys.md` against `internal/config` and `internal/meta` (both directions, defaults included), and `docs/docs_test.go`, which fails when a test named in any `.md` (a name ending in `*` is a group) is not a function in the repo. They prove the page and the code agree on names and defaults, not that a cited test asserts the claim. |
+| The docs | Tests inside `go test ./...` that read the pages: the option tables of `configuration.md` and the key table of `meta-keys.md` against `internal/config` and `internal/meta` (both directions, defaults included), and `docs/docs_test.go`, which fails when a test named in any `.md` (a name ending in `*` is a group) is not a function in the repo, and when the README names a Nomad version other than `NOMAD_VERSION` in `ci.yml`. They prove the page and the code agree on names and defaults, not that a cited test asserts the claim. |
 | `scripts/release.sh` | `scripts/release_test.sh` (plain bash, run by the `lint` job) covers the pure functions: the suggested bump, the next version, the release candidate number, semver validation and order. `shellcheck` on every script. The flow around them (git, `gh`, prompts) is looked at with `--dry-run`, never in CI: it would tag. |
 | Real interaction with Nomad | Integration. |
 
@@ -66,6 +66,24 @@
 - A dev agent answers `429` past 100 connections from one address, so a test
   that creates a Nomad client closes its idle connections when it ends
   (`newClient`).
+
+### Nomad version
+
+The version the integration tests run on is `NOMAD_VERSION` in
+`.github/workflows/ci.yml`, with the SHA-256 of the linux/amd64 zip from
+`https://releases.hashicorp.com/nomad/<version>/nomad_<version>_SHA256SUMS`.
+It is the only place a version is set: the README states it in its *Nomad
+compatibility* section (`docs/docs_test.go` fails if the two differ), and the
+other pages and the code comments name the test that checks a behaviour, not a
+version. The decision log is the exception: a row says what was true the day it
+was written.
+
+To move to a new Nomad: change `NOMAD_VERSION` and `NOMAD_SHA256`, update the
+README line, read the release notes between the two versions for the API
+behaviours listed above, and run the integration tests on a throwaway agent of
+the new version. The fixture `internal/redact/testdata/plan_diff.json` stays
+the plan captured when it was written; capture it again only if a new Nomad
+changes a field name and the redaction has to follow.
 
 ### First rollout on a real cluster
 

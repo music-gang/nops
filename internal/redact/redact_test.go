@@ -132,8 +132,8 @@ func TestDiffRules(t *testing.T) {
 	}
 }
 
-// TestDiffRealPlan runs on the diff Nomad 2.0.3 returned for the job in
-// tests/integration/redact_test.go (probeHCL), moving every value from
+// TestDiffRealPlan runs on the diff Nomad returned (captured on 2.0.3) for the
+// job in tests/integration/redact_test.go (probeHCL), moving every value from
 // "old-..." to "new-...". Every env var is a secret, even PLAIN.
 func TestDiffRealPlan(t *testing.T) {
 	b, err := os.ReadFile("testdata/plan_diff.json")

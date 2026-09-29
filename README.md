@@ -85,6 +85,16 @@ runnable ones, each paired with the job it deploys:
 The integration tests check that they still parse, that their hooks exist and
 that they need nothing but Nomad (no Consul).
 
+## Nomad compatibility
+
+nops is tested against **Nomad 2.0.7**: the integration tests run on that
+version in CI. Other 2.0.x releases should work; a new minor is supported once
+the same tests pass on it. nops relies on a few behaviours of Nomad's API that
+are not part of a contract (the wording of a check-index failure, the names of
+the fields of a plan diff); each has an integration test, so an upgrade that
+changes one fails there. How to move to a new version:
+[development](docs/development.md#nomad-version).
+
 ## Running it
 
 Each release publishes an image and a `linux/amd64` binary:

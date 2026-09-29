@@ -211,6 +211,11 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 		t.Errorf("plan of a new job: diff type = %q, want Added", got)
 	}
 
+	// A nonzero index for a job that does not exist is a conflict too.
+	if _, err := c.RegisterCAS(ctx, v1, 5, false); !errors.Is(err, nomadx.ErrCASConflict) {
+		t.Errorf("register at index 5 of a missing job: err = %v, want ErrCASConflict", err)
+	}
+
 	// Index 0 creates it. Registering with index 0 again is a conflict.
 	if _, err := c.RegisterCAS(ctx, v1, 0, false); err != nil {
 		t.Fatalf("create: %v", err)

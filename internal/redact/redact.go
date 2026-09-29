@@ -1,8 +1,10 @@
 // Package redact removes secret values from a Nomad plan diff before it is
 // saved to SQLite or shown in the dashboard.
 //
-// The rules work on the names Nomad gives to the diff fields (verified on
-// Nomad 2.0.3, see testdata/plan_diff.json). They are documented in
+// The rules work on the names Nomad gives to the diff fields (the
+// fixture testdata/plan_diff.json was captured from Nomad 2.0.3;
+// TestRedactRealPlan in tests/integration checks the rules against the plan of
+// the Nomad the tests run on). They are documented in
 // docs/dashboard.md#secret-redaction: keep the two aligned.
 package redact
 

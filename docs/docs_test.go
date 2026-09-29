@@ -1,5 +1,5 @@
-// Package docs holds the one test that reads every Markdown page of the
-// repository: docs/development.md#doc-audit says what it guards.
+// Package docs holds the tests that read the Markdown pages of the repository:
+// docs/development.md#doc-audit says what they guard.
 package docs
 
 import (
@@ -91,5 +91,33 @@ func TestEveryTestNamedInTheDocsExists(t *testing.T) {
 				t.Errorf("%s names %s, which is not a test in the repository", filepath.ToSlash(strings.TrimPrefix(page, root+string(filepath.Separator))), name)
 			}
 		}
+	}
+}
+
+// TestREADMENamesTheNomadVersionCITestsWith fails when the README's Nomad
+// compatibility line names a version other than the one the integration job
+// of ci.yml installs, so the version is written by hand in exactly two places
+// and they cannot drift (docs/development.md#nomad-version).
+func TestREADMENamesTheNomadVersionCITestsWith(t *testing.T) {
+	ci, err := os.ReadFile("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*NOMAD_VERSION:\s*"?(\d+\.\d+\.\d+)"?\s*$`).FindSubmatch(ci)
+	if m == nil {
+		t.Fatal("NOMAD_VERSION not found in .github/workflows/ci.yml")
+	}
+	want := string(m[1])
+
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := regexp.MustCompile(`\*\*Nomad (\d+\.\d+\.\d+)\*\*`).FindAllSubmatch(readme, -1)
+	if len(found) != 1 {
+		t.Fatalf("README.md has %d mentions of the form **Nomad X.Y.Z**, want exactly one (the compatibility section)", len(found))
+	}
+	if got := string(found[0][1]); got != want {
+		t.Errorf("README.md says Nomad %s, ci.yml tests against %s", got, want)
 	}
 }
