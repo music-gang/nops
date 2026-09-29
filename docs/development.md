@@ -211,6 +211,15 @@ replaces it. The "done" checklist stays in
 PR body. If the branch falls behind `main`, use "Update branch" (or
 `git rebase main`).
 
+Issues go through the two forms in `.github/ISSUE_TEMPLATE/` (blank issues
+are disabled). The bug form labels an issue `bug`, the feature form
+`enhancement`, and both add `needs-triage`, which the maintainer removes once
+he has read the issue. An issue opened with `gh issue create` skips the forms
+and gets no label. The other labels are `documentation`, and `dependencies`
+and `go`, which Dependabot puts on its PRs. The scope already sits in the
+title (`feat(web): ...`), and what is planned and in which order lives in the
+[roadmap](roadmap.md), so neither has a label.
+
 | Check | Required | What it runs |
 |---|---|---|
 | `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
