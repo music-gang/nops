@@ -114,8 +114,8 @@ CAS conflict actually closes the deployment.
   tick, and once `ApplyTimeout` has passed since `AppliedSince(id)` the
   deployment is `failed` ("could not register within <timeout>: <error>"; see
   [Decisions](#decisions), 4). Without that bound an error that never heals (a
-  namespace no longer in Nomad, a token without `submit-job`, a spec Nomad
-  refuses) would leave the deployment `applying` and hold the job's only active
+  namespace no longer in Nomad, a token without `submit-job` or without the
+  right to mount a volume of the job, a spec Nomad refuses) would leave the deployment `applying` and hold the job's only active
   slot for good.
   Once registered (or found already applied): re-read the live job once more
   and call `SetApplied(id, JobModifyIndex, EvalID)` — never the index from the

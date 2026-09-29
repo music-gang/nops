@@ -96,10 +96,45 @@ namespace nobody named. Taking a namespace off the list leaves its deployments
 and its jobs in Nomad as they are: Nops stops looking at them, it does not
 clean up.
 
+The old `-nomad-namespace` / `NOPS_NOMAD_NAMESPACE` no longer exists: setting
+it is an error, not a silent default.
+
+### Token ACL
+
 The token needs, in each listed namespace, `read-job`, `list-jobs`,
-`submit-job` (register and plan) and `dispatch-job` (hooks). The old
-`-nomad-namespace` / `NOPS_NOMAD_NAMESPACE` no longer exists: setting it is an
-error, not a silent default.
+`submit-job` (plan, register and the deregister of hook revisions) and
+`dispatch-job` (hooks). On top of that, every **volume** a job or a hook mounts
+needs a rule of its own, because Nomad checks volumes when a job is registered:
+
+| The job declares | The token needs |
+|---|---|
+| a host volume, read-write (no `read_only`) | `host_volume "<source>"` with `policy = "write"` |
+| a host volume with `read_only = true` | `host_volume "<source>"` with `policy = "read"` (`write` also works) |
+| a CSI volume | `csi-mount-volume` in the namespace |
+| a task with `csi_plugin` | `csi-register-plugin` in the namespace |
+
+`policy = "read"` grants `mount-readonly` only, `write` grants both mounts, so a
+hook that mounts read-only a volume the token can already write needs no rule of
+its own. The rule is per volume: a token without it is refused at register with
+`register job <id>: Unexpected response code: 403 (Permission denied)`, while
+`Plan` passes, since it checks no volume. The deployment stays `applying` until
+`-apply-timeout`, then fails ([engine-apply](design/engine-apply.md)).
+
+```hcl
+namespace "default" {
+  capabilities = ["list-jobs", "read-job", "submit-job", "dispatch-job"]
+}
+
+host_volume "db-data" {
+  policy = "write"
+}
+```
+
+A name in a policy may hold only letters, digits, `-` and `*`, so a volume
+declared as `nomad_backup_data` cannot be written as it is. Match it with a
+glob (`host_volume "nomad*backup*data"`: `*` stands for `_` too) or name the
+volume with `-` in the client configuration, the jobs and the policy.
+See Nomad's [ACL policy reference](https://developer.hashicorp.com/nomad/docs/secure/acl/policies).
 
 ## Git
 
