@@ -15,6 +15,9 @@
 #       read_only = false
 #     }
 #   }
+#
+# The Nops token needs `host_volume "db_backup" { policy = "write" }` in its ACL
+# policy (docs/configuration.md#token-acl).
 
 job "orders-backup" {
   datacenters = ["dc1"]
