@@ -1,6 +1,6 @@
 # Pre/post deployment hooks
 
-A hook is a Nomad job that nops **dispatches** around a deployment. The
+A hook is a Nomad job that Nops **dispatches** around a deployment. The
 `pre_hook` runs after approval and before apply; the `post_hook` runs once the
 new version is healthy. If a hook fails or times out, the deployment goes to
 `failed` with a notification; if it is a pre-hook, the live job is left
@@ -26,7 +26,7 @@ phase**:
 
 The message names the hook that failed. Each hook is its own run (a row per
 phase and position in `hook_runs`), with its own [revision](#hook-revisions),
-its own timeout and its own idempotency token, so after a nops crash the
+its own timeout and its own idempotency token, so after a Nops crash the
 deployment resumes at the first hook that had not finished: the ones that
 succeeded are not run again. The same hook cannot be listed twice in one phase.
 A hook that is in the repo but has invalid meta counts as unusable, like one
@@ -35,14 +35,14 @@ that is missing: the deployment fails at detection.
 ## Contract
 
 A hook is a **`batch` + `parameterized`** job in the repo, with
-`meta { nops_role = "hook" }`. It is inert until dispatched, and nops registers
+`meta { nops_role = "hook" }`. It is inert until dispatched, and Nops registers
 it in Nomad itself, as a [revision](#hook-revisions), right before dispatching
-it, regardless of the policy. Before dispatching, nops checks the job in Nomad:
+it, regardless of the policy. Before dispatching, Nops checks the job in Nomad:
 if it is missing, is not marked `nops_role = "hook"`, is not `batch`, or is not
 parameterized, the hook run is `failed` and nothing is dispatched.
 
 You do not register hooks yourself. If you have (a hook under its plain ID),
-nops leaves it alone and never runs it.
+Nops leaves it alone and never runs it.
 
 ## Namespace
 
@@ -57,7 +57,7 @@ same ID in two namespaces are two hooks, each used by the jobs of its own.
 
 A deployment runs the hooks **as they were when it was detected**, not as they
 are in git when it gets to run them: approving a deployment covers the target
-and its hooks. At detection nops freezes, for each hook the target declares,
+and its hooks. At detection Nops freezes, for each hook the target declares,
 the hook's spec (as parsed from the same commit as the target) and its hash, and
 the deployment's `spec_hash` is the hash of the target and of the hooks, in
 order. So:
@@ -70,7 +70,7 @@ order. So:
   deployment.
 
 Nothing of a hook is in Nomad until its deployment is approved and gets to the
-hook step. There nops registers the frozen spec as a job named
+hook step. There Nops registers the frozen spec as a job named
 **`<hook-id>-<first 8 hex of the hook's spec hash>`** (its `Name` stays the
 hook's own), with a plan first and a CAS on the live index (`0` if it is not
 there), and skips the register when the plan shows no change. That job is the
@@ -79,7 +79,7 @@ and `hook_runs.hook_job_id` holds the revision. Two deployments that share a
 hook at the same spec share the revision; at different specs they use different
 jobs, so neither can change what the other dispatches.
 
-After every detection cycle nops **deregisters, without purging**, the
+After every detection cycle Nops **deregisters, without purging**, the
 revisions no deployment that is still in progress needs. It only considers jobs
 that are hooks (`nops_role = "hook"`), whose ID ends in `-` and 8 lowercase hex
 digits, and that are not dispatched runs. A stopped revision stays visible in
@@ -87,14 +87,14 @@ Nomad, with the runs it dispatched and their logs (Nomad's own garbage
 collection removes it later), and is registered again if a later deployment
 needs it. The **only** consequence for you: **a hook you register by hand under
 an ID that ends in `-` and 8 hex digits, with `nops_role = "hook"`, is stopped
-by nops.** Nomad's job list shows the revisions next to your own jobs; they are
+by Nops.** Nomad's job list shows the revisions next to your own jobs; they are
 the price of registering a hook only when it is approved.
 
-If the revision cannot be registered, nops logs an ERROR and tries again at the
+If the revision cannot be registered, Nops logs an ERROR and tries again at the
 next cycle; if it still cannot within the hook's timeout, the deployment
 fails, as a hook that cannot be reached would.
 
-At dispatch nops passes the meta below, but **only the ones declared** in the
+At dispatch Nops passes the meta below, but **only the ones declared** in the
 hook job's `meta_required`/`meta_optional` (Nomad rejects undeclared meta with
 a 500):
 
@@ -110,16 +110,16 @@ The task name in `nops_image_<task>` is sanitized: every character that is not
 a letter or a digit becomes `_` (task `side-car` → `nops_image_side_car`), so it
 is a valid meta key and a valid `${NOMAD_META_...}` name. If two tasks (for
 example in different groups) map to the same key, that is fine when they use
-the same image; with different images the hook run is `failed`, since nops
+the same image; with different images the hook run is `failed`, since Nops
 cannot tell which one the hook wants.
 
-A hook that lists in `meta_required` something nops cannot provide (for example
+A hook that lists in `meta_required` something Nops cannot provide (for example
 `nops_image_web` when the job has no docker task `web`) is `failed` with a
 message naming the key.
 
 ## Rules for hook authors
 
-- **Outcome = exit code.** nops decides from the dispatched job and its
+- **Outcome = exit code.** Nops decides from the dispatched job and its
   allocations:
   - any allocation `failed` or `lost` → `failed`, with the task's exit code or
     driver error in the message (the hook's own output stays in Nomad's logs);
@@ -132,18 +132,18 @@ message naming the key.
 - **Fail fast.** `restart { attempts = 0  mode = "fail" }` and
   `reschedule { attempts = 0  unlimited = false }` (on separate lines: HCL
   does not allow more than one argument in a single-line block). Retries are
-  decided by nops, not by Nomad.
+  decided by Nops, not by Nomad.
 - **Idempotency.** A hook may be dispatched again with the same
-  `nops_deployment_id` after a nops crash. It must tolerate that: for example
+  `nops_deployment_id` after a Nops crash. It must tolerate that: for example
   "migrate" must be a no-op if already applied, or use `nops_deployment_id` as
   a key. Two deployments can run the same hook at the same time (each one its
   own revision, or the same revision): it must tolerate that too.
 - **Timeout.** Set with `nops_timeout` in the hook job's meta (default `5m`).
-  It is enforced by nops, not by the job's own settings, and frozen with the
+  It is enforced by Nops, not by the job's own settings, and frozen with the
   hook revision, so it is approved with the rest. It counts from the moment
-  the run was first recorded (`started_at`), so a nops restart does not give
+  the run was first recorded (`started_at`), so a Nops restart does not give
   the hook more time. The store keeps whole seconds, so a sub-second part of
-  the timeout is rounded up (`1500ms` → `2s`), never down. On expiry nops stops the dispatched job (without purging
+  the timeout is rounded up (`1500ms` → `2s`), never down. On expiry Nops stops the dispatched job (without purging
   it, so it stays visible in Nomad) and moves the hook to `timed_out`. If the
   hook has a timeout of its own (for example `image_pull_timeout`), keep it ≥
   `nops_timeout`. A hook that finishes in the same poll in which the
@@ -151,14 +151,14 @@ message naming the key.
 
 ## Placement
 
-nops **does not resolve nodes**. If the hook must run on the target job's node
+Nops **does not resolve nodes**. If the hook must run on the target job's node
 (image cache, local volumes), use the same `constraint`, or mount the same
 host volume read-only: the scheduler places the hook where the volume is,
 without hardcoding a node ID.
 
 ## Dispatch idempotency
 
-nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
+Nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
 (position from 0 within the phase; a run created before positions existed keeps
 `<deployment_id>:<phase>`). The same token returns the same dispatched job
 without a new evaluation, even after the dispatched job has finished
@@ -166,20 +166,20 @@ without a new evaluation, even after the dispatched job has finished
 dispatched job; for recovery see
 [state machine](state-machine.md#recovery-after-a-crash).
 
-nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
+Nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
 ID right after. A run found `running` without a dispatched job ID may or may not have
-reached Nomad, so nops looks the dispatched job up by its idempotency token (Nomad
+reached Nomad, so Nops looks the dispatched job up by its idempotency token (Nomad
 records it on the dispatched job) and carries on with it, timeout included. If there
 is none, the run is `failed` ("outcome unknown") instead of being dispatched
 again: the dispatched job may have run and been garbage-collected, the token no longer
 deduplicates at that point, and the hook would run a second time. The same
-happens when the dispatched job of a saved ID disappears before nops saw its outcome.
+happens when the dispatched job of a saved ID disappears before Nops saw its outcome.
 
 ## Examples
 
 The files are in [`examples/`](../examples/), one runnable directory per
 scenario (the target job and its hook together, with a `.vars.hcl` for what
-you would tweak for your own cluster). They are the standard cases nops must
+you would tweak for your own cluster). They are the standard cases Nops must
 cover; none of them is "the" reference case. `TestExamplesParse` (integration)
 keeps them parsing, with valid meta, with the hooks they declare and needing
 nothing but Nomad (see below).

@@ -47,7 +47,7 @@ for the full per-job procedure):
   spec at commit `<sha>`") — this compares `spec_hash`, never `commit_sha`: an
   unrelated commit that does not touch the job's file must not disturb it;
 - else if the live `JobModifyIndex` differs from `cas_index`, it moves to
-  `superseded` (reason: "job modified outside nops");
+  `superseded` (reason: "job modified outside Nops");
 - else if the plan is empty, it moves to `completed` as a no-op (reason:
   "already in sync").
 
@@ -67,7 +67,7 @@ or `rejected` with the same `spec_hash` **and** the same live index
 (`cas_index`): nothing that produced that outcome has changed, so recreating
 it would only repeat the same failure, the same event and the same
 notification on every cycle. A new commit, or a change to the live job
-(including nops's own apply), makes a new deployment again.
+(including Nops's own apply), makes a new deployment again.
 
 A deployment that reached the register (`applied_index != 0`) and then
 `failed` blocks for its `spec_hash` regardless of the live index: Nomad's own
@@ -164,7 +164,7 @@ usual, `pending_approval` still waits for a human. For the rest:
 - `applying` with `applied_index` set: wait for health as before, the timeout
   counted from the `→ applying` event. If the live job's index is no longer
   `applied_index` and no Nomad deployment tracks it, the job was modified
-  outside nops (for instance while it was down): the deployment is `failed`
+  outside Nops (for instance while it was down): the deployment is `failed`
   rather than judged on someone else's allocations.
 
 The idempotency token is scoped to the parent job and lives as long as the

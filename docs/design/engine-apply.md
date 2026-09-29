@@ -20,7 +20,7 @@ decision, through `Engine.Approve`/`Reject` (see
 
 Every step follows invariant 7 (state persisted before acting on Nomad): a
 `Store.Transition` (or the new `SetApplied`, see [Decisions](#decisions), 2) is
-saved first, and only then does nops call Nomad. This makes every step
+saved first, and only then does Nops call Nomad. This makes every step
 resume-safe purely from what is in the store, which is what lets
 `engine-recovery` reuse it instead of duplicating the logic.
 
@@ -74,7 +74,7 @@ CAS conflict actually closes the deployment.
   `Transition` to `pre_hook`. Not declared → `Transition` straight to
   `applying`. A `detected` deployment whose policy is `approval` is **left
   alone** (invariant 3): detection creates one `pending_approval`, so this is
-  only a deployment a nops that created it in two writes left behind. Apply
+  only a deployment a Nops that created it in two writes left behind. Apply
   asks detection for a cycle, which moves it (see
   [engine-detection](engine-detection.md#per-job-reconciliation)).
 - **`pre_hook`**: read the frozen hooks of the phase (`Store.DeploymentHooks`;
@@ -102,7 +102,7 @@ CAS conflict actually closes the deployment.
   to `completed` ("already in sync", a no-op apply); otherwise
   `RegisterCAS(job_spec, CASIndex, false)` (counts were already substituted
   for `scaling` groups at detection, so `job_spec` is registered as stored).
-  `ErrCASConflict` → `Transition` to `failed` ("job modified outside nops");
+  `ErrCASConflict` → `Transition` to `failed` ("job modified outside Nops");
   the retry rule then allows a new deployment once detection sees the
   changed index. If the live index differs from `CASIndex` *and* a plan of
   `job_spec` against the live job is already empty, the register already
@@ -188,7 +188,7 @@ expanded here.
    mid-state.** `SetApplied(ctx, id string, appliedIndex uint64, evalID string) error`,
    guarded by `WHERE state = 'applying'` (no schema change: the columns
    already exist). This is needed because invariant 7 requires them
-   persisted *before* nops starts waiting for health, while the deployment is
+   persisted *before* Nops starts waiting for health, while the deployment is
    still `applying` — `Store.Transition` only writes on a state change.
    `evalID` may be empty: the crash-recovery path in decision 3's register
    step (the register already happened before the restart) has no fresh eval
@@ -210,7 +210,7 @@ expanded here.
    that produces none) falls back to the allocations of the applied job
    version: `nomadx.Alloc` gains `JobVersion`, matched against the live job's
    own `Version` re-read after the register (and only while the live job's
-   index is still `applied_index`: otherwise it was modified outside nops, its
+   index is still `applied_index`: otherwise it was modified outside Nops, its
    allocations are not ours, and the deployment is `failed`, see decision 8),
    and health follows the same
    `failed`/`lost` → failed, `running`/`complete` → healthy, anything else →
@@ -245,23 +245,23 @@ expanded here.
    `Transition` to `failed` with a message, exactly like a hook timeout — no
    `nomad deployment fail` call, no automatic revert. This follows from
    [architecture.md](../architecture.md#what-nops-does-not-do) ("no rollback,
-   no explicit stops") and, more generally, from nops's role: it automates a
+   no explicit stops") and, more generally, from Nops's role: it automates a
    manual GitOps process, so what Nomad already does better (rolling update,
    canary, `auto_revert` on the job's own `update` stanza) is left entirely
-   to Nomad — nops never steps in.
+   to Nomad — Nops never steps in.
 6. **A `failed` deployment past the register blocks retries for its
    `spec_hash`, regardless of the live index.** Without this, a job with
-   `auto_revert` on can loop forever: nops applies, the apply fails to become
+   `auto_revert` on can loop forever: Nops applies, the apply fails to become
    healthy, Nomad reverts the job on its own (changing the live index),
    detection sees drift again with a *different* index so the existing "same
    `spec_hash` **and** same `cas_index`" retry rule no longer applies, and
-   nops re-applies the same spec that already failed — repeating the failure,
+   Nops re-applies the same spec that already failed — repeating the failure,
    the event and the notification every cycle. The rule: once a deployment's
    `AppliedIndex != 0` (the register was reached) and it ends `failed`, no new
    deployment is created for the same job while the latest one has that same
    `spec_hash`, whatever the live index is now. Only a new commit (a
    different `spec_hash`) unblocks it — consistent with invariant 4 (git is
-   the source of truth) and with decision 5 above: nops does not retry a
+   the source of truth) and with decision 5 above: Nops does not retry a
    spec Nomad has already rejected, it waits for a human to change it. This
    extends, rather than replaces, the existing rule for a `failed`/`rejected`
    deployment that never reached the register (state-machine.md's "not
@@ -289,8 +289,8 @@ expanded here.
    blocking startup pass would delay the dashboard and detection. What the task
    added is the crash-window tests (`recovery_test.go`) and one fix they
    exposed: the allocations fallback of decision 3 read the live job's
-   allocations even when the live job had been modified outside nops after our
-   register (for instance while nops was down), so someone else's healthy
+   allocations even when the live job had been modified outside Nops after our
+   register (for instance while Nops was down), so someone else's healthy
    version could complete our deployment. The fallback now requires the live
    index to still be `applied_index`, and fails the deployment otherwise.
 9. **Retry lifts a block; it does not create or approve anything.** A job
@@ -332,7 +332,7 @@ same deployment twice. `recovery_test.go` restarts the engine (a fresh
 `RunApply` cycle takes a deployment left in every state a crash can leave: a
 table for `detected`, `pre_hook`, `applying` (before the register, after it
 before `applied_index`, a conflict found only after the restart, a CAS conflict
-on the resumed register, healthy or timed out or modified outside nops while
+on the resumed register, healthy or timed out or modified outside Nops while
 down) and `post_hook`; `pending_approval` and other namespaces left alone; and
 a real `hooks.Runner` over a fake hook Nomad for a crash between `Dispatch` and
 the saved dispatched job ID (the dispatched job is adopted, or the hook

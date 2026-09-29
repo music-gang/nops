@@ -34,12 +34,12 @@
   or slow hook leaves the live job alone, a failure is not retried in a loop)
   are checked with `raw_exec` hooks that append to a log or write a marker
   file. What a simulation cannot say (how long a real pull takes, whether a
-  real dump restores, the cluster's own ACLs and TLS) is judged by using nops
+  real dump restores, the cluster's own ACLs and TLS) is judged by using Nops
   on the cluster.
 - The **end-to-end tests** (`e2e_*_test.go`) build the real `nops` binary once
   and run it as a subprocess against a scratch git repository (a bare repo
   over `file://`, pushed to by the test) and the Nomad under test: basic
-  auth, 200ms intervals, the dashboard driven over HTTP and nops's own SQLite
+  auth, 200ms intervals, the dashboard driven over HTTP and Nops's own SQLite
   read alongside it. `TestE2EApprovalFlow` covers create, approve, reject,
   superseding, a stale `spec_hash` (409) and an outside edit under policy
   `approval`; `TestE2EAutoRevertsOutsideEdit` the same edit under `auto`; the
@@ -241,10 +241,10 @@ go vet -tags integration ./...
 A release is a `vX.Y.Z` tag on a commit of `main`. There is no image of
 `main` itself.
 
-**Versions.** nops is at `v0`. While the major is 0, **a minor may break**
+**Versions.** Nops is at `v0`. While the major is 0, **a minor may break**
 (configuration, database, behaviour) and **a patch never does**; from `v1`,
 plain semver (a major breaks, a minor adds, a patch fixes). The maintainer
-decides when nops is stable enough for `v1`. A breaking change in a `v0`
+decides when Nops is stable enough for `v1`. A breaking change in a `v0`
 minor is named in the release notes.
 
 **Cutting one:**
@@ -280,7 +280,7 @@ minor is named in the release notes.
    page.
 6. If the release breaks something, add an "Upgrade notes" section by hand
    at the top of the Release (what to change in the job or the database).
-7. Update the image in nops's own Nomad job.
+7. Update the image in Nops's own Nomad job.
 8. If it goes wrong, **never move or recreate a tag** (the ruleset below
    forbids it): go back to the previous image in the job and cut a patch.
 

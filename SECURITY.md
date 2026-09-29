@@ -8,11 +8,11 @@ privately through GitHub:
 
 Include what you found, how to reproduce it, and the impact you expect. You
 can expect an acknowledgement, and a fix or an explanation, on a best-effort
-basis: nops is maintained by a small team.
+basis: Nops is maintained by a small team.
 
 ## Supported versions
 
-Only the latest release is supported, and while nops is at `v0` that means the
+Only the latest release is supported, and while Nops is at `v0` that means the
 latest minor: a fix goes into a new patch or minor of the current line, never
 into an older one (see
 [docs/development.md](docs/development.md#releasing)).

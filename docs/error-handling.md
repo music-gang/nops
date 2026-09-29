@@ -1,6 +1,6 @@
 # Errors and failures: fail loud
 
-nops prefers to stop and say so rather than carry on with uncertain state.
+Nops prefers to stop and say so rather than carry on with uncertain state.
 
 ## Rules
 
@@ -41,7 +41,7 @@ key twice, and a parser that rejects duplicates would drop the line.
 
 ## Notifications
 
-nops tells people when a deployment needs them: it sends a notification when
+Nops tells people when a deployment needs them: it sends a notification when
 a deployment becomes `pending_approval` (someone must approve) and when it
 becomes `failed`. A job can also opt in to a notification when a deployment
 of it becomes `completed` (`nops_notify_completed`, [meta-keys](meta-keys.md));

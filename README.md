@@ -1,15 +1,15 @@
-# nops
+# Nops
 
 [![CI](https://github.com/music-gang/nops/actions/workflows/ci.yml/badge.svg)](https://github.com/music-gang/nops/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/music-gang/nops)](LICENSE)
 
 A semi-automatic GitOps controller for [HashiCorp Nomad](https://www.nomadproject.io/).
 
-nops watches a git repo of Nomad job definitions (HCL), compares them with the
+Nops watches a git repo of Nomad job definitions (HCL), compares them with the
 live cluster, and brings them in line according to a **policy you set per
 job**: apply automatically, wait for a human approval, or only observe. It
 keeps its own state in SQLite, shows pending changes in a PR-style dashboard,
-and can run **pre/post deployment hooks** (regular Nomad jobs that nops
+and can run **pre/post deployment hooks** (regular Nomad jobs that Nops
 dispatches for you) around each deployment.
 
 > **Status: early development.** The design is settled and documented and
@@ -23,7 +23,7 @@ Aimed at a self-hosted cluster for personal use: no enterprise-scale machinery.
 
 ## How it works
 
-1. nops reads the job files from a git repo and asks Nomad to parse them
+1. Nops reads the job files from a git repo and asks Nomad to parse them
    (`/v1/jobs/parse`), so Nomad stays the only HCL interpreter.
 2. For each managed job it runs `nomad job plan` and, if there is a
    difference, creates a **deployment** whose state is stored in SQLite.
@@ -31,12 +31,12 @@ Aimed at a self-hosted cluster for personal use: no enterprise-scale machinery.
 
    | Policy | Behaviour |
    |---|---|
-   | `auto` | nops applies the change on its own. |
+   | `auto` | Nops applies the change on its own. |
    | `approval` | The deployment waits in the dashboard, with its diff, until someone approves or rejects it. |
    | `none` | The drift is shown but never applied (default). |
 
 4. Applying is a plain `job register` protected by Nomad's check-index (CAS): if
-   the job changed since nops looked at it, the write is rejected instead of
+   the job changed since Nops looked at it, the write is rejected instead of
    overwriting someone else's change.
 
 ```
@@ -87,9 +87,9 @@ that they need nothing but Nomad (no Consul).
 
 ## Nomad compatibility
 
-nops is tested against **Nomad 2.0.7**: the integration tests run on that
+Nops is tested against **Nomad 2.0.7**: the integration tests run on that
 version in CI. Other 2.0.x releases should work; a new minor is supported once
-the same tests pass on it. nops relies on a few behaviours of Nomad's API that
+the same tests pass on it. Nops relies on a few behaviours of Nomad's API that
 are not part of a contract (the wording of a check-index failure, the names of
 the fields of a plan diff); each has an integration test, so an upgrade that
 changes one fails there. How to move to a new version:
@@ -107,14 +107,14 @@ The binary, with its checksums, is on the
 [Releases](https://github.com/music-gang/nops/releases) page. Every option is
 a flag or a `NOPS_*` variable ([configuration](docs/configuration.md)), which
 also has a ready-made [Nomad job](docs/configuration.md#running-nops-as-a-nomad-job).
-While nops is at `v0`, a new minor may break the configuration: pin a minor
+While Nops is at `v0`, a new minor may break the configuration: pin a minor
 (`0.1`), not `latest`.
 
 ## Design principles
 
 - **Plan before every write, CAS on every write.**
 - **Never auto-apply a job whose policy is `approval`.**
-- **Git is the source of truth** for policy and hooks; nops never writes to git
+- **Git is the source of truth** for policy and hooks; Nops never writes to git
   or into the live job's meta.
 - **One active deployment per job**, enforced by the database.
 - **State is saved before acting**, so a crash mid-deployment can be resumed

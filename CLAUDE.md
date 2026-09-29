@@ -1,6 +1,6 @@
-# nops: development guidelines
+# Nops: development guidelines
 
-nops is a semi-automatic GitOps controller for HashiCorp Nomad (Go, module
+Nops is a semi-automatic GitOps controller for HashiCorp Nomad (Go, module
 `github.com/music-gang/nops`). It reads HCL jobs from a git repo and applies
 them according to a per-job policy (`auto` / `approval` / `none`), with state in
 SQLite, an approval dashboard and pre/post deployment hooks. Self-hosted
@@ -108,7 +108,7 @@ The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md).
 2. **CAS on every register** (`EnforceIndex` + the `JobModifyIndex` captured at detection).
 3. **Never auto-apply under policy `approval`**: it takes an authenticated human action, valid for `(deployment_id, spec_hash)`.
 4. **Git is the source of truth** for policy and hooks; invalid meta → policy `none` + ERROR.
-5. **nops never writes to Git or meta into the live job**; state lives only in SQLite.
+5. **Nops never writes to Git or meta into the live job**; state lives only in SQLite.
 6. **One active deployment per job**, enforced by the DB (partial unique index).
 7. **State is persisted before acting** on Nomad; if the DB write fails, do not proceed.
 

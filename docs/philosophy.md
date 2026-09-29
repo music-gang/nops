@@ -1,9 +1,9 @@
 # Philosophy and invariants
 
-Why nops behaves the way it does. The invariants below are **non-negotiable**:
+Why Nops behaves the way it does. The invariants below are **non-negotiable**:
 CLAUDE.md carries the short list, this page explains the reasoning behind each.
 
-nops is a semi-automatic GitOps controller for Nomad, aimed at a self-hosted
+Nops is a semi-automatic GitOps controller for Nomad, aimed at a self-hosted
 cluster for personal use. **No overengineering**: if a feature only exists "to
 scale", we don't build it.
 
@@ -44,10 +44,10 @@ scale", we don't build it.
    `TestRecoveryLeavesPendingApprovalAlone`, `TestApproveRefusesStaleSpecHash`,
    `TestApprovePassesOnTheHashOfTheFormNotTheStoredOne`, `TestPagesRequireLogin`.
 
-4. **Git is the source of truth for nops's behaviour.** Policy and hooks are
+4. **Git is the source of truth for Nops's behaviour.** Policy and hooks are
    read from the HCL in the repo, never from the live job. An invalid meta key
    leads to policy `none` + an ERROR log (conservative reading).
-   *Why:* to change what nops does to a job you change the HCL and commit:
+   *Why:* to change what Nops does to a job you change the HCL and commit:
    reviewable and versioned. A stale meta key on the live job is just drift
    that converges.
    *Proven by:* `TestAnInvalidMetaKeyIsReadFromGitAsPolicyNoneWhateverTheLiveJobSays`
@@ -55,13 +55,13 @@ scale", we don't build it.
    is never read), `TestAnInvalidKeyIntroducedIntoAPendingApprovalSupersedesIt`,
    `TestTheLivePolicyIsNeverWhatDecidesWhetherToDeploy`, `TestParse`.
 
-5. **nops never writes to Git** and **never writes meta into the live job**.
+5. **Nops never writes to Git** and **never writes meta into the live job**.
    Tool state lives only in SQLite.
    *Why:* writing meta into the live job causes "meta-drift": the next
    `nomad job run` from HCL silently wipes it.
    *Proven by:* `TestDetectionStoresTheSpecExactlyAsGitHasIt`,
    `TestStepRegisterRegistersTheSpecUnchanged`,
-   `TestAHookRevisionIsRegisteredWithTheMetaOfItsSpec`. That nops never writes to
+   `TestAHookRevisionIsRegisteredWithTheMetaOfItsSpec`. That Nops never writes to
    Git is structural, not tested: the clone lives in memory and nothing in the
    code pushes.
 
@@ -94,19 +94,19 @@ scale", we don't build it.
 ## Patterns reused from nomad-gitops
 
 The reference is [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops)
-(`docs/philosophy.md`, `docs/design/`). nops is not a fork: it reuses only
+(`docs/philosophy.md`, `docs/design/`). Nops is not a fork: it reuses only
 these patterns.
 
-| Pattern | Notes for nops |
+| Pattern | Notes for Nops |
 |---|---|
 | Parse HCL via `/v1/jobs/parse` (`Jobs().ParseHCLOpts`, canonicalized, with the vars file as `Variables`) | No local HCL parser: Nomad is the only interpreter. |
 | Diff via `Jobs.Plan(job, diff=true)` | The same `JobDiff` drives the decision and the dashboard. |
 | CAS register with `JobModifyIndex` | See invariant 2. |
 | Detection and apply decoupled; the newest commit supersedes the old one | The queue is persistent (SQLite). |
-| Secret redaction in the diff (`Env[...]`, templates, *password/token/secret* keys) | Applied **before** the diff is saved to the DB or rendered in HTML. nops also covers headers, URL credentials and more names (*auth*, *credential*, *privatekey*, *apikey*): see [dashboard](dashboard.md#secret-redaction). |
+| Secret redaction in the diff (`Env[...]`, templates, *password/token/secret* keys) | Applied **before** the diff is saved to the DB or rendered in HTML. Nops also covers headers, URL credentials and more names (*auth*, *credential*, *privatekey*, *apikey*): see [dashboard](dashboard.md#secret-redaction). |
 | In-memory git clone (go-git) + poll + webhook with a coalescing trigger (buffer-1 channel) | Read-only. |
-| Count ignored for groups with a scaling policy | Don't fight the autoscaler: before the plan, such a group takes its `Count` from the live job ([engine-detection](design/engine-detection.md#spec_hash-is-computed-before-the-live-cluster-adjustment)). nops does **not** use Nomad's `PreserveCounts` register option: it keeps the count of *every* group, so a count changed on purpose in git would be silently undone. |
+| Count ignored for groups with a scaling policy | Don't fight the autoscaler: before the plan, such a group takes its `Count` from the live job ([engine-detection](design/engine-detection.md#spec_hash-is-computed-before-the-live-cluster-adjustment)). Nops does **not** use Nomad's `PreserveCounts` register option: it keeps the count of *every* group, so a count changed on purpose in git would be silently undone. |
 
-**Deliberately dropped:** the stateless design (nops needs state for approvals
+**Deliberately dropped:** the stateless design (Nops needs state for approvals
 and hooks), the `image-only` policy, flap guard and active rollback,
-deregister of jobs (for now: the only thing nops stops is a hook run that timed out and the hook revisions no deployment needs), Prometheus metrics (for now `slog` is enough).
+deregister of jobs (for now: the only thing Nops stops is a hook run that timed out and the hook revisions no deployment needs), Prometheus metrics (for now `slog` is enough).

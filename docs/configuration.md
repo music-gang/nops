@@ -1,6 +1,6 @@
 # Configuration
 
-nops is configured with command-line flags or environment variables. The
+Nops is configured with command-line flags or environment variables. The
 source of truth is [`internal/config`](../internal/config/config.go): this
 page and that package must be updated together (tests check that every
 option has a row in the tables below, that every row is an option, and that its
@@ -14,11 +14,11 @@ variable and default are the option's; and the same for the secrets table).
 - **Precedence: flag > variable > default.** A variable set to the empty
   string counts as unset. A flag set to the empty string (`-notify-ntfy-url=`) is a
   value and wins.
-- **nops reads nothing else.** The standard `NOMAD_*` variables (`NOMAD_ADDR`,
-  `NOMAD_TOKEN`, `NOMAD_NAMESPACE`, …) are **ignored**. When nops runs as a
+- **Nops reads nothing else.** The standard `NOMAD_*` variables (`NOMAD_ADDR`,
+  `NOMAD_TOKEN`, `NOMAD_NAMESPACE`, …) are **ignored**. When Nops runs as a
   Nomad job, Nomad sets `NOMAD_NAMESPACE` and `NOMAD_REGION` in its
   environment (and `NOMAD_TOKEN` with `identity { env = true }`). With the
-  Nomad client's defaults nops would then work on the namespace it runs in,
+  Nomad client's defaults Nops would then work on the namespace it runs in,
   not on the ones you configured.
 - **Secrets are files, by flag.** Every secret has a `-X-file` flag (and its
   `NOPS_X_FILE` variable) that reads it from a file: tokens, and URLs that
@@ -41,7 +41,7 @@ variable and default are the option's; and the same for the secrets table).
   `docker run --env-file`, a Kubernetes `secretKeyRef`, a Nomad `template`
   block with `env = true`) without a temporary file. Whether a literal secret
   ends up in a checked-in Nomad job's `env {}` block instead of coming from
-  Vault or a Nomad Variable is the operator's call: nops cannot and does not
+  Vault or a Nomad Variable is the operator's call: Nops cannot and does not
   try to prevent it.
 - **Every error is reported at once**, each one prefixed with where the value
   came from (`flag -apply-timeout: ...`, `NOPS_APPLY_TIMEOUT: ...`, or
@@ -74,7 +74,7 @@ variable and default are the option's; and the same for the secrets table).
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-nomad-addr` | `NOPS_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad HTTP API address (`http://` or `https://`). |
-| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
+| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces Nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
 | `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the Nomad ACL token. Unset: no token (ACLs disabled). |
 | `-nomad-ca-cert` | `NOPS_NOMAD_CA_CERT` | none | PEM file of the CA that signed the Nomad server certificate. |
 | `-nomad-client-cert` | `NOPS_NOMAD_CLIENT_CERT` | none | PEM client certificate for mTLS. Set together with the key. |
@@ -83,17 +83,17 @@ variable and default are the option's; and the same for the secrets table).
 
 ### Namespaces
 
-One nops instance manages every namespace of `-nomad-namespaces`, with one
+One Nops instance manages every namespace of `-nomad-namespaces`, with one
 token. A job belongs to the namespace its HCL declares (`namespace = "apps"`;
 Nomad makes it `default` when there is none), and a hook is looked up in the
 namespace of the job that declares it ([hooks](hooks.md#namespace)). A job in a
 namespace that is not on the list is an ERROR in the log and is not managed;
 so a job with no `namespace` is refused unless `default` is listed.
 
-The list is explicit on purpose: the token's ACL says what nops *can* do, the
+The list is explicit on purpose: the token's ACL says what Nops *can* do, the
 list says what it *may* do, and pushing to git must not be enough to reach a
 namespace nobody named. Taking a namespace off the list leaves its deployments
-and its jobs in Nomad as they are: nops stops looking at them, it does not
+and its jobs in Nomad as they are: Nops stops looking at them, it does not
 clean up.
 
 The token needs, in each listed namespace, `read-job`, `list-jobs`,
@@ -122,20 +122,20 @@ supported. A `file://` URL works only where a `git` executable is installed
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
 | `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](dashboard.md#git-webhook). |
-| `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. A path in it, e.g. `https://domain.example.org/nops`, becomes the dashboard's **base path** (see [dashboard](dashboard.md#base-path)): there is no separate flag for it. Left unset, it becomes `http://<host>:<port>` from `-listen-addr`, `localhost` in place of an empty or wildcard host (`0.0.0.0`, `::`) — meant for `-auth-mode=basic` with no reverse proxy; with `-auth-mode=oidc` set it explicitly to what the browser and the provider's registered redirect URI actually need, since `localhost` is essentially never that. |
-| `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | How the dashboard logs people in: `oidc` or `basic`. The two are mutually exclusive — only the options of the chosen one may be set, nops refuses to start otherwise (a leftover flag from switching modes is caught, not silently ignored). See [authentication](dashboard.md#authentication). |
+| `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (Nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. A path in it, e.g. `https://domain.example.org/nops`, becomes the dashboard's **base path** (see [dashboard](dashboard.md#base-path)): there is no separate flag for it. Left unset, it becomes `http://<host>:<port>` from `-listen-addr`, `localhost` in place of an empty or wildcard host (`0.0.0.0`, `::`) — meant for `-auth-mode=basic` with no reverse proxy; with `-auth-mode=oidc` set it explicitly to what the browser and the provider's registered redirect URI actually need, since `localhost` is essentially never that. |
+| `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | How the dashboard logs people in: `oidc` or `basic`. The two are mutually exclusive — only the options of the chosen one may be set, Nops refuses to start otherwise (a leftover flag from switching modes is caught, not silently ignored). See [authentication](dashboard.md#authentication). |
 
 ### OIDC (`-auth-mode=oidc`)
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL of the OIDC provider, exactly as it announces it in its discovery document: a trailing slash matters (Authentik's has one), nops does not add or drop it. |
-| `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of nops at the provider. |
+| `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL of the OIDC provider, exactly as it announces it in its discovery document: a trailing slash matters (Authentik's has one), Nops does not add or drop it. |
+| `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of Nops at the provider. |
 | `-oidc-client-secret-file` | `NOPS_OIDC_CLIENT_SECRET_FILE` | none, **required** | File holding the client secret (or `NOPS_OIDC_CLIENT_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). |
 | `-oidc-allowed-users` | `NOPS_OIDC_ALLOWED_USERS` | none | Comma-separated usernames (`preferred_username`) or emails that may log in. |
 | `-oidc-allowed-groups` | `NOPS_OIDC_ALLOWED_GROUPS` | none | Comma-separated groups (the `groups` claim) that may log in. |
 
-At least one of the two allowlists must be set: with both empty nops does not
+At least one of the two allowlists must be set: with both empty Nops does not
 start, since every user of the provider would be able to approve a
 deployment. A user must match either list. How the login works, and how to
 set the client up at Authentik or Authelia, is in
@@ -147,7 +147,7 @@ set the client up at Authentik or Authelia, is in
 |---|---|---|---|
 | `-users-file` | `NOPS_USERS_FILE` | none, **required** | File holding one `username:bcrypt-hash` per line (blank lines and `#` comments ignored), read once at startup. Generate a line with `htpasswd -nB <user>`. See [dashboard](dashboard.md#local-users). |
 
-No OIDC provider needed: nops checks the password itself against the file.
+No OIDC provider needed: Nops checks the password itself against the file.
 The actor recorded with a decision is the username as is. There is no
 lockout or rate limiting on failed attempts — a known limitation for this
 personal-use tool, see [dashboard](dashboard.md#local-users).
@@ -166,7 +166,7 @@ receives every notification. None set: notifications are off.
 | `-notify-slack-url-file` | `NOPS_NOTIFY_SLACK_URL_FILE` | none | File holding the Slack incoming webhook URL (`https://hooks.slack.com/services/...`). |
 | `-notify-ntfy-url` | `NOPS_NOTIFY_NTFY_URL` | none | ntfy topic URL, e.g. `https://ntfy.example.com/nops`. |
 | `-notify-ntfy-token-file` | `NOPS_NOTIFY_NTFY_TOKEN_FILE` | none | File holding an ntfy access token (`tk_...`). Needs the URL. |
-| `-notify-gotify-url` | `NOPS_NOTIFY_GOTIFY_URL` | none | Gotify server URL, e.g. `https://gotify.example.com`; nops posts to `<url>/message`. |
+| `-notify-gotify-url` | `NOPS_NOTIFY_GOTIFY_URL` | none | Gotify server URL, e.g. `https://gotify.example.com`; Nops posts to `<url>/message`. |
 | `-notify-gotify-token-file` | `NOPS_NOTIFY_GOTIFY_TOKEN_FILE` | none | File holding the Gotify application token. **Required** with the URL. |
 | `-notify-timeout` | `NOPS_NOTIFY_TIMEOUT` | `10s` | Timeout of one notification request, for every adapter. |
 
@@ -190,7 +190,7 @@ it, so use a topic nobody can guess, or your own server with a token.
 The timeout of a hook is not here: it is set on the hook job, with
 `nops_timeout` (see [meta keys](meta-keys.md)).
 
-## Running nops as a Nomad job
+## Running Nops as a Nomad job
 
 The release image is `ghcr.io/music-gang/nops` (see
 [development](development.md#releasing) for its tags). It runs as the
@@ -273,5 +273,5 @@ group "nops" {
 }
 ```
 
-`change_mode = "restart"` restarts nops when a secret changes, since secrets
+`change_mode = "restart"` restarts Nops when a secret changes, since secrets
 are read only at startup.
