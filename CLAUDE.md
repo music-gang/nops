@@ -14,6 +14,10 @@ This file holds only the **working rules**. What the system is and why lives in
 - **Every code change has tests.** What needs which kind: `docs/development.md`.
 - **Every change updates the docs**, in the same commit. The "if you change X,
   update Y" map is in `docs/README.md`.
+- **`docs/` is written for people**: no instruction addressed to an assistant
+  or a session (how to report, when to stop, what not to add to a commit). The
+  docs serve the maintainer and contributors as much as a session; how a
+  session works lives here, and only here.
 - **Use the terms in `docs/vocabulary.md`** in code, docs, commits and PRs; a
   new concept gets a row there.
 - **Design decisions are written down** in `docs/design/decisions.md` when they
@@ -80,6 +84,21 @@ The same steps apply wherever the session runs.
    section of its description. Do not guess.
 10. Nothing worth keeping lives only in private memory: decisions go to the
     decision log, task context to the roadmap *Notes*.
+
+## Doc audit
+
+What an audit checks, its verdicts and its scope are in
+[`docs/development.md#doc-audit`](docs/development.md#doc-audit). For a session:
+
+1. **No fix before the answer**: no code or doc edit until the report is
+   answered. The only thing written is a test that proves or disproves a claim
+   (a failing test for a "hypothesis to verify", an integration test for what
+   depends on Nomad's own behaviour), and it is reported with the finding.
+2. **Report in the session, not in a file**, in the shape the procedure gives,
+   then stop for the maintainer's answers.
+3. **Fix as agreed**, each behaviour change in its own branch, with a test
+   shown failing before the fix. The doc-only fixes and the missing tests go in
+   one PR.
 
 ## Invariants (non-negotiable)
 
