@@ -21,6 +21,12 @@ import (
 // valid for (deployment_id, spec_hash) and never transfers to another spec.
 var ErrStaleApproval = errors.New("approval no longer matches the deployment's current spec")
 
+// ErrNotInRepo is returned by Approve when the deployment's job is not among the
+// managed jobs of the last detection cycle: it was removed from git, or its file
+// does not parse (or has not been read yet, right after a start). Approving it
+// would register a spec git no longer asks for.
+var ErrNotInRepo = errors.New("the job is not in the repository as of the last detection cycle")
+
 // RunApply runs the apply loop: every EngineInterval it picks up every
 // non-terminal deployment and advances it by one step, one goroutine per
 // deployment, until ctx is done. See docs/design/engine-apply.md.
@@ -490,7 +496,10 @@ func neverHasAllocations(job *api.Job) bool {
 // Approve moves a pending_approval deployment forward: pre_hook if the
 // target spec declares nops_pre_hook, else applying. It refuses without
 // touching Nomad or the store if specHash no longer matches the deployment's
-// current one (invariant 3).
+// current one (invariant 3), or if its job is not among the managed jobs of the
+// last detection cycle (ErrNotInRepo): a broken file elsewhere suspends the
+// removal of a job's deployments, so the deployment of a job git no longer has
+// can still be pending, and approving it would register that job.
 func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error {
 	if actor == "" {
 		return errors.New("approve: actor is required")
@@ -504,6 +513,9 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	}
 	if d.SpecHash != specHash {
 		return fmt.Errorf("approve %s: %w", id, ErrStaleApproval)
+	}
+	if !e.observed(d.Namespace, d.JobID) {
+		return fmt.Errorf("approve %s: %w", id, ErrNotInRepo)
 	}
 	job, err := parseJobSpec(d)
 	if err != nil {

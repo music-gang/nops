@@ -314,8 +314,12 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, approve bool) {
 		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
-	case errors.Is(err, engine.ErrStaleApproval):
-		data, ok := s.deploymentView(w, r, id, "The spec changed since this page loaded: review the new diff before deciding.")
+	case errors.Is(err, engine.ErrStaleApproval), errors.Is(err, engine.ErrNotInRepo):
+		notice := "The spec changed since this page loaded: review the new diff before deciding."
+		if errors.Is(err, engine.ErrNotInRepo) {
+			notice = "This job is not in the repository as nops last read it (removed, or its file does not parse): there is nothing to approve until it is back. You can still reject it."
+		}
+		data, ok := s.deploymentView(w, r, id, notice)
 		if !ok {
 			return
 		}

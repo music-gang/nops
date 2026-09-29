@@ -707,7 +707,16 @@ func TestStepHealthTimeoutFails(t *testing.T) {
 
 // -- tests: Approve / Reject ---------------------------------------------
 
+// pendingApproval is a pending_approval deployment of a job the last detection
+// cycle read from git, as Approve requires.
 func (h *harness) pendingApproval(jobID string, job *api.Job, specHash string) *store.Deployment {
+	h.t.Helper()
+	h.engine.replaceObservations(map[jobKey]Observation{{testNamespace, jobID}: {JobID: jobID, Namespace: testNamespace}})
+	return h.pendingApprovalUnseen(jobID, job, specHash)
+}
+
+// pendingApprovalUnseen is one no detection cycle has read the job of.
+func (h *harness) pendingApprovalUnseen(jobID string, job *api.Job, specHash string) *store.Deployment {
 	h.t.Helper()
 	specJSON := mustMarshal(h.t, job)
 	d := &store.Deployment{
@@ -749,6 +758,68 @@ func TestApproveWithPreHookGoesToPreHook(t *testing.T) {
 	got := h.get(d.ID)
 	if got.State != store.StatePreHook {
 		t.Fatalf("state = %s, want pre_hook", got.State)
+	}
+}
+
+// A pending approval outlives its job's file while detection cannot tell a
+// removed file from a broken one (docs/design/engine-detection.md, "Not covered
+// by a rule"): approving it then would register a job git no longer has.
+func TestApproveRefusesAJobThatIsNotInGitAsOfTheLastCycle(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files []gitwatch.File // the next commit
+	}{
+		{"removed while another file does not parse", []gitwatch.File{{Path: "other.nomad.hcl", Content: "typo"}}},
+		{"its own file does not parse", []gitwatch.File{{Path: "web.nomad.hcl", Content: "typo"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.nomad.setFile("web-v1", managed("web", "approval", nil))
+			h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+			h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+			h.detect()
+			d := h.active("web")
+
+			h.nomad.setParseErr("typo", errors.New("invalid HCL"))
+			h.snap.set("c2", tc.files...)
+			h.detect()
+			if got := h.get(d.ID); got.State != store.StatePendingApproval {
+				t.Fatalf("setup: deployment = %s, want it still pending_approval (a broken file suspends the removal)", got.State)
+			}
+
+			err := h.engine.Approve(context.Background(), d.ID, d.SpecHash, "alice")
+			if !errors.Is(err, ErrNotInRepo) {
+				h.step(h.get(d.ID)) // what approving it does
+				t.Fatalf("Approve = %v, want ErrNotInRepo; applying it registered %+v", err, h.nomad.registerCalls)
+			}
+			if got := h.get(d.ID); got.State != store.StatePendingApproval || got.DecidedBy != "" {
+				t.Errorf("deployment = %s decided by %q, want it untouched", got.State, got.DecidedBy)
+			}
+			// Rejecting stays possible: a human can always close it.
+			if err := h.engine.Reject(context.Background(), d.ID, "alice"); err != nil {
+				t.Errorf("Reject = %v, want it to work", err)
+			}
+		})
+	}
+}
+
+// Right after a start no cycle has read git yet: nothing is approvable until
+// one has, and then it is.
+func TestApproveWaitsForTheFirstDetectionCycle(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "approval", nil))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
+	h.detect()
+	d := h.active("web")
+
+	h.restart(h.hooks)
+	if err := h.engine.Approve(context.Background(), d.ID, d.SpecHash, "alice"); !errors.Is(err, ErrNotInRepo) {
+		t.Fatalf("Approve before the first cycle = %v, want ErrNotInRepo", err)
+	}
+	h.detect()
+	if err := h.engine.Approve(context.Background(), d.ID, d.SpecHash, "alice"); err != nil {
+		t.Fatalf("Approve after the first cycle = %v", err)
 	}
 }
 

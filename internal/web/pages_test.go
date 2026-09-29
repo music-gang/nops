@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -408,6 +409,26 @@ func TestApproveStaleSpecHashConflict(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "spec changed") {
 		t.Error("409 page must explain the spec changed")
+	}
+}
+
+func TestApproveOfAJobThatIsNotInGitConflict(t *testing.T) {
+	st := &fakeStore{deployment: sampleDeployment()}
+	en := &fakeEngine{approveErr: fmt.Errorf("approve d1: %w", engine.ErrNotInRepo)}
+	ts := newTestServer(t, st, en, "")
+	cookie := mintSession(t, ts.auth, "alice")
+
+	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", rec.Code)
+	}
+	for _, want := range []string{"not in the repository", "nothing to approve", "reject"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("409 page does not say %q", want)
+		}
+	}
+	if strings.Contains(rec.Body.String(), "spec changed") {
+		t.Error("409 page blames a changed spec: the job is what is missing")
 	}
 }
 
