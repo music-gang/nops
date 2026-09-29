@@ -18,7 +18,7 @@ plus the **git webhook** that triggers an out-of-turn fetch.
 ## Pages
 
 Every page below needs a login (see [authentication](#authentication)); the
-header shows the current tab (Overview, Jobs, Activity), the actor and a
+header shows the logo, the current tab (Overview, Jobs, Activity), the actor and a
 logout button, and the footer the Nops version. Times read relative ("3m ago"), with the absolute UTC time on
 hover; long identifiers (a spec hash, an evaluation ID) read short, with the
 whole value on hover.
@@ -103,6 +103,17 @@ than loaded from a CDN. Every action works as a plain form post without it;
 htmx adds `hx-boost` (page navigation without a full reload) and the polling
 below. The CSP is `script-src 'self'; style-src 'self'` — there is no inline
 script or style to allow.
+
+The logo is the ship of the logo of the [README](../README.md) (a planet with
+the ship, `docs/assets/logo.webp`, which the dashboard does not embed). The
+ship alone is exported as PNGs under `internal/web/static`: the header mark
+(`logo-96x96.png`, shown at 40px, the only thing in the header's corner: no name
+beside it), the mark above the login form (`logo-192x192.png`, shown at 96px), the favicons (`favicon-16x16.png`,
+`favicon-32x32.png`) and the touch icon (`apple-touch-icon.png`, 180px). Every
+page links the favicons and the touch icon, the login page too, through the same
+`asset` function as the stylesheet. The login page is flat, in the manner of GitHub's:
+no card, the mark, the title "Sign in to Nops" and the form on the page's own
+background.
 
 Overview, Jobs, Job and Activity poll their own address every 5s and swap in
 only the region a full re-render of the same page would show

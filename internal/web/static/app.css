@@ -121,14 +121,9 @@ time { white-space: nowrap; }
   height: 48px;
 }
 
-.app-header__brand {
-  align-self: center;
-  color: var(--header-fg);
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: -0.01em;
-}
+.app-header__brand { align-self: center; display: inline-flex; }
 .app-header__brand:hover { text-decoration: none; }
+.app-header__logo { height: 40px; width: 40px; }
 
 .app-nav { display: flex; gap: 4px; flex: 1; min-width: 0; }
 
@@ -477,19 +472,12 @@ form { margin: 0; }
 .error-page { max-width: 520px; margin: 48px auto; }
 .error-page__status { color: var(--fg-muted); font-family: var(--font-mono); }
 
-.login-page { display: flex; justify-content: center; padding: 64px 16px; }
-.login-card {
-  width: 100%;
-  max-width: 320px;
-  padding: 24px;
-  background: var(--canvas-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.login-card__title { margin-bottom: 16px; font-size: 24px; font-weight: 300; text-align: center; }
-.login-card__error { margin-bottom: 16px; padding: 8px 12px; color: var(--fg); background: var(--danger-subtle); border: 1px solid var(--danger-border); border-radius: var(--radius); }
-.login-card__field { display: block; margin-bottom: 16px; font-weight: 600; }
-.login-card__field input {
+.login { max-width: 320px; margin: 0 auto; padding: 64px 16px 32px; }
+.login__logo { display: block; width: 96px; height: 96px; margin: 0 auto 8px; }
+.login__title { margin-bottom: 24px; font-size: 24px; font-weight: 300; text-align: center; }
+.login__error { margin-bottom: 16px; padding: 8px 12px; color: var(--fg); background: var(--danger-subtle); border: 1px solid var(--danger-border); border-radius: var(--radius); }
+.login__field { display: block; margin-bottom: 16px; font-weight: 600; }
+.login__field input {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -500,7 +488,7 @@ form { margin: 0; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-.login-card .btn { width: 100%; }
+.login .btn { width: 100%; }
 
 /* -- narrow screens: one column, secondary columns hidden ---------------------------------------- */
 

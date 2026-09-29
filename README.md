@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.webp" alt="Nops logo" width="300">
+</p>
+
 # Nops
 
 [![CI](https://github.com/music-gang/nops/actions/workflows/ci.yml/badge.svg)](https://github.com/music-gang/nops/actions/workflows/ci.yml)

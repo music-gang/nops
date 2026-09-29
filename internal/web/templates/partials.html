@@ -2,6 +2,13 @@
      the status fragment. server.go parses templates/*.html as one set. See
      docs/dashboard.md for what each page shows. */}}
 
+{{/* The favicon and the touch icon, shared by every <head>. */}}
+{{define "head_icons"}}
+<link rel="icon" type="image/png" sizes="32x32" href="{{.Base}}{{asset "favicon-32x32.png"}}">
+<link rel="icon" type="image/png" sizes="16x16" href="{{.Base}}{{asset "favicon-16x16.png"}}">
+<link rel="apple-touch-icon" sizes="180x180" href="{{.Base}}{{asset "apple-touch-icon.png"}}">
+{{end}}
+
 {{define "chrome_head"}}
 <!doctype html>
 <html lang="en">
@@ -9,14 +16,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
-<title>nops</title>
+<title>Nops</title>
+{{template "head_icons" .}}
 <link rel="stylesheet" href="{{.Base}}{{asset "app.css"}}">
 <script src="{{.Base}}{{asset "htmx.min.js"}}" defer></script>
 </head>
 <body hx-boost="true">
 <header class="app-header">
   <div class="app-header__inner">
-    <a class="app-header__brand" href="{{.Base}}/">nops</a>
+    <a class="app-header__brand" href="{{.Base}}/"><img class="app-header__logo" src="{{.Base}}{{asset "logo-96x96.png"}}" alt="Nops"></a>
     <nav class="app-nav">
       <a class="app-nav__link{{if eq .Nav "overview"}} is-active{{end}}" href="{{.Base}}/">Overview</a>
       <a class="app-nav__link{{if eq .Nav "jobs"}} is-active{{end}}" href="{{.Base}}/jobs">Jobs</a>
