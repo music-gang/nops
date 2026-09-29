@@ -222,7 +222,9 @@ expanded here.
    the allocations one by `TestEngineApplyAgainstRealNomad` (a batch job), the
    Nomad deployment one by `TestEngineApplyWaitsForTheNomadDeployment` (a
    service with an `update` block, whose Nomad deployment must carry the
-   applied index).
+   applied index). Nops does not look at the job type, so `system` and
+   `sysbatch` jobs take the same paths; `TestApplyOfASystemOrSysbatchJobCompletes`
+   applies a first version and an update of each and expects both to complete.
 
    "Healthy" on the allocations path is deliberately weak: every allocation of
    the applied version is `running` or `complete`, nothing more. There is no
