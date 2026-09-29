@@ -5,7 +5,7 @@
 | Area | Kind of test |
 |---|---|
 | `internal/meta` | Table-driven unit tests: valid values, invalid values, unknown keys, defaults. |
-| `internal/engine` | Table-driven unit tests for **every** transition, including crash recovery and CAS conflicts, with an in-memory fake Nomad and an injected clock. |
+| `internal/engine` | Table-driven unit tests for **every** transition, including crash recovery and CAS conflicts, with an in-memory fake Nomad and an injected clock. Every invariant has an **adversarial** test, one that tries to break it instead of walking the path beside it (an apply step after every write of detection, a store write failing at every point of a deployment's life, a live job edited between the plan and the register): `invariants_test.go`, and the *Proven by* lines of [philosophy](philosophy.md#invariants). A new one is checked by breaking the code it guards and seeing it fail. |
 | `internal/nomadx` | Unit tests against an `httptest` stub of the Nomad API (request shape, error mapping) + integration tests against a real Nomad. |
 | `internal/store` | Against **real SQLite** on a temporary file (`t.TempDir()`), not mocks: constraints, the lock index, migrations. |
 | `internal/hooks` | Unit tests with an in-memory fake Nomad, a **real SQLite** store and an injected clock (success, failure, timeout, resume, redispatch with token, Nomad/SQLite errors) + integration with `raw_exec` hooks. |

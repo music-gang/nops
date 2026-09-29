@@ -14,6 +14,10 @@ scale", we don't build it.
    deployment closes as a no-op.
    *Why:* it avoids pointless registers (a new job version, a new evaluation)
    and gives us the same `JobDiff` to show in the dashboard.
+   *Proven by:* `TestEveryStoreWriteOfADeploymentsLifeCanFailOnceWithoutBreakingTheOrder`
+   (every register has a plan of the same job in the same step, with no write
+   in between), `TestStepRegisterEmptyPlanCompletes`,
+   `TestAHookRevisionIsNotRegisteredWhenItsPlanFails`.
 
 2. **CAS on every register.** `RegisterOpts{EnforceIndex: true, ModifyIndex:
    <JobModifyIndex captured at detection>}`; 0 means "the job must not exist".
@@ -24,6 +28,10 @@ scale", we don't build it.
    changes made by hand in the meantime. It also makes repeating a register
    after a crash safe: if the first one already went through, the index has
    changed and Nomad rejects the second.
+   *Proven by:* `TestARegisterUsesTheIndexCapturedAtDetection` (the captured
+   index, and a live job edited between the plan and the register),
+   `TestRegisterCASAlwaysEnforcesIndex` (the wrapper), `TestPlanAndRegisterCAS`
+   and `TestE2EAutoRevertsOutsideEdit` (against a real Nomad).
 
 3. **Never auto-apply under policy `approval`.** The only transition from
    `pending_approval` towards apply is an authenticated human action, recorded
@@ -31,6 +39,10 @@ scale", we don't build it.
    `(deployment_id, spec_hash)` and never transfers to another spec.
    *Why:* approval is the whole point of the policy. If the spec changes after
    the OK, the OK no longer holds.
+   *Proven by:* `TestAnApplyStepAfterEveryWriteOfDetectionNeverAppliesUnderApproval`
+   (an apply step after every write of detection), `TestStepDetectedNeverAdvancesADeploymentUnderApproval`,
+   `TestRecoveryLeavesPendingApprovalAlone`, `TestApproveRefusesStaleSpecHash`,
+   `TestApprovePassesOnTheHashOfTheFormNotTheStoredOne`, `TestPagesRequireLogin`.
 
 4. **Git is the source of truth for nops's behaviour.** Policy and hooks are
    read from the HCL in the repo, never from the live job. An invalid meta key
@@ -38,22 +50,39 @@ scale", we don't build it.
    *Why:* to change what nops does to a job you change the HCL and commit:
    reviewable and versioned. A stale meta key on the live job is just drift
    that converges.
+   *Proven by:* `TestAnInvalidMetaKeyIsReadFromGitAsPolicyNoneWhateverTheLiveJobSays`
+   (a typo, or another invalid key next to a valid policy; the live job's meta
+   is never read), `TestAnInvalidKeyIntroducedIntoAPendingApprovalSupersedesIt`,
+   `TestTheLivePolicyIsNeverWhatDecidesWhetherToDeploy`, `TestParse`.
 
 5. **nops never writes to Git** and **never writes meta into the live job**.
    Tool state lives only in SQLite.
    *Why:* writing meta into the live job causes "meta-drift": the next
    `nomad job run` from HCL silently wipes it.
+   *Proven by:* `TestDetectionStoresTheSpecExactlyAsGitHasIt`,
+   `TestStepRegisterRegistersTheSpecUnchanged`,
+   `TestAHookRevisionIsRegisteredWithTheMetaOfItsSpec`. That nops never writes to
+   Git is structural, not tested: the clone lives in memory and nothing in the
+   code pushes.
 
 6. **One active deployment per job**, enforced by the DB (partial unique
    index), not by an in-memory mutex.
    *Why:* a mutex dies with the process; the index survives a crash and would
    still hold if two instances ever ran.
+   *Proven by:* `TestPerJobLock` (against real SQLite: every active state holds
+   the lock, a terminal one releases it), `TestALockHeldByTheDatabaseSkipsTheJobAndNotTheCycle`.
+   Not tested: two creations at the same time.
 
 7. **State is persisted before acting.** Every side effect on Nomad (dispatch,
    register, stop) happens *after* the intent (state + idempotency token) has
    been saved to SQLite. If the DB write fails, we do not proceed.
    *Why:* after a crash we must know what we were about to do, otherwise
    recovery cannot be idempotent.
+   *Proven by:* `TestEveryStoreWriteOfADeploymentsLifeCanFailOnceWithoutBreakingTheOrder`
+   (a store write fails once at every point of a life: no write to Nomad before
+   the one that authorizes it, the job registered once, the deployment still
+   completes), `TestAFailedIntentWriteLeavesNomadUntouched`,
+   `TestRunMarkerSaveErrorSendsNothing` (hooks), `TestGCStoreFailureIsReturned`.
    *Two stops have no intent of their own*, because what they act on is already
    persisted: the stop of a hook run that timed out happens **before**
    `timed_out` is saved (the deadline is `started_at` + timeout, both in
