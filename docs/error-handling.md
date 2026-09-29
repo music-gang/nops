@@ -28,6 +28,8 @@ nops prefers to stop and say so rather than carry on with uncertain state.
 
 Structured `log/slog`, with the standard keys `deployment_id`, `job`,
 `namespace`, `state`, `phase`, `hook_job`, `commit`.
+A line carries each key once: the JSON handler (the default) writes a repeated
+key twice, and a parser that rejects duplicates would drop the line.
 
 | Event | Level |
 |---|---|

@@ -490,7 +490,7 @@ func (e *Engine) supersedeRemoved(ctx context.Context, seen map[jobKey]bool) err
 // (pending_approval and failed), and for completed only when the job opted
 // in (notifyOnCompleted). A conflict (someone else moved the deployment
 // first, or an illegal move) is logged and skipped rather than aborting the
-// cycle.
+// cycle. It adds the deployment_id to its lines, so log must not have it.
 func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Deployment, to store.State, message string) error {
 	t := store.Transition{From: d.State, Actor: "nops", Message: message}
 	if to == store.StateFailed {

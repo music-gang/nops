@@ -89,7 +89,7 @@ func (e *Engine) finishApply(id string) {
 // Result or a CAS conflict actually closes it. pending_approval is never
 // reached here: the only way out of it is Approve or Reject.
 func (e *Engine) applyStep(ctx context.Context, d *store.Deployment) {
-	log := e.log.With("deployment_id", d.ID, "job", d.JobID, "namespace", d.Namespace)
+	log := e.jobLog(d).With("deployment_id", d.ID)
 	switch d.State {
 	case store.StateDetected:
 		e.stepDetected(ctx, log, d)
@@ -102,13 +102,21 @@ func (e *Engine) applyStep(ctx context.Context, d *store.Deployment) {
 	}
 }
 
+// jobLog is the logger of a deployment's job. It has no deployment_id:
+// transition adds it to its own lines, so a logger that already carried it would
+// put the key twice in the line.
+func (e *Engine) jobLog(d *store.Deployment) *slog.Logger {
+	return e.log.With("job", d.JobID, "namespace", d.Namespace)
+}
+
 // applyTransition wraps transition for apply's own steps: a store failure or
-// an illegal/conflicting move is logged here and does not stop the caller. A
-// deployment that ends here (completed or failed) asks for a detection cycle:
-// what the dashboard says about the job (in sync, blocked) comes from the last
-// cycle, which is from before the apply.
+// an illegal/conflicting move is logged here (with log, the step's, which has
+// the deployment_id) and does not stop the caller. A deployment that ends here
+// (completed or failed) asks for a detection cycle: what the dashboard says
+// about the job (in sync, blocked) comes from the last cycle, which is from
+// before the apply.
 func (e *Engine) applyTransition(ctx context.Context, log *slog.Logger, d *store.Deployment, to store.State, message string) {
-	if err := e.transition(ctx, log, d, to, message); err != nil {
+	if err := e.transition(ctx, e.jobLog(d), d, to, message); err != nil {
 		log.ErrorContext(ctx, "transition", "to", to, "error", err)
 		return
 	}
