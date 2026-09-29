@@ -58,3 +58,12 @@ func (e *Engine) replaceObservations(next map[jobKey]Observation) {
 	e.observations = next
 	e.mu.Unlock()
 }
+
+// observed reports whether the last detection cycle read the job from git as a
+// managed job and could plan it.
+func (e *Engine) observed(namespace, jobID string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	_, ok := e.observations[jobKey{namespace, jobID}]
+	return ok
+}

@@ -296,7 +296,10 @@ what matters is what Nomad says now.
   namespace nops does not manage) does not look for removed jobs at all, as it
   does not look for orphans. The removal is acted on by the first cycle in which
   every file parses. A parse error is logged at ERROR every cycle until the
-  file is fixed.
+  file is fixed. Meanwhile the deployment of a job that was really removed stays
+  pending, but `Engine.Approve` refuses it (`ErrNotInRepo`): approving it would
+  register a job git no longer has. It can still be rejected, and it is
+  superseded once every file parses.
 
 ## Per-job reconciliation
 

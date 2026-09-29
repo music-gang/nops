@@ -173,8 +173,12 @@ expanded here.
    `Reject(ctx, id, actor string) error`. `Approve` refuses (without touching
    Nomad or the store) if `specHash` no longer matches the deployment's
    current `SpecHash` — invariant 3's "an approval is valid for
-   `(deployment_id, spec_hash)` and never transfers to another spec" — then
-   applies the same hook-declared rule as `detected` above (`pre_hook` if
+   `(deployment_id, spec_hash)` and never transfers to another spec" — and
+   `ErrNotInRepo` if the deployment's job is not among the managed jobs of the
+   last detection cycle (removed from git while a broken file elsewhere
+   suspends the removal, that file or the job's own not parsing, or no cycle run
+   yet after a start): approving it would register a job git no longer asks
+   for. It then applies the same hook-declared rule as `detected` above (`pre_hook` if
    `nops_pre_hook` is declared, else `applying`) with `DecidedBy: actor` on
    that `Transition`. `Reject` is a plain `Transition` to `rejected`. `web`
    calls only these two methods; it never decides the target state or calls
