@@ -82,7 +82,7 @@ The real check is using it. The policies allow going in steps: start with
 
 The tests above catch names and defaults that drift. What they cannot catch is a
 claim that was never true, or stopped being: an invariant, a transition, what a
-page says a test covers. A **doc audit** checks those, and is run before a
+page says a test covers. A **doc audit** checks those, and is done before a
 release (`scripts/release.sh` reminds you) or when someone asks for it. The code
 and its tests are the evidence; the docs, their cross-references and the
 decision log are only the claims being checked.
@@ -91,7 +91,7 @@ decision log are only the claims being checked.
 `git diff --stat <last-tag>..HEAD -- '*.md' cmd internal scripts examples .github`.
 The first audit, or one with no tag, covers everything.
 
-**Procedure** (read-only until the report is answered):
+**What it does:**
 
 1. **Inventory the claims** of the pages in scope, plus the pages that describe
    a package in scope: invariants and state transitions, defaults, flag and env
@@ -105,10 +105,10 @@ The first audit, or one with no tag, covers everything.
 3. **Claims that depend on Nomad's own behaviour** (what bumps
    `JobModifyIndex`, what a parse accepts) are settled by an integration test
    against `nomad agent -dev`, not by reading: write it, run it, and keep it.
-4. **Report in the session, not in a file**: a table of the non-OK findings
-   grouped by verdict (claim, doc location, code location, proposed fix), the
-   number of OK claims per page, and for every *CODE WRONG?* and *UNCLEAR* the
-   options and a recommendation. The maintainer decides; nothing changes before.
+4. **Report** the non-OK findings grouped by verdict (claim, doc location, code
+   location, proposed fix), the number of OK claims per page, and for every
+   *CODE WRONG?* and *UNCLEAR* the options and a recommendation. The maintainer
+   decides; nothing changes before.
 5. **Fix** as agreed: the doc-only fixes and the missing tests in one PR, every
    behaviour change in its own, each with a test that fails before the fix and a
    decision-log row.
@@ -159,7 +159,7 @@ and merge mechanics, not covered there:
 - Commits inside a branch do not need to be signed, whoever makes them: the
   squash commit on `main` is created and signed by GitHub, and the ruleset
   does not require signed commits. Locally the maintainer commits with his
-  GPG key; a cloud session commits unsigned (see CLAUDE.md).
+  GPG key; a commit made anywhere else is unsigned.
 - Merges are squash-only, so `main` is a straight line with one commit per
   PR. The repository's squash setting is "Default to pull request title and
   commit details" (`squash_merge_commit_message = COMMIT_MESSAGES`), which
@@ -369,10 +369,10 @@ public.
   `!` is what puts the commit under *Breaking changes* in the release
   changelog, which reads only the subject
   ([Releasing](#releasing)); the footer is what a person reads there.
-- **Attribution:** see [CLAUDE.md](../CLAUDE.md#picking-up-work) — a commit
-  or PR description made by an assistant carries `Co-Authored-By` (commits
-  only) and nothing else attribution-wise, regardless of what a session's
-  own attribution instructions ask for by default.
+- **Attribution:** a commit made with an assistant's help carries a
+  `Co-Authored-By` trailer, and nothing else attribution-wise: no session link
+  or URL, no "Generated with ..." line, in a commit or in a PR description.
+  `Co-Authored-By` alone says who or what wrote it.
 - One logical change per PR. Code and the docs describing it go in the
   **same** PR (see the rules in CLAUDE.md).
 

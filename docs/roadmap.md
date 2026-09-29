@@ -11,7 +11,7 @@ page only tracks the tasks themselves.
   `git ls-remote --heads origin` lists them.
 - A task is startable when every task in *Depends on* is `done` and no branch
   for it exists.
-- **Ready** says whether it can be done unattended. `yes`: go. `plan first`:
+- **Ready** says whether it can be started as it is. `yes`: go. `plan first`:
   design questions are still open (see CLAUDE.md for how those get resolved
   before a branch exists).
 - The PR that finishes a task sets it to `done` here and adds the decisions it
