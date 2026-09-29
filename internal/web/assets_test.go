@@ -84,8 +84,8 @@ func TestPagesLinkVersionedAssets(t *testing.T) {
 }
 
 // Every page offers the favicon (16 and 32 px) and the touch icon, the login
-// page included, and the header shows the logo next to the name. All of them go through asset(), so a
-// changed file has a new address.
+// page included, and the header shows the logo. All of them go through
+// asset(), so a changed file has a new address.
 func TestPagesLinkTheIconsAndTheLogo(t *testing.T) {
 	addr := func(name string) string {
 		t.Helper()

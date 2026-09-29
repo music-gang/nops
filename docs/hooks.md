@@ -160,10 +160,9 @@ without hardcoding a node ID.
 
 Nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
 (position from 0 within the phase; a run created before positions existed keeps
-`<deployment_id>:<phase>`). The same token returns the same dispatched job
-without a new evaluation, even after the dispatched job has finished
-(`TestDispatch`, `TestHookRunSucceedsAndRerunDoesNotDispatch`). The token lives as long as the
-dispatched job; for recovery see
+`<deployment_id>:<phase>`). The same token returns the same dispatched job,
+even after the dispatched job has finished (`TestDispatch`). The token lives
+as long as the dispatched job; for recovery see
 [state machine](state-machine.md#recovery-after-a-crash).
 
 Nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
