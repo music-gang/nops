@@ -75,6 +75,7 @@ func TestBasePathStripsPrefixFromIncomingRequests(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`href="/nops/jobs"`, `href="/nops/history"`, `action="/nops/auth/logout"`, `href="/nops/static/app.css`,
+		`href="/nops/static/favicon-32x32.png`, `src="/nops/static/logo-96x96.png`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page does not contain %q", want)

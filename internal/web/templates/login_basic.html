@@ -4,19 +4,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nops</title>
+<title>Sign in to Nops</title>
+{{template "head_icons" .}}
 <link rel="stylesheet" href="{{.Base}}{{asset "app.css"}}">
 </head>
 <body>
-<main class="login-page">
-  <form class="login-card" method="post" action="{{.Base}}/auth/login">
-    <h1 class="login-card__title">nops</h1>
-    {{if .Error}}<p class="login-card__error">{{.Error}}</p>{{end}}
+<main class="login">
+  <img class="login__logo" src="{{.Base}}{{asset "logo-192x192.png"}}" alt="" width="96" height="96">
+  <h1 class="login__title">Sign in to Nops</h1>
+  <form class="login__form" method="post" action="{{.Base}}/auth/login">
+    {{if .Error}}<p class="login__error">{{.Error}}</p>{{end}}
     <input type="hidden" name="next" value="{{.Next}}">
-    <label class="login-card__field">Username
+    <label class="login__field">Username
       <input type="text" name="username" autocomplete="username" autofocus required>
     </label>
-    <label class="login-card__field">Password
+    <label class="login__field">Password
       <input type="password" name="password" autocomplete="current-password" required>
     </label>
     <button type="submit" class="btn btn--primary">Log in</button>
