@@ -310,19 +310,21 @@ For each managed job, in order:
    - else the live index differs from `cas_index` → `superseded` ("job
      modified outside nops");
    - else there is no more drift → `completed` ("already in sync");
-   - else, if it is `detected` under `approval` (its move to
-     `pending_approval` did not land, and apply never advances it) → it is moved
-     now, with its notification: `pending_approval`, or `failed` when a hook it
-     declares is missing;
+   - else, if it is `detected` under `approval` (created by a nops that moved it
+     to `pending_approval` in a second write, which did not land; apply never
+     advances it) → it is moved now, with its notification: `pending_approval`,
+     or `failed` when a hook it declares is missing;
    - else it is left as is (still approvable).
 3. If the policy is `none`, or there is no drift, nothing more happens.
 4. If the retry rule applies (see above), nothing more happens.
-5. Otherwise a deployment is created in `detected`, with the redacted diff,
-   the full spec and the live index as `cas_index`. If a declared hook is
-   missing from the repo it is immediately moved to `failed` (with a
-   notification); otherwise `approval` moves it to `pending_approval` (with a
-   notification) and `auto` is left in `detected` for `engine-apply`. The
-   hooks the job declares are frozen with it.
+5. Otherwise a deployment is created, with the redacted diff, the full spec and
+   the live index as `cas_index`, **in the state it waits in**: `failed` if a
+   declared hook is missing from the repo or invalid, `pending_approval` under
+   `approval`, `detected` under `auto` for `engine-apply` to pick up. It is one
+   write, and `failed` and `pending_approval` notify. The hooks the job declares
+   are frozen with it. Created `detected` and moved in a second write, a
+   deployment with a missing hook could be applied in between (with the hooks it
+   found and not the one it lacks), or stay applicable if that write failed.
 
 Finally, every deployment still in `detected` or `pending_approval` whose job
 is no longer among the managed jobs of the snapshot is `superseded` ("job

@@ -139,10 +139,9 @@ func nextAfterDecision(job *api.Job) store.State {
 func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.Deployment) {
 	if d.Policy != store.PolicyAuto {
 		// Invariant 3: only Approve moves a deployment under approval on.
-		// Detection creates it `detected` and moves it to pending_approval in a
-		// second write, so this is either that moment or a deployment the
-		// second write never reached: detection puts it right (see
-		// reconcileDeployment), and is asked to do it now.
+		// Detection creates one pending_approval, so this is a deployment an
+		// older nops left `detected` (it moved it in a second write): detection
+		// puts it right (see reconcileDeployment), and is asked to do it now.
 		log.DebugContext(ctx, "detected deployment under approval left to detection")
 		e.kickDetection()
 		return

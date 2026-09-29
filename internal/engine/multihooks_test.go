@@ -369,3 +369,149 @@ func TestRoutingUsesTheLengthOfTheLists(t *testing.T) {
 		t.Errorf("state = %s, want post_hook once healthy", got.State)
 	}
 }
+
+// tickAfterCreate is a store that runs one apply step on a deployment right
+// after CreateDeployment committed it: the apply loop firing between the two
+// writes of detection (create, then move to its final state).
+type tickAfterCreate struct {
+	Store
+	tick func(*store.Deployment)
+}
+
+func (s *tickAfterCreate) CreateDeployment(ctx context.Context, d *store.Deployment) error {
+	if err := s.Store.CreateDeployment(ctx, d); err != nil {
+		return err
+	}
+	s.tick(d)
+	return nil
+}
+
+// failingToFailed is a store whose move to failed fails once: the second write
+// of detection for a deployment whose hook is missing never lands.
+type failingToFailed struct {
+	Store
+	failed bool
+}
+
+func (s *failingToFailed) Transition(ctx context.Context, id string, to store.State, t store.Transition) error {
+	if to == store.StateFailed && !s.failed {
+		s.failed = true
+		return errors.New("disk I/O error")
+	}
+	return s.Store.Transition(ctx, id, to, t)
+}
+
+// missingHooks is a job that declares hooks the repository does not have, with
+// the files of the ones it does.
+var missingHooks = []struct {
+	name  string
+	extra map[string]string
+	files map[string]*api.Job // the hook files in the repository, by ID
+	want  string
+}{
+	{"a second pre-hook", map[string]string{"nops_pre_hook": "backup,migrate"}, map[string]*api.Job{"backup": hookJob("backup")}, `pre-hook "migrate" not found in repo`},
+	{"the only pre-hook", map[string]string{"nops_pre_hook": "migrate"}, nil, `pre-hook "migrate" not found in repo`},
+	{"the only post-hook", map[string]string{"nops_post_hook": "smoke"}, nil, `post-hook "smoke" not found in repo`},
+	{"a post-hook after a pre-hook that exists", map[string]string{"nops_pre_hook": "backup", "nops_post_hook": "smoke"}, map[string]*api.Job{"backup": hookJob("backup")}, `post-hook "smoke" not found in repo`},
+}
+
+// snapshotWithMissingHook sets up web (policy) declaring extra, with the hook
+// files of files and drift, at commit c1.
+func (h *harness) snapshotWithMissingHook(policy string, extra map[string]string, files map[string]*api.Job) {
+	h.t.Helper()
+	h.nomad.setFile("web-v1", managed("web", policy, extra))
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
+	repo := []gitwatch.File{{Path: "web.nomad.hcl", Content: "web-v1"}}
+	for id, job := range files {
+		h.nomad.setFile(id+"-v1", job)
+		repo = append(repo, gitwatch.File{Path: id + ".nomad.hcl", Content: id + "-v1"})
+	}
+	h.snap.set("c1", repo...)
+}
+
+// nothingRan fails the test if the apply loop touched Nomad or ran a hook for a
+// deployment that declares a hook the repository does not have.
+func (h *harness) nothingRan(what string) {
+	h.t.Helper()
+	if len(h.nomad.registerCalls) != 0 {
+		h.t.Errorf("%s: registered %+v: a deployment with a missing hook must never be applied", what, h.nomad.registerCalls)
+	}
+	if len(h.hooks.calls) != 0 {
+		h.t.Errorf("%s: ran hooks %v: a deployment with a missing hook must run none", what, h.hookIDs())
+	}
+}
+
+// Detection creates the deployment and moves it to failed in a second write. If
+// apply runs between the two, a deployment that froze only the hooks it found
+// must not go on with them: with backup,migrate declared and migrate missing,
+// backup would run and the job would be applied without the migration.
+func TestAnApplyTickBetweenTheWritesOfDetectionDoesNotRunADeploymentWithAMissingHook(t *testing.T) {
+	for _, tc := range missingHooks {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.snapshotWithMissingHook("auto", tc.extra, tc.files)
+			h.engine.store = &tickAfterCreate{Store: h.store, tick: func(d *store.Deployment) {
+				h.engine.applyStep(context.Background(), d)
+			}}
+
+			h.detect()
+			for i := 0; i < 4; i++ { // enough for detected -> pre_hook -> applying -> register
+				h.step(h.latest("web"))
+			}
+
+			got := h.latest("web")
+			if got.State != store.StateFailed || !strings.Contains(got.Error, tc.want) {
+				t.Errorf("deployment = %s %q, want failed with %q", got.State, got.Error, tc.want)
+			}
+			h.nothingRan(tc.name)
+		})
+	}
+}
+
+// The same when the second write fails: detection aborts, and apply, which
+// keeps running by itself, must not be the one to move the deployment on.
+func TestAFailedSecondWriteOfDetectionLeavesNoDeploymentWithAMissingHookToApply(t *testing.T) {
+	for _, tc := range missingHooks {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.snapshotWithMissingHook("auto", tc.extra, tc.files)
+			h.engine.store = &failingToFailed{Store: h.store}
+
+			_ = h.engine.Detect(context.Background()) // an error only while the deployment is written twice
+			for i := 0; i < 4; i++ {
+				h.step(h.latest("web"))
+			}
+			h.nothingRan(tc.name)
+
+			// Once the store is well again, the next cycle leaves nothing approvable
+			// or appliable behind.
+			h.engine.store = h.store
+			h.detect()
+			for i := 0; i < 4; i++ {
+				h.step(h.latest("web"))
+			}
+			if got := h.latest("web"); got.State != store.StateFailed {
+				t.Errorf("deployment = %s %q, want failed", got.State, got.Error)
+			}
+			h.nothingRan(tc.name + ", after the next cycle")
+		})
+	}
+}
+
+// Under approval the same tick is harmless (apply never moves a deployment
+// under approval on), and stays so: the deployment ends failed, never pending.
+func TestAnApplyTickBetweenTheWritesOfDetectionLeavesAnApprovalDeploymentWithAMissingHookFailed(t *testing.T) {
+	h := newHarness(t)
+	h.snapshotWithMissingHook("approval", map[string]string{"nops_pre_hook": "backup,migrate"}, map[string]*api.Job{"backup": hookJob("backup")})
+	h.engine.store = &tickAfterCreate{Store: h.store, tick: func(d *store.Deployment) {
+		h.engine.applyStep(context.Background(), d)
+	}}
+
+	h.detect()
+	h.step(h.latest("web"))
+
+	if got := h.latest("web"); got.State != store.StateFailed || !strings.Contains(got.Error, `pre-hook "migrate" not found in repo`) {
+		t.Errorf("deployment = %s %q, want failed", got.State, got.Error)
+	}
+	h.nothingRan("approval")
+}

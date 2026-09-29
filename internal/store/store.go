@@ -324,15 +324,37 @@ func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
 
-// CreateDeployment inserts d in state detected and logs the first event.
-// ID, State, CreatedAt and UpdatedAt are set by the store. It returns
-// ErrActiveDeployment if the job already holds the per-job lock.
+// CreateDeployment inserts d and logs its first events, all in one transaction.
+// d.State is the state it is born in: detected (also when empty), or, when
+// detection already knows where it goes, pending_approval or failed (which
+// needs d.Error). The events are the same as for a deployment created detected
+// and moved on (`-> detected`, then `detected -> <state>`), but the deployment
+// is never seen, by an apply loop or after a crash, in between: a deployment
+// that must not be applied is never one that can be. ID, State, CreatedAt and
+// UpdatedAt are set by the store. It returns ErrActiveDeployment if the job
+// already holds the per-job lock.
 func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	if d.JobID == "" || d.Namespace == "" || d.SpecHash == "" || d.JobSpec == "" {
 		return errors.New("create deployment: job_id, namespace, spec_hash and job_spec are required")
 	}
 	if d.Policy != PolicyAuto && d.Policy != PolicyApproval {
 		return fmt.Errorf("create deployment: invalid policy %q", d.Policy)
+	}
+	born := d.State
+	if born == "" {
+		born = StateDetected
+	}
+	switch born {
+	case StateDetected, StatePendingApproval:
+		if d.Error != "" {
+			return fmt.Errorf("create deployment: an error is only for a deployment born failed, not %s", born)
+		}
+	case StateFailed:
+		if d.Error == "" {
+			return errors.New("create deployment: a deployment born failed needs its error")
+		}
+	default:
+		return fmt.Errorf("create deployment: a deployment cannot be born %s", born)
 	}
 	id := s.newID()
 	now := s.ts()
@@ -345,10 +367,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
 		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff,
-		 policy, state, cas_index, created_at, updated_at)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
+		 policy, state, error, cas_index, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?)`,
 		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff,
-		string(d.Policy), string(StateDetected), int64(d.CASIndex), now, now)
+		string(d.Policy), string(born), d.Error, int64(d.CASIndex), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
@@ -369,12 +391,21 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	if err := insertEvent(ctx, tx, id, now, "", StateDetected, "nops", fmt.Sprintf("detected at commit %s", d.CommitSHA)); err != nil {
 		return err
 	}
+	switch born {
+	case StatePendingApproval:
+		err = insertEvent(ctx, tx, id, now, StateDetected, born, "nops", "waiting for approval")
+	case StateFailed:
+		err = insertEvent(ctx, tx, id, now, StateDetected, born, "nops", d.Error)
+	}
+	if err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("create deployment: commit: %w", err)
 	}
 
 	t, _ := parseTime(now)
-	d.ID, d.State, d.CreatedAt, d.UpdatedAt = id, StateDetected, t, t
+	d.ID, d.State, d.CreatedAt, d.UpdatedAt = id, born, t, t
 	return nil
 }
 

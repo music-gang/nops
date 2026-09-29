@@ -1110,39 +1110,38 @@ func TestPolicyChangedToNoneSupersedesAPendingDeployment(t *testing.T) {
 	h.noActive("web") // under none nothing new is created, whatever the drift
 }
 
-// failingToPending is a store whose move to pending_approval fails once: the
-// deployment is then left `detected` under policy approval, which is what
-// happens if the second write of detection (create, then move) never lands.
-type failingToPending struct {
-	Store
-	failed bool
+// createdDetected is a store that creates every deployment `detected`, as a
+// nops did that moved it to pending_approval in a second write: what such a
+// nops leaves behind when that write does not land.
+type createdDetected struct{ Store }
+
+func (s createdDetected) CreateDeployment(ctx context.Context, d *store.Deployment) error {
+	d.State = store.StateDetected
+	d.Error = ""
+	return s.Store.CreateDeployment(ctx, d)
 }
 
-func (s *failingToPending) Transition(ctx context.Context, id string, to store.State, t store.Transition) error {
-	if to == store.StatePendingApproval && !s.failed {
-		s.failed = true
-		return errors.New("disk I/O error")
-	}
-	return s.Store.Transition(ctx, id, to, t)
-}
-
-// A deployment left `detected` under approval is put where it belongs by the
-// next cycle: pending_approval, with its notification, and never applied
-// meanwhile (invariant 3).
+// A deployment an older nops left `detected` under approval is put where it
+// belongs by the next cycle: pending_approval, with its notification, and never
+// applied meanwhile (invariant 3).
 func TestADetectedDeploymentUnderApprovalIsRepairedToPending(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "approval", nil))
 	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
 	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1"})
 
-	h.engine.store = &failingToPending{Store: h.store}
-	if err := h.engine.Detect(context.Background()); err == nil {
-		t.Fatal("Detect: want the store failure to abort the cycle")
-	}
+	h.engine.store = createdDetected{h.store}
+	h.detect()
 	d := h.active("web")
 	if d.State != store.StateDetected || d.Policy != store.PolicyApproval {
 		t.Fatalf("setup: deployment = %+v, want detected under approval", d)
 	}
+	// The engine believed it created it pending_approval and notified; that is
+	// an artifact of the setup, not something the older nops did.
+	h.notifier.waitFor(t, 1)
+	h.notifier.mu.Lock()
+	h.notifier.calls = nil
+	h.notifier.mu.Unlock()
 	h.engine.applyStep(context.Background(), d)
 	if got := h.active("web"); got.State != store.StateDetected {
 		t.Fatalf("apply moved it to %s: an approval deployment must wait for a human", got.State)
