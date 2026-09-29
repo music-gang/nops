@@ -139,7 +139,8 @@ func TestRegisterCASAlwaysEnforcesIndex(t *testing.T) {
 }
 
 func TestRegisterCASConflict(t *testing.T) {
-	// The three messages Nomad 2.0.3 returns, all as HTTP 500.
+	// The three messages Nomad returns, all as HTTP 500 (the integration test
+	// TestPlanAndRegisterCAS checks a real Nomad still says so).
 	for _, msg := range []string{
 		"Enforcing job modify index 0: job already exists",
 		"Enforcing job modify index 999999: job exists with conflicting job modify index: 11",

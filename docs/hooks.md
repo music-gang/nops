@@ -160,9 +160,9 @@ without hardcoding a node ID.
 
 nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
 (position from 0 within the phase; a run created before positions existed keeps
-`<deployment_id>:<phase>`). Verified on
-Nomad 2.0.3: the same token returns the same dispatched job without a new
-evaluation, even after the dispatched job has finished. The token lives as long as the
+`<deployment_id>:<phase>`). The same token returns the same dispatched job
+without a new evaluation, even after the dispatched job has finished
+(`TestDispatch`, `TestHookRunSucceedsAndRerunDoesNotDispatch`). The token lives as long as the
 dispatched job; for recovery see
 [state machine](state-machine.md#recovery-after-a-crash).
 

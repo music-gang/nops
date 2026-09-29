@@ -189,12 +189,14 @@ list of jobs asks for the meta (Nomad leaves it out otherwise). The store is
 read after Nomad: a deployment created in between and needing a revision that
 this pass stops registers it again by itself at its hook step. A Nomad failure is
 an ERROR on that job (or on the listing), retried next cycle; a store failure
-aborts the cycle. Verified on Nomad 2.0.3: deregistering a parameterized parent
-without purge leaves its dispatched runs and their logs readable, even one still
-running; a stopped parent cannot be dispatched, shows as a plan difference and is
-registered again at its own index; a job registers under an ID different from its
-`Name`; and an ID of several hundred characters is accepted, so the suffix hits no
-limit.
+aborts the cycle. What this relies on is checked against a real Nomad:
+deregistering a parameterized parent without purge leaves the runs it
+dispatched readable, even one still running
+(`TestStoppingAHookRevisionLeavesItsRunningRun`); a stopped parent shows as a
+plan difference and is registered again at its own index, and a job registers
+under an ID different from its `Name` (`TestHookRevisionRegistration`); and an
+ID of several hundred characters is accepted, so the suffix hits no limit
+(`TestLongJobIDIsAccepted`).
 
 ### Retry rule after a `failed` or `rejected` deployment
 
@@ -219,7 +221,7 @@ the autoscaler moving a count never changes the *hash* of a pending approval.
 
 **Known limit.** The hash is not the only thing compared. Moving a count with
 Nomad's scale API also bumps the live job's `JobModifyIndex` and `Version`
-(verified on Nomad 2.0.3, `TestScaleChangesTheLiveJobsIndex`), so a scale
+(`TestScaleChangesTheLiveJobsIndex`), so a scale
 between detection and approval still supersedes the pending deployment ("job
 modified outside nops"), makes the retry rule see a different live index, and
 an apply that meets it fails once with "conflict" (its stored counts are the

@@ -333,8 +333,8 @@ secret value becomes `<redacted>`; an empty value stays empty. The field name
 and the change type (added, deleted, edited) stay, so the reviewer sees
 *which* secret changes and how, never its value.
 
-What is redacted, by the name Nomad gives the diff field (verified on Nomad
-2.0.3):
+What is redacted, by the name Nomad gives the diff field (`TestRedactRealPlan`
+runs the rules on a real plan):
 
 | What | Field names |
 |---|---|

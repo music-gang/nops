@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,7 +82,7 @@ func TestScaleChangesTheLiveJobsIndex(t *testing.T) {
 	if got := *after.TaskGroups[0].Count; got != count {
 		t.Fatalf("count after the scale = %d, want %d", got, count)
 	}
-	// Verified on Nomad 2.0.3: a scale is a new job version, so it moves the
+	// Nomad treats a scale as a new job version, so it moves the
 	// index nops compares (cas_index) whether or not the spec changed.
 	if *after.JobModifyIndex <= *before.JobModifyIndex {
 		t.Errorf("JobModifyIndex %d -> %d: a scale is expected to move it", *before.JobModifyIndex, *after.JobModifyIndex)
@@ -131,5 +133,90 @@ func TestMetaBlockAndObjectFormsCannotBeMixed(t *testing.T) {
 	}
 	if job.Meta["nops_managed"] != "true" || job.Meta["diun.enable"] != "true" {
 		t.Errorf("meta = %v, want both keys", job.Meta)
+	}
+}
+
+// TestStoppingAHookRevisionLeavesItsRunningRun checks what
+// docs/design/engine-detection.md relies on when it garbage collects a hook
+// revision: deregistering the parameterized parent without purge does not take
+// a run it dispatched away, even one still running, so a revision can be
+// stopped while its run is being read.
+func TestStoppingAHookRevisionLeavesItsRunningRun(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	id := uniqueID(t, raw, "gcrun")
+
+	parent, err := c.ParseHCL(ctx, fmt.Sprintf(`
+job %q {
+  type = "batch"
+  parameterized {}
+  group "g" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }
+}`, id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, parent, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	run, err := c.Dispatch(ctx, "default", id, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		allocs, _, err := raw.Jobs().Allocations(run.JobID, true, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(allocs) > 0 && allocs[0].ClientStatus == "running" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the run %s never started", run.JobID)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	if err := c.StopJob(ctx, "default", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Job(ctx, "default", run.JobID); err != nil {
+		t.Errorf("the run %s cannot be read once its parent was stopped: %v", run.JobID, err)
+	}
+	allocs, _, err := raw.Jobs().Allocations(run.JobID, true, nil)
+	if err != nil || len(allocs) == 0 {
+		t.Errorf("allocations of the run = %d, %v; want them readable", len(allocs), err)
+	}
+}
+
+// TestLongJobIDIsAccepted checks the claim of docs/design/engine-detection.md
+// that the "-<8 hex>" suffix of a hook revision hits no limit on the length of
+// a job ID: an ID of several hundred characters registers and reads back.
+func TestLongJobIDIsAccepted(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	id := uniqueID(t, raw, "long")
+	id += strings.Repeat("x", 400-len(id)) + "-0a1b2c3d"
+
+	job, err := c.ParseHCL(ctx, batchHCL(id, "one"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+		t.Fatalf("register with an ID of %d characters: %v", len(id), err)
+	}
+	live, err := c.Job(ctx, "default", id)
+	if err != nil || live.ID == nil || *live.ID != id {
+		t.Fatalf("live = %+v, %v; want the job back under its long ID", live, err)
 	}
 }

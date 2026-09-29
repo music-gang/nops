@@ -75,8 +75,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NOMAD_VERSION: "2.0.3"
-      NOMAD_SHA256: 8455d5691de4cb451e9443282f1c0171570b480737fc6386992638c52a4795e4
+      # The Nomad nops is tested against: the one place the version is set. The
+      # README states it too (a test in docs/ compares the two).
+      NOMAD_VERSION: "2.0.7"
+      NOMAD_SHA256: 4c9b8a0850d6fd9caadbbab09b3e6fdf8b77aa777729543c70c61b85acca68c1
       NOPS_TEST_NOMAD_ADDR: http://127.0.0.1:4646
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
