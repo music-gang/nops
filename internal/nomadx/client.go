@@ -210,9 +210,9 @@ type DispatchResult struct {
 }
 
 // Dispatch dispatches a parameterized job. A non-empty idempotencyToken makes
-// Nomad return the existing child, without a new evaluation, if a child with
-// the same token already exists (TestDispatch, also after the child has
-// finished: TestHookRunSucceedsAndRerunDoesNotDispatch). Nomad rejects meta keys the job does not declare.
+// Nomad return the existing child if a child with the same token already
+// exists, also after the child has finished (TestDispatch). Nomad rejects meta
+// keys the job does not declare.
 func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
 	wq, err := c.write(ctx, ns)
 	if err != nil {

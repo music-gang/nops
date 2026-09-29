@@ -76,7 +76,7 @@ gone; they are reported as unknown keys (WARN) that say what replaces them.
 
 **HCL2 variables.** `/v1/jobs/parse` accepts the
 contents of a var-file in the `Variables` field; with no value and no default
-it answers `Unset variable`. Rule: if a `<name>.vars.hcl` exists next to the
+it answers `Unset variable` (`TestParseHCL`). Rule: if a `<name>.vars.hcl` exists next to the
 job file `<name>.nomad.hcl` (or `<name>.nomad`), Nops passes it as
 `Variables`; otherwise every variable must have a default. It is what
 `nomad job run -var-file=...` would do: a generic job keeps its changing
