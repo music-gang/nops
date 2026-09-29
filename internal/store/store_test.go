@@ -1124,3 +1124,82 @@ func TestUpgradeFromV3(t *testing.T) {
 		t.Errorf("a second position after the upgrade = %+v, %v, %v", next, created, err)
 	}
 }
+
+// A deployment can be born in the state it stays in: the same events as one
+// created detected and moved on, in one transaction, so nothing ever sees it
+// `detected` in between.
+func TestCreateDeploymentInItsFinalState(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name       string
+		state      State
+		err        string
+		wantEvents []string // "from>to: message"
+		active     bool
+	}{
+		{"detected by default", "", "", []string{">detected: detected at commit abc1234"}, true},
+		{"detected", StateDetected, "", []string{">detected: detected at commit abc1234"}, true},
+		{"pending approval", StatePendingApproval, "", []string{
+			">detected: detected at commit abc1234", "detected>pending_approval: waiting for approval"}, true},
+		{"failed", StateFailed, `pre-hook "migrate" not found in repo at commit abc1234`, []string{
+			">detected: detected at commit abc1234", `detected>failed: pre-hook "migrate" not found in repo at commit abc1234`}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			d := newDep("web")
+			d.State, d.Error = tc.state, tc.err
+			mustCreate(t, s, d)
+
+			want := tc.state
+			if want == "" {
+				want = StateDetected
+			}
+			got, err := s.GetDeployment(ctx, d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.State != want || got.State != want || got.Error != tc.err {
+				t.Errorf("state = %s (stored %s, error %q), want %s with error %q", d.State, got.State, got.Error, want, tc.err)
+			}
+			evs, err := s.Events(ctx, d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var events []string
+			for _, e := range evs {
+				events = append(events, fmt.Sprintf("%s>%s: %s", e.From, e.To, e.Message))
+			}
+			if strings.Join(events, "\n") != strings.Join(tc.wantEvents, "\n") {
+				t.Errorf("events = %q, want %q", events, tc.wantEvents)
+			}
+			// Only an active state holds the per-job lock: a deployment born failed
+			// leaves the job free, like one that failed later.
+			err = s.CreateDeployment(ctx, newDep("web"))
+			if tc.active != errors.Is(err, ErrActiveDeployment) {
+				t.Errorf("second deployment: err = %v, want the lock held = %v", err, tc.active)
+			}
+		})
+	}
+}
+
+func TestCreateDeploymentRefusesAStateItCannotBeBornIn(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for name, mod := range map[string]func(*Deployment){
+		"applying":                        func(d *Deployment) { d.State = StateApplying },
+		"completed":                       func(d *Deployment) { d.State = StateCompleted },
+		"failed without an error":         func(d *Deployment) { d.State = StateFailed },
+		"pending approval with an error":  func(d *Deployment) { d.State, d.Error = StatePendingApproval, "x" },
+		"detected with an error":          func(d *Deployment) { d.Error = "x" },
+		"failed hooks and a failed state": func(d *Deployment) { d.State, d.Error = StateFailed, "x"; d.Hooks = []DeploymentHook{{Phase: "pre"}} },
+	} {
+		d := newDep("web")
+		mod(d)
+		if err := s.CreateDeployment(ctx, d); err == nil {
+			t.Errorf("%s: the deployment was created", name)
+		}
+	}
+	if _, err := s.LatestDeployment(ctx, "default", "web"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a refused deployment left a row behind: %v", err)
+	}
+}

@@ -73,9 +73,8 @@ CAS conflict actually closes the deployment.
   `nops_pre_hook` from `meta.Parse` on the stored `job_spec`'s meta. Declared →
   `Transition` to `pre_hook`. Not declared → `Transition` straight to
   `applying`. A `detected` deployment whose policy is `approval` is **left
-  alone** (invariant 3): detection creates it `detected` and moves it to
-  `pending_approval` in a second write, so apply can meet it in between, or find
-  one the second write never reached (a store error aborted that cycle). Apply
+  alone** (invariant 3): detection creates one `pending_approval`, so this is
+  only a deployment a nops that created it in two writes left behind. Apply
   asks detection for a cycle, which moves it (see
   [engine-detection](engine-detection.md#per-job-reconciliation)).
 - **`pre_hook`**: read the frozen hooks of the phase (`Store.DeploymentHooks`;

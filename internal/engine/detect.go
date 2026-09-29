@@ -353,10 +353,10 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 				}
 			default:
 				if active.State == store.StateDetected && active.Policy == store.PolicyApproval {
-					// Left `detected` under approval: the write that moves it to
-					// pending_approval did not land (a store error aborted that
-					// cycle). Apply never advances it (invariant 3), so this is the
-					// only way it gets to a human.
+					// Left `detected` under approval: created by a nops that moved
+					// it to pending_approval in a second write, which did not land.
+					// Apply never advances it (invariant 3), so this is the only
+					// way it gets to a human.
 					return "", "", e.leaveDetected(ctx, log, active, problem, commit.sha)
 				}
 				return "", "", nil // still approvable / still pending: nothing to do
@@ -388,6 +388,21 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen,
 	}
+	// The deployment is created in the state it stays in until someone acts:
+	// failed when a hook it declares is missing or invalid (nothing to approve,
+	// and it froze only the hooks it found, so apply must never see it),
+	// pending_approval under approval, detected under auto for apply to pick up.
+	// One write: created `detected` and moved in a second, it could be applied
+	// in between, or stay applicable if the second write failed.
+	born, message := store.StateDetected, ""
+	switch {
+	case problem != "":
+		born, message = store.StateFailed, fmt.Sprintf("%s at commit %s", problem, commit.sha)
+		d.Error = message
+	case cfg.Policy == meta.PolicyApproval:
+		born, message = store.StatePendingApproval, "waiting for approval"
+	}
+	d.State = born
 	if err := e.store.CreateDeployment(ctx, d); err != nil {
 		if errors.Is(err, store.ErrActiveDeployment) {
 			log.WarnContext(ctx, "active deployment appeared concurrently: skipped this cycle", "error", err)
@@ -395,16 +410,17 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		}
 		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
 	}
-
-	if cfg.Policy == meta.PolicyApproval || problem != "" {
-		return "", "", e.leaveDetected(ctx, log, d, problem, commit.sha)
+	if born != store.StateDetected {
+		e.announce(ctx, log, d, store.StateDetected, born, message)
 	}
 	return "", "", nil
 }
 
 // leaveDetected moves a `detected` deployment that `auto` apply must not pick
 // up: to failed when a hook it declares is missing or invalid (nothing to
-// approve), else to pending_approval.
+// approve), else to pending_approval. Detection creates a deployment in that
+// state now; this is for one a nops that created it in two writes left
+// `detected` under approval.
 func (e *Engine) leaveDetected(ctx context.Context, log *slog.Logger, d *store.Deployment, problem, sha string) error {
 	if problem != "" {
 		return e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, sha))
@@ -487,9 +503,17 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 		}
 		return fmt.Errorf("transition %s to %s: %w", d.ID, to, err)
 	}
+	e.announce(ctx, log, d, d.State, to, message)
+	return nil
+}
+
+// announce logs and notifies a deployment that has reached `to` from `from`,
+// once that is persisted (invariant 7): after a transition, or for a deployment
+// created already in that state.
+func (e *Engine) announce(ctx context.Context, log *slog.Logger, d *store.Deployment, from, to store.State, message string) {
 	if to == store.StateFailed {
 		// Fail loud (docs/error-handling.md): what failed, where and why.
-		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", failedPhase(d.State), "error", message)
+		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", failedPhase(from), "error", message)
 	} else {
 		log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)
 	}
@@ -499,15 +523,14 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 		notify = notifyOnCompleted(ctx, d, log)
 	}
 	if !notify {
-		return nil
+		return
 	}
 	fresh, err := e.store.GetDeployment(ctx, d.ID)
 	if err != nil {
 		log.ErrorContext(ctx, "reload deployment before notify", "deployment_id", d.ID, "error", err)
-		return nil
+		return
 	}
 	go e.notifier.Notify(ctx, fresh)
-	return nil
 }
 
 // failedPhase names where a deployment was when it failed, for the log:

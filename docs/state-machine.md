@@ -14,6 +14,13 @@ detected ──(policy=auto)──────────────┐
 
 - `none` creates no deployment: drift is only an observation in the dashboard.
 - States in `[ ]` are skipped when the hook is not defined.
+- Detection **creates a deployment in the state it waits in**, in one write: `failed`
+  when a hook it declares is missing or invalid, `pending_approval` under
+  `approval`, `detected` under `auto`. Its events read the same as if it had been
+  created `detected` and moved on (`detected`, then `detected -> <state>`), but
+  no apply step and no restart can ever find it `detected` in between. This
+  matters most for `failed`: the deployment froze only the hooks it found, so
+  one that could be applied would run without the rest.
 - The `pre_hook` runs **after** approval: migrations and backups must not start
   before the human OK, and the backup ends up fresh.
 - A post-hook failure does not undo the apply (the job is already live):
