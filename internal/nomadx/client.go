@@ -40,7 +40,8 @@ const casConflictMarker = "Enforcing job modify index"
 // namespace is a per-request parameter of the Nomad API). Plan and RegisterCAS
 // take it from the job itself.
 type Client struct {
-	jobs *api.Jobs
+	jobs        *api.Jobs
+	deployments *api.Deployments
 }
 
 // New creates a Client. nops passes config.Config.Nomad(), which ignores the
@@ -50,7 +51,7 @@ func New(cfg *api.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create nomad client: %w", err)
 	}
-	return &Client{jobs: c.Jobs()}, nil
+	return &Client{jobs: c.Jobs(), deployments: c.Deployments()}, nil
 }
 
 // query and write build the options of a request in namespace ns. An empty ns
@@ -241,6 +242,13 @@ type Alloc struct {
 	// Failure explains a failed allocation (the client description plus, for each
 	// failed task, the event that says why). Empty when nothing failed.
 	Failure string
+	// TaskGroup is the group the allocation belongs to.
+	TaskGroup string
+	// Healthy is what the Nomad deployment decided about the allocation: nil
+	// until it decides, or when no deployment tracks it.
+	Healthy *bool
+	// Canary is set for a canary of a Nomad deployment.
+	Canary bool
 }
 
 // Allocations lists every allocation of a job, including finished ones.
@@ -258,13 +266,18 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 	}
 	out := make([]Alloc, 0, len(stubs))
 	for _, s := range stubs {
-		out = append(out, Alloc{
+		a := Alloc{
 			ID:            s.ID,
 			JobVersion:    s.JobVersion,
 			ClientStatus:  s.ClientStatus,
 			DesiredStatus: s.DesiredStatus,
 			Failure:       failure(s),
-		})
+			TaskGroup:     s.TaskGroup,
+		}
+		if ds := s.DeploymentStatus; ds != nil {
+			a.Healthy, a.Canary = ds.Healthy, ds.Canary
+		}
+		out = append(out, a)
 	}
 	return out, nil
 }
@@ -377,6 +390,21 @@ func (c *Client) StopJob(ctx context.Context, ns, id string) error {
 			return nil
 		}
 		return fmt.Errorf("stop job %s: %w", id, err)
+	}
+	return nil
+}
+
+// PromoteDeployment promotes the canaries of every group of a Nomad deployment
+// (`nomad deployment promote`). It is not a register: it changes no job spec,
+// so plan and CAS do not apply. Nomad answers an error, passed on as is, when
+// there is nothing to promote (already promoted, or a canary not healthy yet).
+func (c *Client) PromoteDeployment(ctx context.Context, ns, deploymentID string) error {
+	w, err := c.write(ctx, ns)
+	if err != nil {
+		return fmt.Errorf("promote deployment %s: %w", deploymentID, err)
+	}
+	if _, _, err := c.deployments.PromoteAll(deploymentID, w); err != nil {
+		return fmt.Errorf("promote deployment %s: %w", deploymentID, err)
 	}
 	return nil
 }

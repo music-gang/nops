@@ -32,6 +32,27 @@ func (s *server) when(t time.Time) timeView {
 	return timeView{Rel: relative(s.now(), t), Full: formatTime(t), ISO: t.UTC().Format(time.RFC3339)}
 }
 
+// until builds the timeView of a deadline: "in 3m" while it is ahead, as `when`
+// says it once it is behind. The zero value means there is none.
+func (s *server) until(t time.Time) timeView {
+	d := t.Sub(s.now())
+	if t.IsZero() || d <= 0 {
+		return s.when(t)
+	}
+	var rel string
+	switch {
+	case d < time.Minute:
+		rel = "in under a minute"
+	case d < time.Hour:
+		rel = fmt.Sprintf("in %dm", int(d/time.Minute))
+	case d < 24*time.Hour:
+		rel = fmt.Sprintf("in %dh", int(d/time.Hour))
+	default:
+		rel = fmt.Sprintf("in %dd", int(d/(24*time.Hour)))
+	}
+	return timeView{Rel: rel, Full: formatTime(t), ISO: t.UTC().Format(time.RFC3339)}
+}
+
 // relative says how long before now t was. Under a minute it is "just now"
 // (nops's own clocks and the operator's need not agree to the second, so a t a
 // little in the future reads the same); past a month it is the date.
@@ -307,6 +328,21 @@ func hookStateLabel(st store.HookState) string {
 		return "Timed out"
 	default:
 		return string(st)
+	}
+}
+
+// nomadClass is the palette color of a status Nomad reports (of a job, an
+// allocation or a deployment): its own words, not a state of nops.
+func nomadClass(status string) string {
+	switch status {
+	case "running", "pending", "blocked", "unblocking":
+		return "state-running"
+	case "successful", "complete":
+		return "state-success"
+	case "failed", "cancelled", "lost":
+		return "state-failed"
+	default: // dead, paused, or a word Nomad adds later
+		return "state-pending"
 	}
 }
 

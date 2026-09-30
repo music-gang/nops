@@ -133,7 +133,9 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   is the audit trail of who asked. `MarkAwaitingPromotion` and `MarkPromoted`
   append one whose two states are both `applying` (messages `waiting for canary
   promotion in Nomad` and `canaries promoted in Nomad: the apply timeout counts
-  again`).
+  again`). `Store.MarkPromotionRequested` appends one, applying → applying,
+  with the person who pressed *Promote* as `actor` and the message `promotion
+  requested`, before Nomad is asked to promote.
 
 Store rules:
 
@@ -147,6 +149,8 @@ Store rules:
   either: each is guarded on `state = applying` and on its own column still
   being empty, so it writes (and reports it wrote) once, and writes its event
   in the same transaction.
+- `Store.MarkPromotionRequested` changes nothing but that event, guarded on
+  `state = applying`.
 - A single SQLite connection: writes are serialized.
 
 ## Recovery after a crash

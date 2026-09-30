@@ -25,6 +25,7 @@ var templateFuncs = template.FuncMap{
 	"shortCommit":    shortCommit,
 	"short":          short,
 	"asset":          asset,
+	"nomadClass":     nomadClass,
 }
 
 // parseDiff decodes a stored plan_diff column (already redacted by

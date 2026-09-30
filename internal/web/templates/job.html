@@ -70,6 +70,12 @@
     {{end}}
     {{end}}
 
+    {{if .Nomad}}
+    <div id="live-nomad" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-nomad" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
+    {{template "nomad_panel" .Nomad}}
+    </div>
+    {{end}}
+
     <div id="live-deployments" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-deployments" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
     <section class="box">
       <header class="box__header"><h2 class="box__title">Deployments</h2>{{if .Deployments}}<span class="box__count">{{len .Deployments}}</span>{{end}}</header>

@@ -27,12 +27,13 @@ whole value on hover.
 |---|---|
 | `GET /` **Overview** | A strip with **Git** (the commit Nops is on: short SHA, linked when the repository is an `http(s)` URL, subject, author, when it was made, when the repository was last checked, and a *Fetch now* button; the last poll's failure, if the latest poll failed) and **Detection** (when the last cycle ran and how long it took, how many managed jobs it found, and `ok`, `degraded` or `aborted`; jobs skipped because Nomad failed on them, files Nomad could not parse, and the error that stopped a cycle, if any; while a file does not parse, a note that jobs removed from git are not being looked for). Then **Needs attention**, most urgent first, one line each with why and where to act: deployments waiting for approval (oldest first, *Review*), blocked jobs (with the reason and a *Retry* button), recent failures nobody retried (7 days), and jobs with a meta error, and, last because nothing is broken, **orphans** ("Removed from git, still running in Nomad"). A job under policy `none` that drifts is **not** listed here: leaving it alone is its policy, and it is on Jobs. Then **In progress**: deployments in `detected`, `pre_hook`, `applying` or `post_hook`. Then **Recently completed**: the 5 most recently completed deployments (by when they completed, not when they were created), so one does not simply vanish from In progress with no sign it succeeded — only `completed`; a recent failure is already in Needs attention, and rejected/superseded are not urgent enough for the Overview. Polls itself every 5s (see [Look and technology](#look-and-technology)); the commit's own time reads "committed", the git strip's other time "repository checked", so a fresh commit and a fresh poll of an unchanged head are never confused. |
 | `GET /jobs` **Jobs** (`/drift` redirects here) | One row per managed job from `Engine.Observations()`, and one per **orphan** (`Engine.Orphans()`: **Not in git**, no file, the policy of its last deployment): its sync state, policy, last deployment and file. A filter by sync state with counts (`?state=`), kept across the page's own polling. |
-| `GET /jobs/{namespace}/{job}` **Job** | The job's sync state, policy, file and hooks (`nops_pre_hook`, `nops_post_hook`: every hook of each phase, in the order they run, with the timeout its hook job sets, none shown for a hook that is not in the repository), the block and its *Retry* when blocked, the current drift diff with its summary, the meta issues, and its deployments, newest first. A job no longer in the repository still shows its past deployments; one with neither is a 404. An orphan shows a notice instead of a drift: Nops deployed it, it is not in git any more, it still runs in Nomad and Nops does not stop it; the notice says what to do (`nomad job stop -namespace <ns> <id>`, or put the file back) and goes away on its own once either is done. The head, the deployments list and the details column poll themselves every 5s; the drift diff does not, so a `<details>` node a person opened or closed stays as they left it. |
-| `GET /deployments/{id}` **Deployment** | A header with the job (linked), state, commit (SHA, subject, author), policy and age; the error, if it failed; a notice when it is what blocks its job (with *Retry*); a notice while it waits for a person to promote the canaries of its Nomad deployment (the apply timeout does not run meanwhile; promote them, or fail the Nomad deployment, to move on); while `pending_approval`, the **Review** panel: what Approve will do, in order (the pre-hook, the register, waiting for health, the post-hook: the hooks are the ones the deployment froze, each with the short revision it will run, and the timeouts are the ones of the frozen hook jobs; IDs only, never the specs), and the hook runs listed in the order they run (pre before post, by position), and the Approve and Reject buttons. Then the plan diff with a summary (how many fields are added, edited and removed, and where), open to be reviewed and folded once there is nothing to decide; the hook runs; the timeline; and a Details column. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
+| `GET /jobs/{namespace}/{job}` **Job** | The job's sync state, policy, file and hooks (`nops_pre_hook`, `nops_post_hook`: every hook of each phase, in the order they run, with the timeout its hook job sets, none shown for a hook that is not in the repository), the block and its *Retry* when blocked, the [Nomad panel](#the-nomad-panel), the current drift diff with its summary, the meta issues, and its deployments, newest first. A job no longer in the repository still shows its past deployments; one with neither is a 404. An orphan shows a notice instead of a drift: Nops deployed it, it is not in git any more, it still runs in Nomad and Nops does not stop it; the notice says what to do (`nomad job stop -namespace <ns> <id>`, or put the file back) and goes away on its own once either is done. The head, the Nomad panel, the deployments list and the details column poll themselves every 5s; the drift diff does not, so a `<details>` node a person opened or closed stays as they left it. |
+| `GET /deployments/{id}` **Deployment** | A header with the job (linked), state, commit (SHA, subject, author), policy and age; the error, if it failed; a notice when it is what blocks its job (with *Retry*); a notice while it waits for a person to promote the canaries of its Nomad deployment (the apply timeout does not run meanwhile), with a *Promote* button; while it is `applying`, the [Nomad panel](#the-nomad-panel); while `pending_approval`, the **Review** panel: what Approve will do, in order (the pre-hook, the register, waiting for health, the post-hook: the hooks are the ones the deployment froze, each with the short revision it will run, and the timeouts are the ones of the frozen hook jobs; IDs only, never the specs), and the hook runs listed in the order they run (pre before post, by position), and the Approve and Reject buttons. Then the plan diff with a summary (how many fields are added, edited and removed, and where), open to be reviewed and folded once there is nothing to decide; the hook runs; the timeline (an event that leaves the state as it was, like the wait for a promotion or the request to promote, shows the state's name and its message); and a Details column. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
 | `GET /deployments/{id}/status` | An [htmx](https://htmx.org) fragment, polled by the deployment page every 3s while the deployment is non-terminal, so an approval or a hook finishing elsewhere shows up without a reload: the head and decision panel replace themselves, and the hooks, timeline and details swap out of band. The diff is not sent again. It stops polling itself once the deployment is terminal. |
 | `GET /history` **Activity** | Every deployment, in progress and finished, newest first, grouped by day (UTC), with who decided; a filter by state with counts, kept across the page's own polling. The finished ones are the most recent 200. |
 | `POST /deployments/{id}/approve` | Calls `Engine.Approve(ctx, id, spec_hash, actor)` with the actor from the session and the `spec_hash` shown on the page (always the whole hash, in a hidden field, whatever the page shows short). A `spec_hash` that no longer matches (`ErrStaleApproval`) re-renders the page with a 409 and a notice to review the new diff, rather than approving the wrong spec. A job that is not in the repository as the last cycle read it (`ErrNotInRepo`; the cases are listed in [engine-apply](design/engine-apply.md#decisions)) gets a 409 too, with a notice that there is nothing to approve until it is back; *Reject* still works. |
 | `POST /deployments/{id}/reject` | Calls `Engine.Reject(ctx, id, actor)`. |
+| `POST /deployments/{id}/promote` | Calls `Engine.Promote(ctx, id, actor)`: promotes the canaries of the Nomad deployment an `applying` deployment waits on ([engine-apply](design/engine-apply.md#decisions), 11). It registers nothing. `303` back to the deployment; `409` ("Nothing to promote") when it is not waiting for a promotion any more, as Nomad reports it now (already promoted, or the Nomad deployment moved on); `404` for an unknown deployment or a namespace Nops does not manage; an error from Nomad (for instance a token without `submit-job`) is a `500` with the request on the timeline. |
 | `POST /jobs/{namespace}/{job}/retry` | Calls `Engine.Retry(ctx, namespace, job, actor)`: lifts the block of a job whose drift a failed or rejected deployment suppresses, without a new commit. It applies nothing: the next deployment follows the policy (see [state-machine](state-machine.md#not-retrying-an-unchanged-failure)). `303` back to the page named by the form's `back` (`overview`, `jobs`, `activity` or `job`; anything else is the Overview); `409` when the job is no longer blocked or was already retried (a double click, or a newer deployment replaced the failed one); `404` for a namespace Nops does not manage. |
 | `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` to `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
 | `GET /healthz` | `200` with `ok <version>` (`ok v0.1.0`), no session needed: what an orchestrator or a load balancer probes. |
@@ -53,19 +54,51 @@ managed job any more and has no observation: it only ever has "Not in git".
 | **Drift** | the cluster differs from git and nothing is being done about it (policy `none`, or no deployment yet) |
 | **In sync** | the cluster is what git says |
 
+### The Nomad panel
+
+On the Job page, and on the Deployment page while the deployment is `applying`,
+a read-only **Nomad** box says what Nomad reports about the job, so that finding
+out why a deployment sits in `applying` does not need Nomad's own UI:
+
+- the job's status in Nomad, its type and version;
+- for each task group, the count the live job asks for next to the allocations
+  of the live version, counted by the status Nomad gives them (running, pending,
+  failed, lost), how many its Nomad deployment marked healthy, and how many are
+  canaries;
+- the job's latest Nomad deployment: its status and description ("Deployment is
+  running but requires manual promotion"), and for each group healthy against
+  desired, canaries placed against desired, promoted or not, and the progress
+  deadline. On a Deployment's page it says whether that Nomad deployment is the
+  one tracking this deployment's apply (the same `applied_index`), or another;
+- a job Nomad does not have says so, and a Nomad that does not answer says so
+  in the box (the failure is also logged at ERROR): the rest of the page renders.
+
+Nothing in it is computed by Nops on top of what Nomad says. It is not a copy of
+Nomad's UI: no allocation logs, no exec, no per-task events. The panel of a job
+is cached for 4 seconds, errors included, so any number of open tabs cost one
+set of Nomad calls (the job, its allocations, its latest deployment) per poll,
+and a Nomad that is down is asked once per 4 seconds, not once per tab. Without
+a Nomad to read (in tests) the box is not shown. It needs `read-job` in the
+namespace, which Nops already has ([token ACL](configuration.md#token-acl)).
+
+The one write here is the *Promote* button of a deployment that waits for its
+canaries to be promoted, on the Deployment page only: the Job page's box shows
+the wait and the deployment that carries the button.
+
 ### Writes and redirects
 
-Both `POST /jobs/.../retry` and `POST /fetch` go through `Auth.Require` like
-approve and reject, so a cross-origin request is refused before anything is
+`POST /jobs/.../retry`, `POST /deployments/.../promote` and `POST /fetch` go
+through `Auth.Require` like approve and reject, so a cross-origin request is refused before anything is
 called. No form value reaches a `Location` header as a path or URL: retry goes
 back to a page chosen **by name** from a fixed list (`back=jobs`), `/fetch`
 always to `/` (see the [decision log](design/decisions.md), 2026-09-24).
 
 The dashboard never calls `Store.Transition` for a decision or picks the next
 state itself: approve and reject always go through the engine (invariant 3).
-The handlers work from small interfaces over `*store.Store`, `*engine.Engine`
-and `*gitwatch.Watcher` (`web.Store`, `web.Engine`, `web.Git`), so tests use
-fakes instead of a real database, Nomad client or repository.
+The handlers work from small interfaces over `*store.Store`, `*engine.Engine`,
+`*gitwatch.Watcher` and `*nomadx.Client` (`web.Store`, `web.Engine`, `web.Git`,
+`web.Nomad`), so tests use fakes instead of a real database, Nomad client or
+repository.
 
 ## Base path
 

@@ -837,6 +837,50 @@ func (s *Store) markPromotion(ctx context.Context, id, column, guard, message st
 	return true, nil
 }
 
+// MarkPromotionRequested records who asked to promote the canaries of an
+// applying deployment's Nomad deployment, before the promotion is asked of
+// Nomad (invariant 7): one applying -> applying event by that person. It changes
+// nothing else: the promotion shows up as promoted_at once the apply loop sees
+// the canaries promoted. It returns ErrStateConflict if the deployment is not
+// applying and ErrNotFound if there is none.
+func (s *Store) MarkPromotionRequested(ctx context.Context, id, actor string) error {
+	if actor == "" {
+		return errors.New("mark promotion requested: actor is required")
+	}
+	now := s.ts()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mark promotion requested %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `UPDATE deployments SET updated_at = ? WHERE id = ? AND state = ?`,
+		now, id, string(StateApplying))
+	if err != nil {
+		return fmt.Errorf("mark promotion requested %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Read inside the transaction: the store has a single connection, which
+		// the transaction holds.
+		var state string
+		err := tx.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, id).Scan(&state)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("mark promotion requested %s: %w", id, ErrNotFound)
+		case err != nil:
+			return fmt.Errorf("mark promotion requested %s: %w", id, err)
+		}
+		return fmt.Errorf("mark promotion requested %s: %w (is %s, want applying)", id, ErrStateConflict, state)
+	}
+	if err := insertEvent(ctx, tx, id, now, StateApplying, StateApplying, actor, "promotion requested"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark promotion requested %s: commit: %w", id, err)
+	}
+	return nil
+}
+
 // ListHistory returns terminal deployments, newest first.
 func (s *Store) ListHistory(ctx context.Context, limit int) ([]*Deployment, error) {
 	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments

@@ -1223,6 +1223,55 @@ func TestPromotionWaitRefusals(t *testing.T) {
 	}
 }
 
+func TestMarkPromotionRequested(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := applyingDep(t, s, "web")
+
+	if err := s.MarkPromotionRequested(ctx, d.ID, "iacopo"); err != nil {
+		t.Fatalf("MarkPromotionRequested: %v", err)
+	}
+	got, _ := s.GetDeployment(ctx, d.ID)
+	if got.State != StateApplying || !got.PromotionWaitSince.IsZero() || !got.PromotedAt.IsZero() {
+		t.Errorf("after the request: %+v, want applying and no wait or promotion recorded by it", got)
+	}
+	evs, err := s.Events(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := evs[len(evs)-1]
+	if last.From != StateApplying || last.To != StateApplying || last.Actor != "iacopo" || last.Message != "promotion requested" {
+		t.Errorf("last event = %+v, want applying -> applying by iacopo", last)
+	}
+
+	// Every request is on record, a second one too.
+	if err := s.MarkPromotionRequested(ctx, d.ID, "iacopo"); err != nil {
+		t.Errorf("second request: %v", err)
+	}
+	if evs2, _ := s.Events(ctx, d.ID); len(evs2) != len(evs)+1 {
+		t.Errorf("events = %d, want %d", len(evs2), len(evs)+1)
+	}
+}
+
+func TestMarkPromotionRequestedRefusals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	detected := mustCreate(t, s, newDep("web"))
+	if err := s.MarkPromotionRequested(ctx, detected.ID, "iacopo"); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("detected deployment: err = %v, want ErrStateConflict", err)
+	}
+	if err := s.MarkPromotionRequested(ctx, "nope", "iacopo"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+	if err := s.MarkPromotionRequested(ctx, detected.ID, ""); err == nil {
+		t.Error("a request without an actor should fail")
+	}
+	if evs, _ := s.Events(ctx, detected.ID); len(evs) != 1 {
+		t.Errorf("a refused request logged an event: %+v", evs)
+	}
+}
+
 // TestUpgradeFromV4 opens a database left by the schema before the promotion
 // wait, with an applying deployment in it, and checks it reads back as one that
 // never waited, and can start waiting.

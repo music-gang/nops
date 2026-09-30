@@ -51,13 +51,15 @@ type Store interface {
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to
-// retry a blocked job and to read the drift of "none"-policy jobs. *engine.Engine implements it.
+// retry a blocked job, to promote the canaries of a deployment that waits for
+// it and to read the drift of "none"-policy jobs. *engine.Engine implements it.
 type Engine interface {
 	Approve(ctx context.Context, id, specHash, actor string) error
 	Reject(ctx context.Context, id, actor string) error
 	Observations() []engine.Observation
 	Orphans() []engine.Orphan
 	Retry(ctx context.Context, namespace, jobID, actor string) error
+	Promote(ctx context.Context, id, actor string) error
 	Status() engine.Status
 }
 
@@ -90,6 +92,10 @@ type Options struct {
 	Store  Store
 	Engine Engine
 	Git    Git
+
+	// Nomad is what the Nomad panel of the Job and Deployment pages reads.
+	// Optional: without it the panel is not shown.
+	Nomad Nomad
 
 	// CommitURL returns the web address of a commit, or "" if there is none
 	// (the SHA is then shown without a link). Optional.
@@ -130,6 +136,8 @@ type server struct {
 	store     Store
 	engine    Engine
 	git       Git
+	nomad     Nomad // nil: no Nomad panel
+	panels    panelCache
 	trigger   func()
 	commitURL func(sha string) string
 	now       func() time.Time
@@ -168,6 +176,7 @@ func New(o Options) (http.Handler, error) {
 		store:     o.Store,
 		engine:    o.Engine,
 		git:       o.Git,
+		nomad:     o.Nomad,
 		trigger:   o.Trigger,
 		commitURL: o.CommitURL,
 		now:       o.Now,
@@ -236,6 +245,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("GET /deployments/{id}/status", s.auth.Require(http.HandlerFunc(s.deploymentStatus)))
 	mux.Handle("POST /deployments/{id}/approve", s.auth.Require(http.HandlerFunc(s.approve)))
 	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
+	mux.Handle("POST /deployments/{id}/promote", s.auth.Require(http.HandlerFunc(s.promote)))
 	mux.Handle("POST /jobs/{namespace}/{job}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
 	if s.trigger != nil {
 		mux.Handle("POST /fetch", s.auth.Require(http.HandlerFunc(s.fetchNow)))

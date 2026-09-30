@@ -184,7 +184,7 @@
   {{range .}}
   <li class="row row--event">
     <span class="row__when">{{template "time" .Time}}</span>
-    <span class="row__transition">{{if .Retry}}retry requested{{else}}{{stateLabel .From}}{{if .From}} &rarr; {{end}}{{stateLabel .To}}{{end}}</span>
+    <span class="row__transition">{{if .Retry}}retry requested{{else if .Same}}{{stateLabel .To}}{{else}}{{stateLabel .From}}{{if .From}} &rarr; {{end}}{{stateLabel .To}}{{end}}</span>
     <span class="row__meta">{{.Actor}}</span>
     <span class="row__detail" title="{{.Msg}}">{{.Msg}}</span>
   </li>
@@ -225,7 +225,14 @@
   </section>
   {{end}}
   {{if .Notice}}<p class="flash flash--warn">{{.Notice}}</p>{{end}}
-  {{if .PromotionWait}}<p class="flash flash--warn"><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries, or fail the Nomad deployment, to move on.</p>{{end}}
+  {{if .PromotionWait}}
+  <section class="flash flash--warn flash--action">
+    <div><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries here or in Nomad, or fail the Nomad deployment, to move on.</div>
+    <form method="post" action="{{.Deployment.Path}}/promote">
+      <button type="submit" class="btn btn--primary">Promote</button>
+    </form>
+  </section>
+  {{end}}
 
   {{if .CanDecide}}
   <section class="box decision">
@@ -255,8 +262,52 @@
 </div>
 {{end}}
 
+{{/* What Nomad says of a job: the live job, its groups against their counts,
+     its latest Nomad deployment. Read-only, and only what Nomad reports. */}}
+{{define "nomad_panel"}}
+<section class="box">
+  <header class="box__header"><h2 class="box__title">Nomad</h2>{{if .Status}}<span class="pill {{nomadClass .Status}}" title="The job's status in Nomad">{{.Status}}</span>{{end}}{{if .Type}}<span class="muted">{{.Type}}, version {{.Version}}</span>{{end}}</header>
+  {{if .Err}}
+  <p class="flash flash--warn flash--flat">{{.Err}}</p>
+  {{else if .Missing}}
+  <p class="empty">This job does not exist in Nomad.</p>
+  {{else}}
+  {{if .Groups}}
+  <table class="table">
+    <thead><tr><th>Group</th><th title="The count the live job asks for">Desired</th><th>Running</th><th>Pending</th><th>Failed</th><th>Lost</th><th title="Allocations the Nomad deployment marked healthy">Healthy</th><th>Canaries</th></tr></thead>
+    <tbody>
+      {{range .Groups}}
+      <tr><td class="mono">{{.Name}}</td><td>{{.Desired}}</td><td>{{.Running}}</td><td>{{.Pending}}</td><td>{{if .Failed}}<span class="text-failed">{{.Failed}}</span>{{else}}0{{end}}</td><td>{{if .Lost}}<span class="text-failed">{{.Lost}}</span>{{else}}0{{end}}</td><td>{{.Healthy}}</td><td>{{.Canaries}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="panel-note">Allocations of the live version, counted by the status Nomad gives them.</p>
+  {{end}}
+  {{with .Deployment}}
+  <div class="box__body">
+    <p><strong>Nomad deployment</strong> <span class="mono" title="{{.ID}}">{{.ShortID}}</span> <span class="pill {{nomadClass .Status}}">{{.Status}}</span> <span class="muted">{{.Description}}</span></p>
+    {{if $.Tracked}}<p class="muted">This is the one this deployment waits on.</p>{{else if $.Another}}<p class="muted">Not the one tracking this deployment&rsquo;s apply: the job&rsquo;s latest Nomad deployment is another (someone changed the job since, or Nomad started one of its own).</p>{{end}}
+    {{if .Groups}}
+    <table class="table">
+      <thead><tr><th>Group</th><th>Healthy</th><th>Unhealthy</th><th>Canaries</th><th>Promoted</th><th>Progress deadline</th></tr></thead>
+      <tbody>
+        {{range .Groups}}
+        <tr><td class="mono">{{.Name}}</td><td>{{.Healthy}} / {{.Desired}}</td><td>{{.Unhealthy}}</td><td>{{if .DesiredCanaries}}{{.PlacedCanaries}} / {{.DesiredCanaries}}{{else}}-{{end}}</td><td>{{if .DesiredCanaries}}{{if .Promoted}}yes{{else}}no{{end}}{{else}}-{{end}}</td><td>{{if .Progress.ISO}}{{template "time" .Progress}}{{else}}-{{end}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty">Nomad has no deployment for this job.</p>
+  {{end}}
+  {{end}}
+</section>
+{{end}}
+
 {{define "deployment_activity"}}
 <div id="deployment-activity"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  {{with .Nomad}}{{template "nomad_panel" .}}{{end}}
   <section class="box">
     <header class="box__header"><h2 class="box__title">Hooks</h2></header>
     {{template "hook_runs" .HookRuns}}

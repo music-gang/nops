@@ -338,3 +338,86 @@ func TestCanaryWaitsForManualPromotion(t *testing.T) {
 		t.Errorf("group of the successful deployment = %+v, want promoted", *done.TaskGroups["g"])
 	}
 }
+
+// TestPromoteDeploymentAndTheAllocationFieldsThePanelReads runs nomadx against
+// a real Nomad with a canary that waits for a promotion: Allocations says which
+// group an allocation is in, that it is a canary and that its Nomad deployment
+// found it healthy, PromoteDeployment promotes it, and Nomad refuses to promote
+// a deployment that has nothing left to promote.
+func TestPromoteDeploymentAndTheAllocationFieldsThePanelReads(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	id := uniqueID(t, raw, "promote")
+	register := func(tag string) {
+		t.Helper()
+		job, err := c.ParseHCL(ctx, canaryHCL(id, tag), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var index uint64
+		if live, _, err := raw.Jobs().Info(id, nil); err == nil {
+			index = *live.JobModifyIndex
+		}
+		if _, err := c.RegisterCAS(ctx, job, index, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor := func(what string, ok func(*api.Deployment) bool) *api.Deployment {
+		t.Helper()
+		end := time.Now().Add(60 * time.Second)
+		for {
+			d, err := c.LatestDeployment(ctx, "default", id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d != nil && ok(d) {
+				return d
+			}
+			if time.Now().After(end) {
+				t.Fatalf("no Nomad deployment %s in time: %+v", what, d)
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+
+	register("v1")
+	waitFor("successful", func(d *api.Deployment) bool { return d.Status == api.DeploymentStatusSuccessful })
+	register("v2")
+	waiting := waitFor("with a healthy canary", func(d *api.Deployment) bool {
+		g := d.TaskGroups["g"]
+		return d.Status == api.DeploymentStatusRunning && g != nil && g.HealthyAllocs >= 1
+	})
+
+	allocs, err := c.Allocations(ctx, "default", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canaries int
+	for _, a := range allocs {
+		if a.Canary {
+			canaries++
+			if a.TaskGroup != "g" || a.Healthy == nil || !*a.Healthy {
+				t.Errorf("canary allocation = %+v, want group g and healthy", a)
+			}
+		}
+	}
+	if canaries != 1 {
+		t.Fatalf("%d canary allocations in %+v, want 1", canaries, allocs)
+	}
+
+	if err := c.PromoteDeployment(ctx, "default", waiting.ID); err != nil {
+		t.Fatalf("PromoteDeployment: %v", err)
+	}
+	done := waitFor("successful after the promotion", func(d *api.Deployment) bool { return d.Status == api.DeploymentStatusSuccessful })
+	if !done.TaskGroups["g"].Promoted {
+		t.Errorf("group = %+v, want promoted", *done.TaskGroups["g"])
+	}
+
+	if err := c.PromoteDeployment(ctx, "default", done.ID); err == nil {
+		t.Error("promoting a finished deployment succeeded: Nomad is expected to refuse it")
+	} else {
+		t.Logf("Nomad on promoting a finished deployment: %v", err)
+	}
+}

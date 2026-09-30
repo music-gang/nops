@@ -39,6 +39,9 @@ type Nomad interface {
 	// applied job version is healthy (see docs/design/engine-apply.md).
 	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
 	LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error)
+	// PromoteDeployment is used by Promote (see docs/design/engine-apply.md,
+	// decision 11).
+	PromoteDeployment(ctx context.Context, ns, deploymentID string) error
 }
 
 // Store is what the engine needs from the store. *store.Store implements it.
@@ -68,6 +71,9 @@ type Store interface {
 	// deployment that waits for a person to promote its canaries.
 	MarkAwaitingPromotion(ctx context.Context, id string) (bool, error)
 	MarkPromoted(ctx context.Context, id string) (bool, error)
+	// MarkPromotionRequested is used by Promote: the request is on record
+	// before Nomad is asked.
+	MarkPromotionRequested(ctx context.Context, id, actor string) error
 }
 
 // Hooks is what apply needs to run a deployment's hooks. *hooks.Runner
