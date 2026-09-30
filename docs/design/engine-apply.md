@@ -62,7 +62,7 @@ twice from two overlapping ticks.
 One call, driven by the deployment's current `State` (a `switch`, one case per
 state below); every failure path notifies once, right after the `failed`
 transition commits (`Notifier.Notify` in a goroutine, per
-[error-handling.md](../error-handling.md#notifications)). A Nomad or SQLite
+[logs-and-notifications.md](../logs-and-notifications.md#notifications)). A Nomad or SQLite
 error is never swallowed: it is logged at ERROR and the deployment is left in
 its current state for the next tick to retry (the "fail loud, retry" pattern
 `hooks.Runner.Run`'s own contract already uses) — only a hook `Result` or a
@@ -398,7 +398,7 @@ expanded here.
     did not apply. The Nomad panel that shows the wait is read-only and cached 4
     seconds per job ([dashboard](../dashboard.md#the-nomad-panel)); the token
     needs `submit-job` to promote, verified against a Nomad with ACLs on
-    ([configuration](../configuration.md#token-acl)).
+    ([configuration](../running-nops.md#the-nomad-token)).
 
 ## Tests
 

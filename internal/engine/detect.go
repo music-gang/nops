@@ -542,7 +542,7 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 // created already in that state.
 func (e *Engine) announce(ctx context.Context, log *slog.Logger, d *store.Deployment, from, to store.State, message string) {
 	if to == store.StateFailed {
-		// Fail loud (docs/error-handling.md): what failed, where and why.
+		// Fail loud (docs/logs-and-notifications.md): what failed, where and why.
 		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", failedPhase(from), "error", message)
 	} else {
 		log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)

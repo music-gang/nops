@@ -73,7 +73,7 @@ type Config struct {
 	UsersFile string
 
 	// WebhookSecret authenticates the git forge's push webhook
-	// (docs/dashboard.md#git-webhook): its HMAC for GitHub and Gitea, its
+	// (docs/running-nops.md#the-git-webhook): its HMAC for GitHub and Gitea, its
 	// literal value for GitLab's token header. Empty disables the endpoint.
 	WebhookSecretFile string
 	WebhookSecret     string
@@ -101,7 +101,7 @@ type Config struct {
 	PublicURL string
 	// BasePath is the sub path the dashboard is served under (e.g. "/nops"),
 	// read by check() from PublicURL's own path component: "" when it has
-	// none. See docs/dashboard.md#base-path.
+	// none. See docs/running-nops.md#under-a-sub-path.
 	BasePath string
 
 	GitPollInterval  time.Duration
@@ -636,7 +636,7 @@ func publicURLDefault(listenAddr string) string {
 // basePathOf reads the dashboard's base path from -public-url's own path
 // component: a public URL of "https://host/nops" mounts the dashboard under
 // /nops, exactly what a reverse proxy must forward to it unstripped
-// (docs/dashboard.md#base-path). publicURL is assumed already validated as
+// (docs/running-nops.md#under-a-sub-path). publicURL is assumed already validated as
 // an http(s) URL by the -public-url option; a parse failure here is
 // unreachable and just yields no base path, same as none set.
 func basePathOf(publicURL string) string {

@@ -38,7 +38,7 @@ type AuthOptions struct {
 	AllowedUsers, AllowedGroups []string
 	// HTTPClient talks to the provider. Nil: a client with a 10 second timeout.
 	HTTPClient *http.Client
-	// BasePath is the dashboard's base path (docs/dashboard.md#base-path),
+	// BasePath is the dashboard's base path (docs/running-nops.md#under-a-sub-path),
 	// "" at the domain root. It is not part of RedirectURL: the caller
 	// already builds that from the full public URL, which carries any base
 	// path as its own path component.

@@ -169,7 +169,7 @@ func (s *server) nomadPanel(ctx context.Context, namespace, jobID string, applie
 	return &v
 }
 
-// readNomad asks Nomad. A failure is logged at ERROR (docs/error-handling.md),
+// readNomad asks Nomad. A failure is logged at ERROR (docs/logs-and-notifications.md),
 // once per cache entry, and returned as the view's Err.
 func (s *server) readNomad(ctx context.Context, namespace, jobID string) nomadView {
 	fail := func(what string, err error) nomadView {

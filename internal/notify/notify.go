@@ -4,7 +4,7 @@
 // caller, so it cannot block the state machine.
 //
 // The adapters and their payloads are documented in
-// docs/error-handling.md#notifications: keep the two aligned.
+// docs/logs-and-notifications.md#notifications: keep the two aligned.
 package notify
 
 import (
@@ -228,7 +228,7 @@ const (
 	colorFailed           = 0xD03030
 	colorPending          = 0xE0A000
 	// colorCompleted matches the dashboard's own "completed" colour
-	// (docs/dashboard.md#look-and-technology, --success in app.css).
+	// (docs/development.md#look-and-technology, --success in app.css).
 	colorCompleted = 0x1A7F37
 )
 

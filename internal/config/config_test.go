@@ -520,7 +520,7 @@ func TestLoadNomadUIURL(t *testing.T) {
 }
 
 // TestLoadBasePath covers BasePath, derived from -public-url's own path
-// component: there is no separate flag (docs/dashboard.md#base-path).
+// component: there is no separate flag (docs/running-nops.md#under-a-sub-path).
 func TestLoadBasePath(t *testing.T) {
 	usersFile := writeFile(t, "users", "alice:hash\n")
 	args := func(publicURL string) []string {

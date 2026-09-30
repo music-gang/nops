@@ -18,7 +18,7 @@ import (
 	"github.com/music-gang/nops/internal/nomadx"
 )
 
-// The tests of this file settle what docs/configuration.md#token-acl says the
+// The tests of this file settle what docs/running-nops.md#the-nomad-token says the
 // Nomad token needs. They need an agent with ACLs enabled, which the other
 // tests do not run against: NOPS_TEST_NOMAD_ACL_ADDR is its address and
 // NOPS_TEST_NOMAD_ACL_TOKEN a management token (the bootstrap one). Without
@@ -143,7 +143,7 @@ job %q {
 }`, id)
 }
 
-// TestTokenACLForVolumes checks the table of configuration.md#token-acl: what a
+// TestTokenACLForVolumes checks the table of running-nops.md#the-nomad-token: what a
 // token needs, on top of the namespace rule, to register a job that mounts a
 // volume, and that Plan checks none of it.
 func TestTokenACLForVolumes(t *testing.T) {
@@ -211,7 +211,7 @@ plugin { policy = "read" }`, func(id string) string { return volumeJobHCL(id, "c
 	}
 }
 
-// TestACLPolicyVolumeNames checks what configuration.md#token-acl says of the
+// TestACLPolicyVolumeNames checks what running-nops.md#the-nomad-token says of the
 // name in a host_volume rule: letters, digits, "-" and "*" only.
 func TestACLPolicyVolumeNames(t *testing.T) {
 	_, admin := aclAdmin(t)
@@ -236,7 +236,7 @@ func TestACLPolicyVolumeNames(t *testing.T) {
 	}
 }
 
-// TestPromoteNeedsSubmitJob checks what configuration.md#token-acl says of the
+// TestPromoteNeedsSubmitJob checks what running-nops.md#the-nomad-token says of the
 // dashboard's Promote: a token with list-jobs and read-job only is refused
 // with 403, one that also has submit-job promotes.
 func TestPromoteNeedsSubmitJob(t *testing.T) {

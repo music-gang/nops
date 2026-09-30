@@ -24,7 +24,7 @@ import (
 type session struct {
 	cookie  *securecookie.SecureCookie
 	secure  bool   // cookies are Secure: the public URL is https
-	base    string // the dashboard's base path (docs/dashboard.md#base-path), "" at the domain root
+	base    string // the dashboard's base path (docs/running-nops.md#under-a-sub-path), "" at the domain root
 	xorigin *http.CrossOriginProtection
 	now     func() time.Time
 	log     *slog.Logger

@@ -102,18 +102,10 @@ changes one fails there. How to move to a new version:
 
 ## Running it
 
-Each release publishes an image and a `linux/amd64` binary:
-
-```sh
-docker run --rm ghcr.io/music-gang/nops:0.1 -version
-```
-
-The binary, with its checksums, is on the
-[Releases](https://github.com/music-gang/nops/releases) page. Every option is
-a flag or a `NOPS_*` variable ([configuration](docs/configuration.md)), which
-also has a ready-made [Nomad job](docs/configuration.md#running-nops-as-a-nomad-job).
-While Nops is at `v0`, a new minor may break the configuration: pin a minor
-(`0.1`), not `latest`.
+To try it on one machine: [getting started](docs/getting-started.md). To run
+it on a cluster (the image, the binary, a ready-made Nomad job, upgrading):
+[running Nops](docs/running-nops.md). Every option is a flag or a `NOPS_*`
+variable ([configuration](docs/configuration.md)).
 
 ## Design principles
 

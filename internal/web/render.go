@@ -79,7 +79,7 @@ type baseData struct {
 	Actor string
 	Nav   string // which nav tab is active: "overview", "jobs" or "history"
 	Self  string // this request's URL (path and query): what a live page polls
-	// Base is the dashboard's base path (docs/dashboard.md#base-path), "" at
+	// Base is the dashboard's base path (docs/running-nops.md#under-a-sub-path), "" at
 	// the domain root: templates prepend it to every hard-coded absolute
 	// link, since a computed one (JobPath, a deploymentCard's Path, ...)
 	// already carries it.
@@ -226,7 +226,7 @@ func (s *server) notFoundMessage(w http.ResponseWriter, r *http.Request, msg str
 	})
 }
 
-// serverError logs the error at ERROR (fail loud: docs/error-handling.md)
+// serverError logs the error at ERROR (fail loud: docs/logs-and-notifications.md)
 // and renders a generic 500. It never puts err's text in the response: it
 // may quote a Nomad or SQLite error that isn't meant for the browser.
 func (s *server) serverError(w http.ResponseWriter, r *http.Request, action string, err error) {

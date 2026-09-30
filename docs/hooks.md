@@ -44,56 +44,6 @@ parameterized, the hook run is `failed` and nothing is dispatched.
 You do not register hooks yourself. If you have (a hook under its plain ID),
 Nops leaves it alone and never runs it.
 
-## Namespace
-
-A hook lives in the namespace of the job that declares it: `nops_pre_hook =
-"backup"` on a job of namespace `apps` means the hook `backup` whose HCL says
-`namespace = "apps"`. Its revision is registered and dispatched there, so the
-ACL of that namespace applies to it. A hook declared only in another namespace
-counts as missing (`pre-hook "backup" not found in repo`). Two hooks with the
-same ID in two namespaces are two hooks, each used by the jobs of its own.
-
-## Hook revisions
-
-A deployment runs the hooks **as they were when it was detected**, not as they
-are in git when it gets to run them: approving a deployment covers the target
-and its hooks. At detection Nops freezes, for each hook the target declares,
-the hook's spec (as parsed from the same commit as the target) and its hash, and
-the deployment's `spec_hash` is the hash of the target and of the hooks, in
-order. So:
-
-- a hook changed in git supersedes a deployment still waiting for approval,
-  which is detected again and must be approved again;
-- a job blocked because its hook was missing or broken is unblocked by
-  fixing the hook, without a retry (its `spec_hash` changed);
-- a change to a hook alone, with the target already in sync, creates no
-  deployment.
-
-Nothing of a hook is in Nomad until its deployment is approved and gets to the
-hook step. There Nops registers the frozen spec as a job named
-**`<hook-id>-<first 8 hex of the hook's spec hash>`** (its `Name` stays the
-hook's own), with a plan first and a CAS on the live index (`0` if it is not
-there), and skips the register when the plan shows no change. That job is the
-**revision**, and it is what is dispatched: the run is `<revision>/dispatch-…`
-and `hook_runs.hook_job_id` holds the revision. Two deployments that share a
-hook at the same spec share the revision; at different specs they use different
-jobs, so neither can change what the other dispatches.
-
-After every detection cycle Nops **deregisters, without purging**, the
-revisions no deployment that is still in progress needs. It only considers jobs
-that are hooks (`nops_role = "hook"`), whose ID ends in `-` and 8 lowercase hex
-digits, and that are not dispatched runs. A stopped revision stays visible in
-Nomad, with the runs it dispatched and their logs (Nomad's own garbage
-collection removes it later), and is registered again if a later deployment
-needs it. The **only** consequence for you: **a hook you register by hand under
-an ID that ends in `-` and 8 hex digits, with `nops_role = "hook"`, is stopped
-by Nops.** Nomad's job list shows the revisions next to your own jobs; they are
-the price of registering a hook only when it is approved.
-
-If the revision cannot be registered, Nops logs an ERROR and tries again at the
-next cycle; if it still cannot within the hook's timeout, the deployment
-fails, as a hook that cannot be reached would.
-
 At dispatch Nops passes the meta below, but **only the ones declared** in the
 hook job's `meta_required`/`meta_optional` (Nomad rejects undeclared meta with
 a 500):
@@ -116,6 +66,15 @@ cannot tell which one the hook wants.
 A hook that lists in `meta_required` something Nops cannot provide (for example
 `nops_image_web` when the job has no docker task `web`) is `failed` with a
 message naming the key.
+
+## Namespace
+
+A hook lives in the namespace of the job that declares it: `nops_pre_hook =
+"backup"` on a job of namespace `apps` means the hook `backup` whose HCL says
+`namespace = "apps"`. Its revision is registered and dispatched there, so the
+ACL of that namespace applies to it. A hook declared only in another namespace
+counts as missing (`pre-hook "backup" not found in repo`). Two hooks with the
+same ID in two namespaces are two hooks, each used by the jobs of its own.
 
 ## Rules for hook authors
 
@@ -156,23 +115,29 @@ Nops **does not resolve nodes**. If the hook must run on the target job's node
 host volume read-only: the scheduler places the hook where the volume is,
 without hardcoding a node ID.
 
-## Dispatch idempotency
+## Hook revisions
 
-Nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
-(position from 0 within the phase; a run created before positions existed keeps
-`<deployment_id>:<phase>`). The same token returns the same dispatched job,
-even after the dispatched job has finished (`TestDispatch`). The token lives
-as long as the dispatched job; for recovery see
-[state machine](state-machine.md#recovery-after-a-crash).
+A deployment runs the hooks **as they were when it was detected**, not as they
+are in git when it gets to run them: approving a deployment covers the target
+and its hooks. At detection Nops freezes, for each hook the target declares,
+the hook's spec (as parsed from the same commit as the target) and its hash, and
+the deployment's `spec_hash` is the hash of the target and of the hooks, in
+order. So:
 
-Nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
-ID right after. A run found `running` without a dispatched job ID may or may not have
-reached Nomad, so Nops looks the dispatched job up by its idempotency token (Nomad
-records it on the dispatched job) and carries on with it, timeout included. If there
-is none, the run is `failed` ("outcome unknown") instead of being dispatched
-again: the dispatched job may have run and been garbage-collected, the token no longer
-deduplicates at that point, and the hook would run a second time. The same
-happens when the dispatched job of a saved ID disappears before Nops saw its outcome.
+- a hook changed in git supersedes a deployment still waiting for approval,
+  which is detected again and must be approved again;
+- a job blocked because its hook was missing or broken is unblocked by
+  fixing the hook, without a retry (its `spec_hash` changed);
+- a change to a hook alone, with the target already in sync, creates no
+  deployment.
+
+A revision is registered as its own job, named
+**`<hook-id>-<first 8 hex of the hook's spec hash>`**, and Nomad's job list
+shows the revisions next to your own jobs. Once no deployment in progress needs
+it, Nops stops it (without purging, so its runs and their logs stay visible).
+The **only** consequence for you: **a hook you register by hand under an ID that
+ends in `-` and 8 hex digits, with `nops_role = "hook"`, is stopped by Nops.**
+How revisions are registered and collected is [below](#how-nops-runs-a-hook).
 
 ## Examples
 
@@ -226,3 +191,51 @@ With `env = true` the same idea gives environment variables (the backup
 example renders `PGHOST` and `PGPORT` for `pg_dump`). A hook runs after the
 new version is healthy, or after approval for a pre-hook, so the service of an
 already running job is registered by then.
+
+## How Nops runs a hook
+
+What happens behind the steps above, for when a hook behaves unexpectedly;
+none of it is needed to write one.
+
+### Registering and collecting revisions
+
+Nothing of a hook is in Nomad until its deployment is approved and gets to the
+hook step. There Nops registers the frozen spec as a job named
+**`<hook-id>-<first 8 hex of the hook's spec hash>`** (its `Name` stays the
+hook's own), with a plan first and a CAS on the live index (`0` if it is not
+there), and skips the register when the plan shows no change. That job is the
+**revision**, and it is what is dispatched: the run is `<revision>/dispatch-…`
+and `hook_runs.hook_job_id` holds the revision. Two deployments that share a
+hook at the same spec share the revision; at different specs they use different
+jobs, so neither can change what the other dispatches.
+
+After every detection cycle Nops **deregisters, without purging**, the
+revisions no deployment that is still in progress needs. It only considers jobs
+that are hooks (`nops_role = "hook"`), whose ID ends in `-` and 8 lowercase hex
+digits, and that are not dispatched runs. A stopped revision stays visible in
+Nomad, with the runs it dispatched and their logs (Nomad's own garbage
+collection removes it later), and is registered again if a later deployment
+needs it ([what that means for you](#hook-revisions)). Revisions in Nomad's
+job list are the price of registering a hook only when it is approved.
+
+If the revision cannot be registered, Nops logs an ERROR and tries again at the
+next cycle; if it still cannot within the hook's timeout, the deployment
+fails, as a hook that cannot be reached would.
+
+### Dispatch idempotency
+
+Nops dispatches with idempotency token `<deployment_id>:<phase>:<position>`
+(position from 0 within the phase; a run created before positions existed keeps
+`<deployment_id>:<phase>`). The same token returns the same dispatched job,
+even after the dispatched job has finished (`TestDispatch`). The token lives
+as long as the dispatched job; for recovery see
+[state machine](state-machine.md#recovery-after-a-crash).
+
+Nops saves the run as `running` **before** it sends the dispatch, and the dispatched job
+ID right after. A run found `running` without a dispatched job ID may or may not have
+reached Nomad, so Nops looks the dispatched job up by its idempotency token (Nomad
+records it on the dispatched job) and carries on with it, timeout included. If there
+is none, the run is `failed` ("outcome unknown") instead of being dispatched
+again: the dispatched job may have run and been garbage-collected, the token no longer
+deduplicates at that point, and the hook would run a second time. The same
+happens when the dispatched job of a saved ID disappears before Nops saw its outcome.

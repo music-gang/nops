@@ -431,7 +431,7 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
-// TestLoginFlowWithBasePath covers docs/dashboard.md#base-path on the OIDC
+// TestLoginFlowWithBasePath covers docs/running-nops.md#under-a-sub-path on the OIDC
 // backend: the redirect to the login, the redirect back to "next" after the
 // callback, and the session cookie's Path all carry the base path.
 func TestLoginFlowWithBasePath(t *testing.T) {

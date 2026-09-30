@@ -28,7 +28,7 @@ type BasicAuthOptions struct {
 	UsersFile string
 	// PublicURL decides whether cookies are Secure, like OIDC's RedirectURL.
 	PublicURL string
-	// BasePath is the dashboard's base path (docs/dashboard.md#base-path),
+	// BasePath is the dashboard's base path (docs/running-nops.md#under-a-sub-path),
 	// "" at the domain root.
 	BasePath string
 	Log      *slog.Logger
@@ -126,7 +126,7 @@ func (b *BasicAuth) Register(mux *http.ServeMux) {
 type loginPageData struct {
 	Error string
 	Next  string
-	Base  string // the dashboard's base path (docs/dashboard.md#base-path)
+	Base  string // the dashboard's base path (docs/running-nops.md#under-a-sub-path)
 }
 
 func (b *BasicAuth) loginForm(w http.ResponseWriter, r *http.Request) {

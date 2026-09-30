@@ -13,7 +13,9 @@ does with it, not around Nops's tables (see the [decision log](design/decisions.
 | What happened to this job? | **Job**: its drift, hooks, meta issues and every deployment it had |
 | What happened, in general? | **Activity**: every deployment, by day |
 
-plus the **git webhook** that triggers an out-of-turn fetch.
+plus the **git webhook** that triggers an out-of-turn fetch (setting it up:
+[running Nops](running-nops.md#the-git-webhook)). How the pages are built is in
+[development](development.md#the-dashboards-code).
 
 ## Pages
 
@@ -25,7 +27,7 @@ whole value on hover.
 
 | Page | Shows |
 |---|---|
-| `GET /` **Overview** | A strip with **Git** (the commit Nops is on: short SHA, linked when the repository is an `http(s)` URL, subject, author, when it was made, when the repository was last checked, and a *Fetch now* button; the last poll's failure, if the latest poll failed) and **Detection** (when the last cycle ran and how long it took, how many managed jobs it found, and `ok`, `degraded` or `aborted`; jobs skipped because Nomad failed on them, files Nomad could not parse, and the error that stopped a cycle, if any; while a file does not parse, a note that jobs removed from git are not being looked for). Then **Needs attention**, most urgent first, one line each with why and where to act: deployments waiting for approval (oldest first, *Review*), blocked jobs (with the reason and a *Retry* button), recent failures nobody retried (7 days), jobs with a meta error, **paused** jobs (who paused, why, and a *Resume* button: listed whether or not the job drifts, so a forgotten pause does not silently stop a job converging), and, last because nothing is broken, **orphans** ("Removed from git, still running in Nomad"). A job under policy `none` that drifts is **not** listed here: leaving it alone is its policy, and it is on Jobs. Then **In progress**: deployments in `detected`, `pre_hook`, `applying` or `post_hook`. Then **Recently completed**: the 5 most recently completed deployments (by when they completed, not when they were created), so one does not simply vanish from In progress with no sign it succeeded — only `completed`; a recent failure is already in Needs attention, and rejected/superseded are not urgent enough for the Overview. Polls itself every 5s (see [Look and technology](#look-and-technology)); the commit's own time reads "committed", the git strip's other time "repository checked", so a fresh commit and a fresh poll of an unchanged head are never confused. |
+| `GET /` **Overview** | A strip with **Git** (the commit Nops is on: short SHA, linked when the repository is an `http(s)` URL, subject, author, when it was made, when the repository was last checked, and a *Fetch now* button; the last poll's failure, if the latest poll failed) and **Detection** (when the last cycle ran and how long it took, how many managed jobs it found, and `ok`, `degraded` or `aborted`; jobs skipped because Nomad failed on them, files Nomad could not parse, and the error that stopped a cycle, if any; while a file does not parse, a note that jobs removed from git are not being looked for). Then **Needs attention**, most urgent first, one line each with why and where to act: deployments waiting for approval (oldest first, *Review*), blocked jobs (with the reason and a *Retry* button), recent failures nobody retried (7 days), jobs with a meta error, **paused** jobs (who paused, why, and a *Resume* button: listed whether or not the job drifts, so a forgotten pause does not silently stop a job converging), and, last because nothing is broken, **orphans** ("Removed from git, still running in Nomad"). A job under policy `none` that drifts is **not** listed here: leaving it alone is its policy, and it is on Jobs. Then **In progress**: deployments in `detected`, `pre_hook`, `applying` or `post_hook`. Then **Recently completed**: the 5 most recently completed deployments (by when they completed, not when they were created), so one does not simply vanish from In progress with no sign it succeeded — only `completed`; a recent failure is already in Needs attention, and rejected/superseded are not urgent enough for the Overview. Polls itself every 5s (see [Look and technology](development.md#look-and-technology)); the commit's own time reads "committed", the git strip's other time "repository checked", so a fresh commit and a fresh poll of an unchanged head are never confused. |
 | `GET /jobs` **Jobs** (`/drift` redirects here) | One row per managed job from `Engine.Observations()`, and one per **orphan** (`Engine.Orphans()`: **Not in git**, no file, the policy of its last deployment): its sync state, policy, last deployment and file. A filter by sync state with counts (`?state=`), kept across the page's own polling. |
 | `GET /jobs/{namespace}/{job}` **Job** | The job's sync state, policy, file and hooks (`nops_pre_hook`, `nops_post_hook`: every hook of each phase, in the order they run, with the timeout its hook job sets, none shown for a hook that is not in the repository), the block and its *Retry* when blocked, the job's [sync window](policies.md#sync-windows) in the Details column (whether it is open or closed, until when, the rule, and the time zone it is read in, written in full so it is never read in another), a notice while a closed sync window holds its drift (and when it opens), a notice with *Resume* while it is paused (who, when and why; nothing new is started and Approve is refused, drift is still shown) or, when it is not, a **Pause** box with an optional reason (outside the polled regions, so a reason being typed survives a poll; a job that is not in the repository has none), the [Nomad panel](#the-nomad-panel), the current drift diff with its summary, the meta issues, and its deployments, newest first. A job no longer in the repository still shows its past deployments; one with neither is a 404. An orphan shows a notice instead of a drift: Nops deployed it, it is not in git any more, it still runs in Nomad and Nops does not stop it; the notice says what to do (`nomad job stop -namespace <ns> <id>`, or put the file back) and goes away on its own once either is done. The head, the Nomad panel, the deployments list and the details column poll themselves every 5s; the drift diff does not, so a `<details>` node a person opened or closed stays as they left it. |
 | `GET /deployments/{id}` **Deployment** | A header with the job (linked), state, commit (SHA, subject, author), policy and age, and *Open in Nomad* when the Nomad UI address is known; the error, if it failed; a notice when it is what blocks its job (with *Retry*); a notice while its job is paused (with *Resume*; while `pending_approval` its *Approve* is disabled, *Reject* is not); a notice while it waits for a person to promote the canaries of its Nomad deployment (the apply timeout does not run meanwhile), with a *Promote* button and, if the Nomad UI address is known, an *Open in Nomad* link to the job's deployments; while it is `applying`, the [Nomad panel](#the-nomad-panel); while `pending_approval`, the **Review** panel: what Approve will do, in order (the pre-hook, the register, waiting for health, the post-hook: the hooks are the ones the deployment froze, each with the short revision it will run, and the timeouts are the ones of the frozen hook jobs; IDs only, never the specs), and the hook runs listed in the order they run (pre before post, by position), and the Approve and Reject buttons. Then the plan diff with a summary (how many fields are added, edited and removed, and where), open to be reviewed and folded once there is nothing to decide; the hook runs; the timeline (an event that leaves the state as it was, like the wait for a promotion or the request to promote, shows the state's name and its message); and a Details column. Never renders `job_spec` (see [secret redaction](#secret-redaction)). |
@@ -83,7 +85,7 @@ is cached for 4 seconds, errors included, so any number of open tabs cost one
 set of Nomad calls (the job, its allocations, its latest deployment) per poll,
 and a Nomad that is down is asked once per 4 seconds, not once per tab. Without
 a Nomad to read (in tests) the box is not shown. It needs `read-job` in the
-namespace, which Nops already has ([token ACL](configuration.md#token-acl)).
+namespace, which Nops already has ([token ACL](running-nops.md#the-nomad-token)).
 
 ### Links into the Nomad UI
 
@@ -127,102 +129,6 @@ The handlers work from small interfaces over `*store.Store`, `*engine.Engine`,
 `web.Nomad`), so tests use fakes instead of a real database, Nomad client or
 repository.
 
-## Base path
-
-Nops can be served under a sub path of a shared domain
-(`https://domain.example.org/nops`) instead of a dedicated one: give
-`-public-url` a path and that becomes the dashboard's base path
-([configuration](configuration.md#dashboard)) — there is no separate flag,
-since the browser-facing URL is the only place that matters.
-
-The reverse proxy in front of Nops must forward the request path
-**unstripped**, prefix included (`https://domain.example.org/nops/jobs`
-must reach Nops as `/nops/jobs`, not `/jobs`): Nops does its own stripping,
-once, at the edge (`http.StripPrefix`), and prepends the base path back to
-every URL it generates itself — redirects, the session and login cookies'
-`Path`, every link and form action a page renders, and the static assets —
-so the browser and the proxy always see the full, prefixed address. Getting
-this backwards (a proxy that already strips the prefix) makes every link
-Nops renders double it.
-
-`/healthz` is the one exception: it answers at the bare path too, without
-the base path, since an orchestrator's health check
-([configuration](configuration.md#running-nops-as-a-nomad-job)'s example)
-hits the task's own port directly, bypassing whatever prefix a reverse
-proxy mounts the dashboard under.
-
-See the [decision log](design/decisions.md), 2026-09-28.
-
-## Look and technology
-
-No JS framework, no build step: `html/template` renders every page (all
-templates parsed once at startup, so a broken one fails loud rather than on
-the first request), plain CSS carries the design, and
-[htmx](https://htmx.org) is the only script, vendored under `/static` rather
-than loaded from a CDN. Every action works as a plain form post without it;
-htmx adds `hx-boost` (page navigation without a full reload) and the polling
-below. The CSP is `script-src 'self'; style-src 'self'` — there is no inline
-script or style to allow.
-
-The logo is the ship of the logo of the [README](../README.md) (a planet with
-the ship, `docs/assets/logo.webp`, which the dashboard does not embed). The
-ship alone is exported as PNGs under `internal/web/static`: the header mark
-(`logo-96x96.png`, shown at 40px, the only thing in the header's corner: no name
-beside it), the mark above the login form (`logo-192x192.png`, shown at 96px), the favicons (`favicon-16x16.png`,
-`favicon-32x32.png`) and the touch icon (`apple-touch-icon.png`, 180px). Every
-page links the favicons and the touch icon, the login page too, through the same
-`asset` function as the stylesheet. The login page is flat, in the manner of GitHub's:
-no card, the mark, the title "Sign in to Nops" and the form on the page's own
-background.
-
-Overview, Jobs, Job and Activity poll their own address every 5s and swap in
-only the region a full re-render of the same page would show
-(`hx-select="#live"`, `hx-swap="outerHTML"`; the request keeps a page's own
-`?state=` filter, since it is part of `.Self`), so a new deployment, a changed
-sync state or the result of *Fetch now* shows up without a reload. Rendering
-the whole page again costs nothing here (local SQLite and the engine's
-in-memory state), so there is no dedicated fragment endpoint for them, unlike
-the Deployment page's `/status` above. The Job page uses three such regions
-(`#live-head`, `#live-deployments` and `#live-details`) so the drift diff
-between them, whose `<details>` nodes a person may have opened or closed,
-is never re-rendered by the poll.
-
-Each of these regions carries `hx-disinherit="hx-select hx-swap"`: `hx-boost`
-turns every link and form inside it (a job's link, *Retry*, *Fetch now*) into
-its own boosted request, and htmx attributes are inherited by children unless
-told otherwise, so without it a boosted link would pick up the region's own
-`hx-select`/`hx-swap` and apply them to *its own* navigation — selecting
-`#live` out of whatever page it lands on (blank, if that page has no such
-element) and swapping it in with `outerHTML` over the whole body (dropping the
-header and the page's width). See the [decision log](design/decisions.md),
-2026-09-25.
-
-Static files are cached for a day, so the templates link them through the
-`asset` function, which adds a version taken from the file's own bytes
-(`/static/app.css?v=<10 hex digits of its SHA-256>`): a changed file has a new
-address and a browser never shows the new pages with the old stylesheet, while
-an unchanged one stays cached. The version is computed once per file from the
-embedded copy; a file that does not exist makes the page fail loud (a logged
-500) instead of linking a 404. The login page uses it too.
-
-The look reads [GitHub's Primer](https://primer.style): its color tokens for
-light and dark (the theme follows the system), a 14px base, 6px corners and
-system font stacks, so nothing is downloaded. It is built for scanning, not
-reading: **one thing per line**, cut with an ellipsis rather than wrapped, with
-the full value on hover. On a narrow screen (768px or less) a row becomes two
-lines on purpose (the state and name, then the detail), secondary columns are
-hidden, and a wide diff scrolls inside its own box, never the page.
-Deployment states map to one of five colors used consistently across every
-page: pending (amber), running — `pre_hook`/`applying`/`post_hook` — (blue),
-completed (green), failed (red), rejected/superseded (muted grey).
-
-The plan diff renders Nomad's `JobDiff` recursively (job → task groups →
-tasks → objects/fields) as nested `<details>`, open only where something
-changed; a redacted value (`<redacted>`) renders as a pill rather than plain
-text, so it reads as "a secret changed here" at a glance. Above it, a summary
-counts the field changes (added, edited, removed) and says in which job, task
-group or task they are; a redacted field counts like any other.
-
 ## Authentication
 
 Nops logs people in itself, never a header set by a reverse proxy
@@ -243,7 +149,7 @@ options for each are in [configuration](configuration.md#dashboard):
 
 **Every page needs a login**, reads included: the diff of a deployment says
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
-the [git webhook](#git-webhook) (its own secret), `/healthz` and `/static/*`
+the [git webhook](running-nops.md#the-git-webhook) (its own secret), `/healthz` and `/static/*`
 (the stylesheet and htmx, embedded in the binary: nothing in them is secret).
 
 After a login, either backend sends the browser back to the page it asked for
@@ -296,27 +202,6 @@ every login, which answers 503 (and logs an ERROR) while it fails, and works
 again as soon as the provider does. People already logged in are not affected
 until their session ends.
 
-### Setting up the client
-
-`-public-url` is no longer required to start Nops (see
-[configuration](configuration.md#dashboard)): unset, it defaults to a
-`localhost` guess derived from `-listen-addr`, which is essentially never
-right for OIDC — a provider redirects the browser to the registered URI, not
-to wherever Nops happens to be listening. **Set `-public-url` explicitly**
-before configuring the client below.
-
-Create an OIDC client (confidential, authorization code) at the provider:
-
-- **Redirect URI:** `<public-url>/auth/callback`, e.g.
-  `https://nops.example.com/auth/callback`.
-- **Scopes:** `openid`, `profile`, `email`, and `groups` when you use
-  `-oidc-allowed-groups` (Nops asks for `groups` only then). Check that the
-  provider puts a `groups` claim in the ID token or in userinfo: with Authelia
-  that is the `groups` scope, with Authentik the group mapping of the client.
-- **Issuer:** the value in the provider's discovery document
-  (`<issuer>/.well-known/openid-configuration`), trailing slash included:
-  Authentik's is like `https://auth.example.com/application/o/nops/`.
-
 ## Local users (`-auth-mode=basic`)
 
 No provider, no claims: `-users-file` holds one `username:bcrypt-hash` line
@@ -347,47 +232,6 @@ line it prints into the file Nops reads.
   failed logins. Acceptable for the personal, self-hosted use this mode
   targets; put Nops behind a reverse proxy that rate-limits if the dashboard
   is reachable from anywhere less trusted than that.
-
-## Writes and CSRF
-
-A request that changes state (`POST`) is refused with 403 when the browser says
-it comes from another origin (`Sec-Fetch-Site`, or `Origin` against `Host`:
-Go's `http.CrossOriginProtection`), on top of the `SameSite=Lax` cookie, for
-both login backends alike — this includes `POST /auth/login` itself,
-against session-fixation-style login CSRF, not only the dashboard's own
-writes. There is no CSRF token to carry through the pages. Requests with
-neither header (a `curl`) are allowed, and still need the session cookie
-where one is required.
-
-## Git webhook
-
-`POST /webhook/git` asks the git watcher for an out-of-turn poll
-(`Watcher.Trigger()`, non-blocking: it does not wait for the poll to finish)
-so a push shows up sooner than `-git-poll-interval`. It needs no session — it
-is authenticated by a secret shared with the forge instead
-(`-webhook-secret-file`, [configuration](configuration.md#dashboard)) — and
-is disabled (404) when that secret is unset. Nops never looks at the payload
-beyond checking its signature: any push is "something changed, go look", so
-there is nothing forge-specific to parse.
-
-Each forge signs differently, and Nops checks whichever header is present:
-
-| Forge | Header | How it is checked |
-|---|---|---|
-| GitHub | `X-Hub-Signature-256: sha256=<hex>` | HMAC-SHA256 of the raw body with the secret, compared with `hmac.Equal`. |
-| Gitea | `X-Gitea-Signature: <hex>` | Same construction, no `sha256=` prefix. |
-| GitLab | `X-Gitlab-Token: <secret>` | The header must equal the secret itself, compared in constant time. |
-
-A request matching none of them, or whose signature does not match, gets 401
-and a WARN in the log that never says which check failed (so a probe cannot
-learn which forge Nops expects). The body is capped at 1 MiB.
-
-Set up the webhook at the forge: URL `<public-url>/webhook/git`, content
-type `application/json`, secret the same file's content passed to
-`-webhook-secret-file` (or `NOPS_WEBHOOK_SECRET`). Only a push to
-`-git-branch` needs to trigger it, but Nops does not filter by branch or ref:
-any authenticated request just triggers a poll, which is a no-op if nothing
-under `-git-path` changed.
 
 ## Secret redaction
 

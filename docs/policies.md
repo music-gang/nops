@@ -64,10 +64,34 @@ nops_sync_window_duration = "9h"           # ... and stays open until 18:00
   gate, and an approval given outside the window applies at once.
 - A window is read from git like every other key: an invalid one is an error and
   policy `none` ([meta-keys](meta-keys.md#validation)). A person's
-  [pause](state-machine.md#holding-a-job) holds a job whatever its window says.
+  [pause](#pausing-a-job) holds a job whatever its window says.
+
+## Pausing a job
+
+Under `auto` Nops puts a job back to what git says on its next cycle, which is
+not what you want during an incident (a fix made by hand in Nomad, a
+`nomad job revert`). **Pause** the job from its page on the
+[dashboard](dashboard.md#pages), with a reason if you like:
+
+- the drift is still detected and shown, and the job shows as **Paused**,
+  whether or not it drifts, so a forgotten pause is seen; no deployment is
+  created;
+- a deployment waiting for approval stays, but cannot be approved until the
+  job is resumed (it can still be rejected);
+- a deployment already running (a pre-hook, the apply, a post-hook) finishes;
+- **Resume** lifts the pause, and the next detection cycle plans again from
+  git, so what is applied is never a plan from before the pause.
+
+A pause holds a job under `auto` and under `approval` alike. Any logged-in
+user can pause and resume, and both are logged with who did it. There is no
+pause for the whole instance: stopping Nops does that. How a hold works inside
+the engine is in [state machine](state-machine.md#holding-a-job).
 
 ## Approval
 
+- Approve or reject from the deployment's page on the
+  [dashboard](dashboard.md#pages): it shows the difference with the cluster
+  and what *Approve* will do.
 - Approving or rejecting is an authenticated human action, recorded in
   `events` with the actor and in `decided_by`/`decided_at`.
 - An approval is valid for `(deployment_id, spec_hash)`. If the spec changes,
