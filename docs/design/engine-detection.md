@@ -319,10 +319,20 @@ For each managed job, in order:
      to `pending_approval` in a second write, which did not land; apply never
      advances it) → it is moved now, with its notification: `pending_approval`,
      or `failed` when a hook it declares is missing;
-   - else it is left as is (still approvable).
+   - else, if the job is held (paused) and it is a `detected` deployment under
+     `auto` → `superseded` (the hold's reason, "paused by alice: ..."), so the
+     apply loop does not start it and the next cycle after the hold plans
+     afresh;
+   - else it is left as is (still approvable: a held `pending_approval` stays,
+     and Approve refuses).
 3. If the policy is `none`, or there is no drift, nothing more happens.
-4. If the retry rule applies (see above), nothing more happens.
-5. Otherwise a deployment is created, with the redacted diff, the full spec and
+4. If the job is held (a pause, see [state-machine](../state-machine.md#holding-a-job)),
+   nothing more happens: the drift is still in the observation and the hold is
+   in it too (`Observation.Hold`), but no deployment is created, under either
+   policy. The pauses are read once per cycle; a store failure reading them
+   aborts the cycle, like any other (invariant 7).
+5. If the retry rule applies (see above), nothing more happens.
+6. Otherwise a deployment is created, with the redacted diff, the full spec and
    the live index as `cas_index`, **in the state it waits in**: `failed` if a
    declared hook is missing from the repo or invalid, `pending_approval` under
    `approval`, `detected` under `auto` for `engine-apply` to pick up. It is one

@@ -165,6 +165,16 @@ simply drops that deployment for this tick (logged at INFO, not ERROR: this is
 an expected, harmless race) instead of retrying — the deployment is
 `superseded` now, so there is nothing left to apply.
 
+A **pause** adds a second one, for the same `detected` deployment: a person
+pauses the job after detection created it and before this loop starts it.
+Detection would supersede it on its next cycle, but this loop may run first, so
+`stepDetected` reads the job's pause from the store before it advances a
+deployment, and, if there is one, leaves it `detected` and asks detection for a
+cycle now. A failed read is not "not paused": the deployment waits for the next
+tick rather than start on a guess (invariant 7). Only the start is gated: once
+a deployment is in `pre_hook` it finishes, and `Approve` refuses a paused job
+(`ErrPaused`) while `Reject` works ([state-machine](../state-machine.md#holding-a-job)).
+
 ## Decisions
 
 These are recorded in the [decision log](decisions.md); the reasoning is

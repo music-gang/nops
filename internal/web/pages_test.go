@@ -114,12 +114,18 @@ type approveCall struct{ id, specHash, actor string }
 type rejectCall struct{ id, actor string }
 type retryCall struct{ namespace, job, actor string }
 type promoteCall struct{ id, actor string }
+type pauseCall struct{ namespace, job, actor, reason string }
+type resumeCall struct{ namespace, job, actor string }
 
 type fakeEngine struct {
 	approveErr   error
 	rejectErr    error
 	retryErr     error
 	promoteErr   error
+	pauseErr     error
+	resumeErr    error
+	pauseCalls   []pauseCall
+	resumeCalls  []resumeCall
 	promoteCalls []promoteCall
 	approveCalls []approveCall
 	rejectCalls  []rejectCall
@@ -147,6 +153,16 @@ func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) 
 func (f *fakeEngine) Promote(ctx context.Context, id, actor string) error {
 	f.promoteCalls = append(f.promoteCalls, promoteCall{id, actor})
 	return f.promoteErr
+}
+
+func (f *fakeEngine) Pause(ctx context.Context, namespace, jobID, actor, reason string) error {
+	f.pauseCalls = append(f.pauseCalls, pauseCall{namespace, jobID, actor, reason})
+	return f.pauseErr
+}
+
+func (f *fakeEngine) Resume(ctx context.Context, namespace, jobID, actor string) error {
+	f.resumeCalls = append(f.resumeCalls, resumeCall{namespace, jobID, actor})
+	return f.resumeErr
 }
 
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }

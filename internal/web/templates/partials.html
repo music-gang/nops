@@ -226,6 +226,15 @@
   </section>
   {{end}}
   {{if .Notice}}<p class="flash flash--warn">{{.Notice}}</p>{{end}}
+  {{with .Paused}}
+  <section class="flash flash--warn flash--action">
+    <div><strong>The job is paused</strong> ({{.Reason}}){{if $.CanDecide}}: it cannot be approved until it is resumed. It can still be rejected.{{end}}</div>
+    <form method="post" action="{{.ResumePath}}">
+      <input type="hidden" name="back" value="job">
+      <button type="submit" class="btn btn--sm">Resume</button>
+    </form>
+  </section>
+  {{end}}
   {{if .PromotionWait}}
   <section class="flash flash--warn flash--action">
     <div><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries here or in Nomad, or fail the Nomad deployment, to move on.{{if .NomadDeploymentsURL}} <a href="{{.NomadDeploymentsURL}}" target="_blank" rel="noopener noreferrer">Open in Nomad</a>{{end}}</div>
@@ -249,10 +258,14 @@
         {{end}}
       </ol>
       <div class="decision__actions">
+        {{if .Paused}}
+        <button type="button" class="btn btn--primary" disabled title="The job is paused">Approve</button>
+        {{else}}
         <form method="post" action="{{.Deployment.Path}}/approve">
           <input type="hidden" name="spec_hash" value="{{.Deployment.SpecHash}}">
           <button type="submit" class="btn btn--primary">Approve</button>
         </form>
+        {{end}}
         <form method="post" action="{{.Deployment.Path}}/reject">
           <button type="submit" class="btn btn--danger">Reject</button>
         </form>

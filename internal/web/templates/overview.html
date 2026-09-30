@@ -65,6 +65,11 @@
           <input type="hidden" name="back" value="overview">
           <button type="submit" class="btn btn--sm">Retry</button>
         </form>
+        {{else if .ResumePath}}
+        <form method="post" action="{{.ResumePath}}">
+          <input type="hidden" name="back" value="overview">
+          <button type="submit" class="btn btn--sm">Resume</button>
+        </form>
         {{else}}
         <a class="btn btn--sm{{if eq .Kind "pending"}} btn--primary{{end}}" href="{{.Path}}">{{if eq .Kind "pending"}}Review{{else}}Open{{end}}</a>
         {{end}}

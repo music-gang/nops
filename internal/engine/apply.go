@@ -160,6 +160,20 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 		e.kickDetection()
 		return
 	}
+	// A hold gates the start: a deployment that was `detected` before the job was
+	// paused is not advanced. Detection puts it aside (see reconcileDeployment),
+	// and is asked to do it now. A store error is not "not held": the deployment
+	// waits for the next cycle rather than start on a guess (invariant 7).
+	hold, err := e.holdOf(ctx, d.Namespace, d.JobID)
+	if err != nil {
+		log.ErrorContext(ctx, "read the job's pause", "error", err)
+		return
+	}
+	if hold != nil {
+		log.DebugContext(ctx, "detected deployment of a held job left to detection", "reason", hold.Reason)
+		e.kickDetection()
+		return
+	}
 	job, err := parseJobSpec(d)
 	if err != nil {
 		log.ErrorContext(ctx, "decode job spec", "error", err)
@@ -627,7 +641,9 @@ func neverHasAllocations(job *api.Job) bool {
 // current one (invariant 3), or if its job is not among the managed jobs of the
 // last detection cycle (ErrNotInRepo): a broken file elsewhere suspends the
 // removal of a job's deployments, so the deployment of a job git no longer has
-// can still be pending, and approving it would register that job.
+// can still be pending, and approving it would register that job. It also
+// refuses (ErrPaused) while the job is paused: the deployment stays
+// pending_approval and can be approved once the job is resumed.
 func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error {
 	if actor == "" {
 		return errors.New("approve: actor is required")
@@ -644,6 +660,13 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	}
 	if !e.observed(d.Namespace, d.JobID) {
 		return fmt.Errorf("approve %s: %w", id, ErrNotInRepo)
+	}
+	hold, err := e.holdOf(ctx, d.Namespace, d.JobID)
+	if err != nil {
+		return fmt.Errorf("approve %s: %w", id, err)
+	}
+	if hold != nil {
+		return fmt.Errorf("approve %s: %w: %s", id, ErrPaused, hold.Reason)
 	}
 	job, err := parseJobSpec(d)
 	if err != nil {

@@ -74,6 +74,12 @@ type Store interface {
 	// MarkPromotionRequested is used by Promote: the request is on record
 	// before Nomad is asked.
 	MarkPromotionRequested(ctx context.Context, id, actor string) error
+	// PauseJob, ResumeJob, ActivePauses and PauseOf are used by the hold on a
+	// paused job (see docs/state-machine.md).
+	PauseJob(ctx context.Context, namespace, jobID, actor, reason string) error
+	ResumeJob(ctx context.Context, namespace, jobID, actor string) error
+	ActivePauses(ctx context.Context) ([]store.Pause, error)
+	PauseOf(ctx context.Context, namespace, jobID string) (store.Pause, error)
 }
 
 // Hooks is what apply needs to run a deployment's hooks. *hooks.Runner
@@ -127,6 +133,11 @@ type Observation struct {
 	// BlockedReason explains BlockedBy and what unblocks it. Empty when
 	// BlockedBy is empty.
 	BlockedReason string
+	// Hold is what keeps nops from starting a deployment for this job right now
+	// (a pause), or nil if nothing does. Unlike BlockedBy it is not about a
+	// deployment, and it is set whether or not the job drifts: a forgotten
+	// pause must show.
+	Hold *Hold
 }
 
 // HookRef is a hook a job declares, as the repository has it now.

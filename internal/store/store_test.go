@@ -488,8 +488,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
-		t.Errorf("user_version = %d, %v; want 5", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 6 {
+		t.Errorf("user_version = %d, %v; want 6", v, err)
 	}
 }
 

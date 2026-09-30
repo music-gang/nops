@@ -90,6 +90,40 @@ human, under `auto` it proceeds. A retry is one more attempt, not a promise:
 if the new deployment fails the same way, the job is blocked again. See
 [engine-apply](design/engine-apply.md), decision 9.
 
+## Holding a job
+
+A **hold** is a condition that keeps Nops from *starting* a deployment for a
+job. It is one gate in the engine, asked one question (`Observation.Hold`), and
+a person's **pause** is the only source today. It only ever subtracts: it
+creates, approves and advances nothing, so it cannot apply anything invariant 3
+would not allow, and what it reads is a row in SQLite that a person wrote, not
+something that changes what git says ([philosophy](philosophy.md), invariant 4).
+
+While a job is held:
+
+- detection still plans it and shows the drift, and the job shows as **Paused**
+  (whether or not it drifts: a forgotten pause must show), but **no deployment
+  is created**, under `auto` and under `approval` alike;
+- a deployment still `detected` (an `auto` one, created before the hold) is
+  moved to `superseded` with the hold as the reason, and the apply loop does
+  not start one it finds `detected` in the meantime (it asks detection for a
+  cycle and leaves it). When the hold lifts, detection plans again, so what is
+  applied is never a plan from before it: the state machine gains no state;
+- a `pending_approval` deployment stays as it is, and **Approve is refused**
+  (`ErrPaused`) until the job is resumed. *Reject* still works: it starts
+  nothing;
+- a deployment already in `pre_hook`, `applying` or `post_hook` finishes: the
+  hold gates the start, never what is running.
+
+**Pause** and **resume** (`Engine.Pause`, `Engine.Resume`,
+`POST /jobs/{namespace}/{job}/pause` and `/resume`) are any logged-in user's
+action. Each is persisted before anything else (invariant 7), logged at INFO
+with the actor, and asks detection for a cycle so the page and any `detected`
+deployment catch up at once. A job can be paused only while it is among the
+managed jobs of the last detection cycle, and once at a time. There is no
+instance-wide pause: stopping Nops does that. See the
+[decision log](design/decisions.md), 2026-09-30.
+
 ## Schema
 
 The detail lives in `internal/store/migrations/`; this is the summary.
@@ -126,6 +160,12 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   dispatched_job_id, state (`dispatching|running|succeeded|failed|timed_out`),
   timeout_s, error, started_at, finished_at.
   `UNIQUE(deployment_id, phase, position)`.
+- `job_pauses`: id, namespace, job_id, paused_by, paused_at, reason (may be
+  empty), resumed_by, resumed_at. One row per pause, kept after the resume as
+  the record of who paused and resumed a job and when (the `events` table
+  belongs to a deployment, and a pause has none). `resumed_at` is empty while
+  the pause is in force. `UNIQUE INDEX (namespace, job_id) WHERE resumed_at IS
+  NULL` allows one pause in force per job, like the per-job lock.
 - `events`: append-only log (deployment_id, ts, from_state, to_state, actor,
   message). It feeds the history view in the dashboard. `Store.MarkRetried`
   appends one event whose `from_state` and `to_state` are both the
@@ -151,6 +191,9 @@ Store rules:
   in the same transaction.
 - `Store.MarkPromotionRequested` changes nothing but that event, guarded on
   `state = applying`.
+- `Store.PauseJob` and `Store.ResumeJob` touch only `job_pauses`: a second
+  pause of a paused job is `ErrAlreadyPaused` (the index), a resume of one that
+  is not paused is `ErrNotPaused`.
 - A single SQLite connection: writes are serialized.
 
 ## Recovery after a crash
