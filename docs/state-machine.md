@@ -117,7 +117,13 @@ While a job is held:
   (`ErrPaused`) until the job is resumed. *Reject* still works: it starts
   nothing. A window never holds an approval;
 - a deployment already in `pre_hook`, `applying` or `post_hook` finishes: the
-  hold gates the start, never what is running (a pre-hook is the start).
+  hold gates the start, never what is running (a pre-hook is the start);
+- a job whose drift a failed or rejected deployment
+  [blocks](#not-retrying-an-unchanged-failure) stays blocked, and is listed as
+  such in Needs attention with its *Retry*: the hold hides nothing. A window
+  shows it as **Blocked**, not Held, since opening would not deploy it; a pause
+  still shows as **Paused**. A retry while the job is held lifts the block and
+  starts nothing until the hold lifts too.
 
 A window has no actor and no row: it is computed from the job's meta and the
 clock every cycle (in `-sync-window-time-zone`), and the apply loop asks it again

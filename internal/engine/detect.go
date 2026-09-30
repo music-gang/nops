@@ -334,7 +334,8 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // superseded rather than left for apply to start, so that when the hold lifts
 // detection plans again and what is applied is never a plan from before it. A
 // pending_approval deployment is left as it is (Approve refuses while the job
-// is paused), and so is one in pre_hook/applying/post_hook.
+// is paused), and so is one in pre_hook/applying/post_hook. A block is still
+// reported while the job is held.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
 	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hold *Hold) (blockedBy, blockedReason string, err error) {
 
@@ -389,11 +390,10 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	if cfg.Policy == meta.PolicyNone || !drift {
 		return "", "", nil
 	}
-	if hold != nil {
-		log.DebugContext(ctx, "job held: no deployment created", "reason", hold.Reason)
-		return "", "", nil
-	}
 
+	// The block is worked out before the hold: a hold gates the start and
+	// hides nothing, so a blocked job stays blocked, with its Retry, while it
+	// is held too.
 	latest, err := e.store.LatestDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -403,6 +403,10 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		if blockedBy, blockedReason = blockedRetry(latest, hash, liveIndex); blockedBy != "" {
 			return blockedBy, blockedReason, nil
 		}
+	}
+	if hold != nil {
+		log.DebugContext(ctx, "job held: no deployment created", "reason", hold.Reason)
+		return "", "", nil
 	}
 
 	specJSON, err := json.Marshal(planJob)
