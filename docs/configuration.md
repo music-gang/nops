@@ -74,6 +74,7 @@ variable and default are the option's; and the same for the secrets table).
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-nomad-addr` | `NOPS_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad HTTP API address (`http://` or `https://`). |
+| `-nomad-ui-url` | `NOPS_NOMAD_UI_URL` | none | The address a person opens the Nomad UI at in a browser, e.g. `https://nomad.example.com`, or with a sub path when Nomad sits behind a proxy under one (`https://infra.example.com/nomad`). The dashboard builds its "Open in Nomad" links on it ([dashboard](dashboard.md#links-into-the-nomad-ui)). Unset: **no link**. It is never taken from `-nomad-addr`: that is the address Nops itself uses (`http://127.0.0.1:4646`, `http://nomad.service.consul:4646`), often not one a browser can reach, so where the two differ, which is when this option is needed, a link built from it would be a broken one, and a missing link is better than a wrong one. An absolute `http://` or `https://` URL, checked like `-public-url`. |
 | `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces Nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
 | `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the Nomad ACL token. Unset: no token (ACLs disabled). |
 | `-nomad-ca-cert` | `NOPS_NOMAD_CA_CERT` | none | PEM file of the CA that signed the Nomad server certificate. |

@@ -212,7 +212,8 @@ func TestE2EApplyWaitsForCanaryPromotion(t *testing.T) {
 // on the timeline with who made it, and the deployment completes and runs its
 // post-hook without anyone touching Nomad.
 func TestE2EPromoteFromTheDashboard(t *testing.T) {
-	e := newE2E(t, "NOPS_APPLY_TIMEOUT=8s")
+	const nomadUI = "https://nomad-ui.example.test/nomad" // where a person opens Nomad, not where nops does
+	e := newE2E(t, "NOPS_APPLY_TIMEOUT=8s", "NOPS_NOMAD_UI_URL="+nomadUI)
 	jobID := uniqueID(t, e.raw, "promotesvc")
 	hookID := uniqueID(t, e.raw, "promotehook")
 	marker := filepath.Join(t.TempDir(), "post-hook-ran")
@@ -242,6 +243,9 @@ func TestE2EPromoteFromTheDashboard(t *testing.T) {
 		}
 	}
 	e.dash.waitBody(t, "/jobs/default/"+jobID, "requires manual promotion")
+	jobInNomad := nomadUI + "/ui/jobs/" + jobID + "@default"
+	e.dash.waitBody(t, "/jobs/default/"+jobID, `href="`+jobInNomad+`"`)
+	e.dash.waitBody(t, page, `href="`+jobInNomad+`/deployments"`)
 
 	if status, _ := e.dash.post(t, page+"/promote", nil); status != http.StatusOK && status != http.StatusSeeOther {
 		t.Fatalf("POST %s/promote answered %d", page, status)

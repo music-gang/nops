@@ -55,6 +55,10 @@ type nomadView struct {
 	// AppliedIndex is the index of the apply of the nops deployment the panel is
 	// shown for; 0 on a job's page.
 	AppliedIndex uint64
+
+	// DeploymentsURL is the job's Deployments tab in the Nomad UI, "" without a
+	// -nomad-ui-url.
+	DeploymentsURL string
 }
 
 // Tracked reports whether the Nomad deployment is the one that tracks the apply
@@ -152,6 +156,7 @@ func (s *server) nomadPanel(ctx context.Context, namespace, jobID string, applie
 	}
 	v := e.view
 	v.AppliedIndex = appliedIndex
+	v.DeploymentsURL = s.nomadDeploymentsURL(namespace, jobID)
 	// The progress deadline is shown relative to now: render it per request.
 	if v.Deployment != nil {
 		d := *v.Deployment

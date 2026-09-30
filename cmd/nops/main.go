@@ -115,7 +115,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Nomad: nomadClient, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Log: log,
 	})
@@ -177,6 +177,7 @@ func startupAttrs(cfg *config.Config) []any {
 		"go", runtime.Version(),
 		"listen_addr", cfg.ListenAddr,
 		"nomad_addr", cfg.NomadAddr,
+		"nomad_ui_url", gitwatch.StripCredentials(cfg.NomadUIURL),
 		"namespaces", cfg.NomadNamespaces,
 		"git_url", gitwatch.StripCredentials(cfg.GitURL),
 		"git_branch", cfg.GitBranch,
