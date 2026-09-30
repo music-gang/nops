@@ -3,38 +3,40 @@
 Nops is a semi-automatic GitOps controller for HashiCorp Nomad: it reads HCL
 jobs from a git repo, compares them with the cluster and applies them
 according to a per-job policy (`auto` / `approval` / `none`), with state in
-SQLite, an approval dashboard and pre/post deployment hooks.
+SQLite, an approval dashboard and pre/post deployment hooks. New here? Start
+with the [project README](../README.md).
 
-New here? Start with the [project README](../README.md).
+## Using Nops
 
-## Index
+| I want to… | Read |
+|---|---|
+| try it on one machine | [Getting started](getting-started.md) |
+| run it on a cluster: the Nomad job, the token, a proxy, the login, the webhook, upgrading | [Running Nops](running-nops.md) |
+| choose whether a job deploys on its own, waits for an approval or is only watched; pause it; limit when it deploys | [Policies](policies.md) |
+| run something before or after a deployment (a backup, a migration, a smoke test) | [Hooks](hooks.md) |
+| know what a page of the dashboard shows, or how login works | [Dashboard](dashboard.md) |
+| know what Nops logs, and get notified | [Logs and notifications](logs-and-notifications.md) |
+| look up an option | [Configuration](configuration.md) |
+| look up a `nops_*` meta key | [Meta keys](meta-keys.md) |
+| know what a word means | [Glossary](glossary.md) |
 
-**Understanding Nops**
-- [glossary.md](glossary.md): the words Nops uses.
-- [philosophy.md](philosophy.md): principles and invariants, with the reasoning.
-- [architecture.md](architecture.md): components, loops, reading the repository,
-  detection, apply, hook revisions.
-- [deployment-lifecycle.md](deployment-lifecycle.md): states, transitions, holds, schema, recovery.
+## Understanding Nops
 
-**Using it**
-- [getting-started.md](getting-started.md): a first deployment on one machine, step by step.
-- [running-nops.md](running-nops.md): Nops on a cluster: the Nomad job, the token, a proxy, the login, upgrading.
-- [meta-keys.md](meta-keys.md): reference for the `nops_*` meta keys.
-- [policies.md](policies.md): `auto`, `approval`, `none`.
-- [hooks.md](hooks.md): the hook contract and examples (in [`../examples/`](../examples/)).
-- [configuration.md](configuration.md): flags and environment variables.
-- [dashboard.md](dashboard.md): the pages, approval, authentication.
-- [logs-and-notifications.md](logs-and-notifications.md): what is logged, notifications and their payload.
+| I want to know… | Read |
+|---|---|
+| why it works the way it does, and what it never does | [Philosophy](philosophy.md) |
+| how it works inside: reading the repository, detection, apply, hook revisions | [Architecture](architecture.md) |
+| every state of a deployment and what moves it, what holds a job back, the database, a restart | [Deployment lifecycle](deployment-lifecycle.md) |
 
-**Contributing**
-- [development.md](development.md): tests, coverage, commands, the changelog,
-  releasing, Go conventions.
-- [archive/](archive/): the decision log and the design plans up to v0.4.0,
-  kept as history and not updated.
+## Working on Nops
 
-## Keeping the docs true
+| I want to… | Read |
+|---|---|
+| contribute a change | [Contributing](../CONTRIBUTING.md), then [development](development.md): the flow of a change, tests, the changelog, releasing, Go conventions |
+| know which page a change updates | [If you change X, update Y](development.md#if-you-change-x-update-y) |
+| read how an earlier decision was taken | [Archive](archive/): the decision log and the design plans up to v0.4.0, kept as history and not updated |
 
-Each fact is written in one page and linked from the others. Which page a
-change updates is in
-[development.md](development.md#if-you-change-x-update-y), and what each
-release changed is in the [changelog](../CHANGELOG.md).
+Each fact is written in one page and linked from the others; tests check the
+links, the option and meta-key tables, and the tests the pages name
+([development](development.md#what-needs-which-tests)). What each release
+changed is in the [changelog](../CHANGELOG.md).
