@@ -64,6 +64,10 @@ type Store interface {
 	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
 	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
 	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
+	// MarkAwaitingPromotion and MarkPromoted are used by apply for a Nomad
+	// deployment that waits for a person to promote its canaries.
+	MarkAwaitingPromotion(ctx context.Context, id string) (bool, error)
+	MarkPromoted(ctx context.Context, id string) (bool, error)
 }
 
 // Hooks is what apply needs to run a deployment's hooks. *hooks.Runner

@@ -11,7 +11,8 @@ Nops prefers to stop and say so rather than carry on with uncertain state.
 - **Every `failed`** is logged at ERROR with `deployment_id`, `job`, `phase`
   (where it was when it failed: `detection`, `pre`, `apply` or `post`) and the
   cause (`error`), and sends a [notification](#notifications).
-  `pending_approval` sends a notification too.
+  `pending_approval` sends a notification too, and so does an `applying`
+  deployment that starts waiting for a canary promotion.
 - **Never swallow an error** from Nomad or SQLite. The only "soft" exception is
   the notification: if it fails, log at WARN and do not block the state
   machine.
@@ -34,6 +35,7 @@ key twice, and a parser that rejects duplicates would drop the line.
 | Event | Level |
 |---|---|
 | State transition | INFO |
+| An `applying` deployment starts waiting for a canary promotion, or sees the canaries promoted | INFO |
 | Unknown meta key | WARN |
 | Notification not delivered | WARN |
 | Deployment `failed`, meta with an invalid value, job that cannot be parsed | ERROR |
@@ -43,7 +45,11 @@ key twice, and a parser that rejects duplicates would drop the line.
 
 Nops tells people when a deployment needs them: it sends a notification when
 a deployment becomes `pending_approval` (someone must approve) and when it
-becomes `failed`. A job can also opt in to a notification when a deployment
+becomes `failed`, and once when an `applying` deployment starts waiting for a
+person to promote the canaries of its Nomad deployment (a
+[promotion wait](vocabulary.md#deployment-lifecycle): its `state` is `applying`
+and `waiting` is `canary_promotion`; the title is `<job> waiting for canary
+promotion`, styled like `pending_approval`). A job can also opt in to a notification when a deployment
 of it becomes `completed` (`nops_notify_completed`, [meta-keys](meta-keys.md));
 unlike the other two this one is never sent by default, since a cluster with
 many `auto` jobs would otherwise get one per deploy. The engine calls
@@ -77,7 +83,8 @@ The generic JSON, which is also the data every adapter formats:
 }
 ```
 
-`url` is `<public-url>/deployments/<id>`; `-public-url` always has a value —
+`waiting` is only present, as `canary_promotion`, in the notification of a
+promotion wait. `url` is `<public-url>/deployments/<id>`; `-public-url` always has a value —
 explicit, or [derived from `-listen-addr`](configuration.md#dashboard) — so a
 notification always has one. The notifier itself still tolerates an empty one
 and then sends no link.

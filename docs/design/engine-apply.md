@@ -129,7 +129,9 @@ CAS conflict actually closes the deployment.
   Nomad deployment `failed`/`cancelled`, or the timeout expires →
   `Transition` to `failed` ("apply did not become healthy: <reason>"), and
   nothing more: no rollback, no `nomad deployment fail` (see
-  [Decisions](#decisions), 5).
+  [Decisions](#decisions), 5). A Nomad deployment that waits for a person to
+  promote its canaries is neither: the timeout does not run in that wait and
+  counts again from the promotion (see [Decisions](#decisions), 10).
 - **`post_hook`**: same as `pre_hook`, but a `failed`/`timed_out` result's
   message names the hook and notes explicitly that the apply is already live and is not undone
   (`state-machine.md`: "a post-hook failure does not undo the apply").
@@ -205,7 +207,8 @@ expanded here.
    body, not a 404). Apply's health check compares its `JobModifyIndex` to
    the deployment's `applied_index`: a match means it is tracking exactly
    this apply, and its `Status` decides (`successful` → healthy;
-   `failed`/`cancelled` → failed; anything else → still waiting). No match
+   `failed`/`cancelled` → failed; `running` → still waiting, unless it waits for
+   a canary promotion (decision 10); anything else → still waiting). No match
    (including no deployment at all, for a `batch` job or an `update` stanza
    that produces none) falls back to the allocations of the applied job
    version: `nomadx.Alloc` gains `JobVersion`, matched against the live job's
@@ -239,10 +242,13 @@ expanded here.
 4. **The apply timeout counts from the `→ applying` event, and bounds the
    whole state.** `Store.AppliedSince(ctx, id string) (time.Time, error)` reads the
    timestamp of that deployment's `→ applying` row in `events` (already
-   written by `Transition`, no schema change). This survives a restart, same
+   written by `Transition`, no schema change; the `applying → applying` events
+   of decision 10 are skipped). This survives a restart, same
    rule as hook timeouts ("a restart does not extend it"). It bounds the wait
    for health and the register step alike: a Nomad error while registering is
-   retried until then, and fails the deployment after it.
+   retried until then, and fails the deployment after it. The one wait it does
+   not bound is a person's, for a canary promotion (decision 10), after which
+   it counts from the promotion.
 5. **An apply that does not become healthy in time is passive.** Only
    `Transition` to `failed` with a message, exactly like a hook timeout — no
    `nomad deployment fail` call, no automatic revert. This follows from
@@ -318,6 +324,42 @@ expanded here.
    for every deployment of the job (it would also lift blocks nobody looked
    at).
 
+10. **A canary waiting for a person is a wait of its own, with no timeout.**
+   A job with `canary > 0` and `auto_promote = false` leaves its Nomad
+   deployment `running` ("requires manual promotion") until someone promotes
+   it, and Nomad does not fail it for that (its progress deadline does not fail
+   the deployment while the canaries wait: `TestCanaryWaitsForManualPromotion`).
+   Counted like any other wait for health, the apply timeout would fail the
+   deployment, block the job for that `spec_hash` (decision 6), and a promotion
+   after the fact would find a `failed` deployment whose post-hooks never run.
+   So `canaryHealth` reads a running Nomad deployment against the stored
+   `job_spec`: for every group that has canaries and does not `auto_promote`
+   (one that does is Nomad's to finish, and keeps the timeout), all canaries
+   placed and healthy and none promoted is a **promotion wait**. The first time
+   the step sees it, `Store.MarkAwaitingPromotion` writes `promotion_wait_since`
+   and an `applying → applying` event, and only that call sends the
+   notification (`waiting: canary_promotion`), so a restart or the next cycle
+   does not repeat it (invariant 7: persisted first, then acted on). While
+   `promotion_wait_since` is set and `promoted_at` is not, the step does not
+   look at the timeout at all, and a Nomad error is logged and retried as
+   ever. When the running deployment shows the canaries promoted,
+   `Store.MarkPromoted` writes `promoted_at` and the timeout **restarts**: a
+   full `-apply-timeout` for the rest of the rollout, counted from there.
+   Nomad's `failed`/`cancelled` (someone failed the deployment, or the canary
+   never became healthy) still fails the deployment. Canaries still starting
+   are not a wait for a person: they keep the timeout. Nops cannot see a
+   promotion that ends the whole rollout before it looks (one allocation rolls
+   out in milliseconds): the Nomad deployment is then `successful` and the
+   deployment completes without a `promoted_at`. Known limit, accepted with the
+   maintainer: the wait has no ceiling, so it holds the job's only active slot
+   (invariant 6), and a new commit waits behind it until someone promotes the
+   canaries or fails the Nomad deployment; detection never touches `applying`.
+   Not chosen: pausing the timeout instead of restarting it (canaries healthy
+   at 9m50s of 10m would leave 10s for the whole rollout), a flag for a ceiling
+   on the wait (a second timer for a case the maintainer decides on), and
+   promoting or failing the Nomad deployment from Nops (decision 5; the
+   *Promote* button is a separate issue, #78).
+
 ## Tests
 
 `internal/engine`: a fake `Nomad`/`Hooks` and a real, temp-file `store.Store`,
@@ -342,4 +384,12 @@ fails, and is never dispatched again). `tests/integration`: one full cycle again
 `nomad agent -dev` for a job with no hooks (register → healthy →
 `completed`) and one with both hooks, and one for each health path of
 decision 3 (`TestEngineApplyAgainstRealNomad`,
-`TestEngineApplyWaitsForTheNomadDeployment`).
+`TestEngineApplyWaitsForTheNomadDeployment`). `promotion_test.go` covers
+decision 10 (a wait longer than the timeout does not fail, one notification
+across cycles and a restart, the timeout counting from the promotion, what is
+not a wait for a person, a Nomad error and a failed Nomad deployment during the
+wait, and `canaryHealth` per group); against a real Nomad,
+`TestCanaryWaitsForManualPromotion` records what Nomad does while canaries wait
+(it does not fail the deployment at its progress deadline) and
+`TestE2EApplyWaitsForCanaryPromotion` runs the binary through a wait longer
+than its apply timeout, a promotion in Nomad and the post-hook.

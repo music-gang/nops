@@ -163,14 +163,17 @@ type deploymentDetailData struct {
 	baseData
 	Deployment deploymentCard
 	Blocking   *blockingView // set while this deployment blocks its job
-	Diff       *api.JobDiff
-	Summary    diffSummary
-	Steps      []planStep // what Approve will do; only while it can be approved
-	Events     []eventView
-	HookRuns   []hookRunView
-	CanDecide  bool   // state is pending_approval: show Approve/Reject
-	Notice     string // set after a stale-approval conflict
-	OOB        bool   // the status fragment: the side column swaps out of band
+	// PromotionWait is set while the deployment waits for someone to promote the
+	// canaries of its Nomad deployment (the apply timeout does not run meanwhile).
+	PromotionWait bool
+	Diff          *api.JobDiff
+	Summary       diffSummary
+	Steps         []planStep // what Approve will do; only while it can be approved
+	Events        []eventView
+	HookRuns      []hookRunView
+	CanDecide     bool   // state is pending_approval: show Approve/Reject
+	Notice        string // set after a stale-approval conflict
+	OOB           bool   // the status fragment: the side column swaps out of band
 }
 
 // planSteps reads what approving d will run: the hooks it froze at detection,
@@ -228,12 +231,13 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		return deploymentDetailData{}, false
 	}
 	data := deploymentDetailData{
-		baseData:   s.base(r, ""),
-		Deployment: s.card(d),
-		Diff:       diff,
-		Summary:    summarize(diff),
-		CanDecide:  d.State == store.StatePendingApproval,
-		Notice:     notice,
+		baseData:      s.base(r, ""),
+		Deployment:    s.card(d),
+		Diff:          diff,
+		Summary:       summarize(diff),
+		CanDecide:     d.State == store.StatePendingApproval,
+		Notice:        notice,
+		PromotionWait: d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero(),
 	}
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {

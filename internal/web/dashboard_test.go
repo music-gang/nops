@@ -900,6 +900,30 @@ func TestDeploymentPageThatBlocksItsJobOffersARetry(t *testing.T) {
 	mustNotContain(t, page, "blocks its job", "Retry")
 }
 
+// An applying deployment whose Nomad deployment waits for someone to promote
+// its canaries says so, on the page and in the polled fragment, until promoted.
+func TestDeploymentPageWaitingForCanaryPromotion(t *testing.T) {
+	waiting := sampleDeployment()
+	waiting.State, waiting.PromotionWaitSince = store.StateApplying, testNow.Add(-2*time.Minute)
+	ts := newTestServer(t, &fakeStore{deployment: waiting}, &fakeEngine{}, "")
+	for _, path := range []string{"/deployments/d1", "/deployments/d1/status"} {
+		mustContain(t, ts.get(path), "Waiting for canary promotion in Nomad.", "The apply timeout does not run meanwhile")
+	}
+
+	promoted := sampleDeployment()
+	promoted.State, promoted.PromotionWaitSince, promoted.PromotedAt = store.StateApplying, testNow.Add(-2*time.Minute), testNow.Add(-time.Minute)
+	applying := sampleDeployment()
+	applying.State = store.StateApplying
+	failed := sampleDeployment()
+	failed.State, failed.PromotionWaitSince = store.StateFailed, testNow.Add(-2*time.Minute)
+	for name, d := range map[string]*store.Deployment{"promoted": promoted, "never waited": applying, "finished": failed} {
+		page := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "").get("/deployments/d1")
+		if strings.Contains(page, "canary promotion") {
+			t.Errorf("%s: the page says it waits for a canary promotion", name)
+		}
+	}
+}
+
 func TestDeploymentPageWithNothingToShow(t *testing.T) {
 	d := sampleDeployment()
 	d.State = store.StateCompleted
