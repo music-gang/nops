@@ -106,7 +106,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	eng := engine.New(engine.Options{
 		Store: st, Nomad: nomadClient, Snapshots: watcher, Notifier: notifier, Hooks: hooksRunner,
 		Namespaces: cfg.NomadNamespaces, DriftInterval: cfg.DriftInterval,
-		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, Log: log,
+		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, SyncWindowLocation: cfg.SyncWindowLocation, Log: log,
 	})
 
 	auth, err := newAuthenticator(cfg, log)
@@ -185,6 +185,7 @@ func startupAttrs(cfg *config.Config) []any {
 		"auth_mode", cfg.AuthMode,
 		"db_path", cfg.DBPath,
 		"base_path", cfg.BasePath,
+		"sync_window_time_zone", cfg.SyncWindowLocation.String(),
 	}
 }
 

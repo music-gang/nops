@@ -29,11 +29,12 @@ const (
 	syncOrphan    syncKey = "orphan"    // deployed by nops, gone from git, still running in Nomad
 	syncPending   syncKey = "pending"   // a deployment waits for a human decision
 	syncDeploying syncKey = "deploying" // a deployment is on its way (detected, hooks, apply)
+	syncHeld      syncKey = "held"      // it drifts, and its sync window is closed: nops deploys it when it opens
 	syncDrift     syncKey = "drift"     // the cluster differs from git and nothing is being done
 	syncInSync    syncKey = "sync"      // the cluster is what git says
 )
 
-var syncOrder = []syncKey{syncInvalid, syncPaused, syncBlocked, syncOrphan, syncPending, syncDeploying, syncDrift, syncInSync}
+var syncOrder = []syncKey{syncInvalid, syncPaused, syncBlocked, syncOrphan, syncPending, syncDeploying, syncHeld, syncDrift, syncInSync}
 
 // valid reports whether k is one of the sync states.
 func (k syncKey) valid() bool {
@@ -59,6 +60,8 @@ func (k syncKey) label() string {
 		return "Awaiting approval"
 	case syncDeploying:
 		return "Deploying"
+	case syncHeld:
+		return "Held"
 	case syncDrift:
 		return "Drift"
 	default:
@@ -71,7 +74,7 @@ func (k syncKey) class() string {
 	switch k {
 	case syncInvalid, syncBlocked:
 		return "state-failed"
-	case syncPending, syncDrift, syncOrphan, syncPaused:
+	case syncPending, syncDrift, syncOrphan, syncPaused, syncHeld:
 		return "state-pending"
 	case syncDeploying:
 		return "state-running"
@@ -90,7 +93,7 @@ func jobSync(o engine.Observation, latest *store.Deployment) syncKey {
 	}
 	// A pause is a person's decision that holds everything below it, so it says
 	// so whether or not the job drifts: a forgotten one must show.
-	if o.Hold != nil {
+	if o.Hold != nil && o.Hold.Kind == engine.HoldPaused {
 		return syncPaused
 	}
 	if o.BlockedBy != "" {
@@ -103,6 +106,11 @@ func jobSync(o engine.Observation, latest *store.Deployment) syncKey {
 		case store.StateDetected, store.StatePreHook, store.StateApplying, store.StatePostHook:
 			return syncDeploying
 		}
+	}
+	// A closed sync window holds only what drifts: with nothing to deploy there
+	// is nothing to wait for, and the job is in sync.
+	if o.Hold != nil && o.Drift {
+		return syncHeld
 	}
 	if o.Drift {
 		return syncDrift
@@ -148,7 +156,7 @@ func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 		Policy: o.Policy, Sync: k, SyncLabel: k.label(), SyncClass: k.class(),
 		BlockedReason: o.BlockedReason, File: o.FilePath, Observed: s.when(o.ObservedAt),
 	}
-	if k == syncPaused {
+	if k == syncPaused || k == syncHeld {
 		row.BlockedReason = o.Hold.Reason
 	}
 	if latest != nil {
@@ -276,6 +284,33 @@ type pauseView struct {
 	ResumePath string
 }
 
+// windowView is a job's sync window as its page shows it: where it stands now
+// and the rule, both with the time zone it is read in, so it is never read in
+// another.
+type windowView struct {
+	Open     bool
+	Status   string // "open until Wed 2026-09-30 20:00 CEST", "closed until ..."
+	Schedule string // "0 9 * * * for 11h, read in Europe/Rome"
+}
+
+func windowOf(ws *engine.WindowStatus) *windowView {
+	if ws == nil {
+		return nil
+	}
+	v := &windowView{Open: ws.Open, Schedule: ws.Spec + " for " + duration(ws.Duration) + ", read in " + ws.Zone}
+	switch {
+	case ws.Open && ws.Until.IsZero():
+		v.Status = "open, it never closes"
+	case ws.Open:
+		v.Status = "open until " + ws.Format(ws.Until)
+	case ws.Until.IsZero():
+		v.Status = "closed, it does not open again"
+	default:
+		v.Status = "closed until " + ws.Format(ws.Until)
+	}
+	return v
+}
+
 type jobData struct {
 	baseData
 	Namespace, JobID, Title string
@@ -292,6 +327,8 @@ type jobData struct {
 	BlockedBy               string
 	RetryPath               string // where the "Retry" button posts, set when Blocked
 	Paused                  *pauseView
+	Held                    string // why a closed sync window holds a drifting job, "" otherwise
+	Window                  *windowView
 	PausePath               string // where the "Pause" form posts, set when the job is in the repository and not paused
 	Drift                   bool
 	Diff                    *api.JobDiff
@@ -361,11 +398,18 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		if data.Blocked {
 			data.RetryPath = s.jobPath(ns, id) + "/retry"
 		}
-		if h := obs.Hold; h != nil {
+		// A pause can be lifted here; a closed sync window cannot, it only
+		// opens, and a job it holds can still be paused.
+		switch h := obs.Hold; {
+		case h != nil && h.Kind == engine.HoldPaused:
 			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since), ResumePath: s.jobPath(ns, id) + "/resume"}
-		} else {
+		case h != nil && obs.Drift:
+			data.Held = h.Reason
+			data.PausePath = s.jobPath(ns, id) + "/pause"
+		default:
 			data.PausePath = s.jobPath(ns, id) + "/pause"
 		}
+		data.Window = windowOf(obs.Window)
 		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, summarize(diff), obs.Issues
 	}
 	s.render(w, r, "job", data)

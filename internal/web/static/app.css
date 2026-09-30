@@ -416,6 +416,8 @@ form { margin: 0; }
 }
 .dl dt, .dl dd { padding: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl dt { color: var(--fg-muted); }
+/* A value that must be read whole, like a time zone, wraps instead of being cut. */
+.dl dd.dd--wrap { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 
 /* -- the decision ---------------------------------------------------------------------------- */
 

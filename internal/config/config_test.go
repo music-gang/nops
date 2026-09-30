@@ -79,7 +79,9 @@ func TestLoadDefaults(t *testing.T) {
 		EngineInterval:   5 * time.Second,
 		HookPollInterval: 5 * time.Second,
 		ApplyTimeout:     10 * time.Minute,
-		LogLevel:         slog.LevelInfo,
+		// A sync window is read in UTC unless the operator says otherwise.
+		SyncWindowLocation: time.UTC,
+		LogLevel:           slog.LevelInfo,
 	}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults:\n got %+v\nwant %+v", c, want)
@@ -139,6 +141,11 @@ func TestLoadEveryOption(t *testing.T) {
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
 
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("no tz database: %v", err)
+	}
+
 	// Every option shared by both auth modes.
 	common := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
@@ -172,6 +179,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"engine-interval":           "7s",
 		"hook-poll-interval":        "3s",
 		"apply-timeout":             "1h",
+		"sync-window-time-zone":     "Asia/Tokyo", // no daylight saving: two loads of it are equal
 		"log-level":                 "debug",
 	}
 	commonWant := Config{
@@ -215,6 +223,7 @@ func TestLoadEveryOption(t *testing.T) {
 		EngineInterval:         7 * time.Second,
 		HookPollInterval:       3 * time.Second,
 		ApplyTimeout:           time.Hour,
+		SyncWindowLocation:     tokyo,
 		LogLevel:               slog.LevelDebug,
 	}
 
@@ -369,6 +378,9 @@ func TestLoadInvalid(t *testing.T) {
 		{"engine-interval", "0", "must be positive"},
 		{"hook-poll-interval", "", "invalid duration"},
 		{"apply-timeout", "1d", "unknown unit"},
+		{"sync-window-time-zone", "Mars/Olympus", "unknown time zone"},
+		{"sync-window-time-zone", "Rome", "unknown time zone"},
+		{"sync-window-time-zone", "Local", "not an IANA time zone"},
 		{"log-level", "verbose", "unknown name"},
 	}
 	for _, tt := range tests {
@@ -1101,5 +1113,22 @@ func TestDocSecretsTableMatchesTheSecretValues(t *testing.T) {
 	}
 	for extra := range documented {
 		t.Errorf("docs/configuration.md lists %s as a secret variable, which is not one", extra)
+	}
+}
+
+// TestLoadSyncWindowTimeZone: a sync window is read in UTC unless the operator
+// names a zone, and what is named is an IANA zone that Load resolves, so a
+// typo stops the start rather than shifting every window.
+func TestLoadSyncWindowTimeZone(t *testing.T) {
+	c, err := Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	if err != nil || c.SyncWindowLocation != time.UTC {
+		t.Fatalf("default = %v, %v, want UTC", c.SyncWindowLocation, err)
+	}
+	if _, err := time.LoadLocation("Europe/Rome"); err != nil {
+		t.Skipf("no tz database: %v", err)
+	}
+	c, err = Load([]string{"-git-url", repo, "-sync-window-time-zone", "Europe/Rome"}, envOf(nil), io.Discard)
+	if err != nil || c.SyncWindowLocation.String() != "Europe/Rome" {
+		t.Errorf("-sync-window-time-zone Europe/Rome = %v, %v", c.SyncWindowLocation, err)
 	}
 }

@@ -228,6 +228,7 @@ it, so use a topic nobody can guess, or your own server with a token.
 | `-engine-interval` | `NOPS_ENGINE_INTERVAL` | `5s` | How often the engine advances active deployments. |
 | `-hook-poll-interval` | `NOPS_HOOK_POLL_INTERVAL` | `5s` | How often a running hook is checked. |
 | `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may take, from the moment it starts: to register the job (a Nomad error is retried until then) and then to wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). It does not run while the Nomad deployment waits for a person to promote its canaries, and counts again from the promotion ([engine-apply](design/engine-apply.md#decisions), 10). |
+| `-sync-window-time-zone` | `NOPS_SYNC_WINDOW_TIME_ZONE` | `UTC` | The IANA time zone (`Europe/Rome`, `America/New_York`, `UTC`) the [sync windows](policies.md#sync-windows) of the jobs (`nops_sync_window`) are read in. One zone for the whole instance; a value that is not a zone (including `Local`) stops the start. |
 | `-log-level` | `NOPS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 
 The timeout of a hook is not here: it is set on the hook job, with
