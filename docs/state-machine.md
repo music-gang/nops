@@ -118,8 +118,9 @@ While a job is held:
 **Pause** and **resume** (`Engine.Pause`, `Engine.Resume`,
 `POST /jobs/{namespace}/{job}/pause` and `/resume`) are any logged-in user's
 action. Each is persisted before anything else (invariant 7), logged at INFO
-with the actor, and asks detection for a cycle so the page and any `detected`
-deployment catch up at once. A job can be paused only while it is among the
+with the actor, and put on the job's last observation at once, so the page the
+person is sent back to already says so; it then asks detection for a cycle,
+which recomputes the observation and puts any `detected` deployment aside. A job can be paused only while it is among the
 managed jobs of the last detection cycle, and once at a time. There is no
 instance-wide pause: stopping Nops does that. See the
 [decision log](design/decisions.md), 2026-09-30.

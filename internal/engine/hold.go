@@ -109,8 +109,27 @@ func (e *Engine) Pause(ctx context.Context, namespace, jobID, actor, note string
 		return err
 	}
 	e.log.InfoContext(ctx, "job paused", "job", jobID, "namespace", namespace, "actor", actor, "reason", note)
+	// The page the person is sent back to reads the last cycle's observation:
+	// say so in it now rather than when the cycle asked for below ends.
+	if p, err := e.store.PauseOf(ctx, namespace, jobID); err != nil {
+		e.log.ErrorContext(ctx, "read the pause just written", "job", jobID, "namespace", namespace, "error", err)
+	} else {
+		e.setHold(jobKey{namespace, jobID}, pauseHold(p))
+	}
 	e.kickDetection()
 	return nil
+}
+
+// setHold puts the hold (nil: none) on a job's last observation, ahead of the
+// next cycle, which recomputes it from the store anyway. A job with no
+// observation has nothing to update.
+func (e *Engine) setHold(key jobKey, h *Hold) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if o, ok := e.observations[key]; ok {
+		o.Hold = h
+		e.observations[key] = o
+	}
 }
 
 // Resume lifts a job's pause: the next detection cycle, asked for now, treats it
@@ -127,6 +146,7 @@ func (e *Engine) Resume(ctx context.Context, namespace, jobID, actor string) err
 		return err
 	}
 	e.log.InfoContext(ctx, "job resumed", "job", jobID, "namespace", namespace, "actor", actor)
+	e.setHold(jobKey{namespace, jobID}, nil)
 	e.kickDetection()
 	return nil
 }

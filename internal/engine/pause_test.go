@@ -297,6 +297,28 @@ func TestPauseAndResumeAskForADetectionCycle(t *testing.T) {
 	}
 }
 
+// The page a person is sent back to after Pause or Resume reads the last
+// observation: it must already say so, without waiting for the next cycle.
+func TestPauseAndResumeShowInTheObservationAtOnce(t *testing.T) {
+	h := newHarness(t)
+	observedWeb(t, h, "auto")
+	ctx := context.Background()
+
+	if err := h.engine.Pause(ctx, testNamespace, "web", "alice", "db incident"); err != nil {
+		t.Fatal(err)
+	}
+	if hold := h.observation().Hold; hold == nil || hold.By != "alice" || hold.Reason != "paused by alice: db incident" || hold.Since.IsZero() {
+		t.Errorf("hold right after Pause = %+v, want the pause by alice, with no cycle in between", hold)
+	}
+
+	if err := h.engine.Resume(ctx, testNamespace, "web", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if hold := h.observation().Hold; hold != nil {
+		t.Errorf("hold right after Resume = %+v, want none, with no cycle in between", hold)
+	}
+}
+
 func TestPauseErrors(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
