@@ -1,8 +1,9 @@
 name: release
 
 # A vX.Y.Z tag pushed on a commit of main publishes the release: the image on
-# ghcr.io/music-gang/nops and the binary, checksums and changelog on the
-# GitHub Release. How to cut one: docs/development.md#releasing.
+# ghcr.io/music-gang/nops and the binary, checksums and the version's section
+# of CHANGELOG.md on the GitHub Release. How to cut one:
+# docs/development.md#releasing.
 on:
   push:
     tags: ["v*.*.*"]
@@ -24,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the changelog reads the history since the previous tag
+          fetch-depth: 0 # the branch check below reads main's history
           persist-credentials: false
       - name: The tag is on main
         run: |
@@ -32,6 +33,10 @@ jobs:
             echo "$GITHUB_REF_NAME is not on main: releases are cut from main only"
             exit 1
           fi
+      # Before anything is built: a tag without its section in CHANGELOG.md
+      # would publish a release with no notes.
+      - name: Release notes from CHANGELOG.md
+        run: scripts/changelog.sh section "$GITHUB_REF_NAME" <CHANGELOG.md >"$RUNNER_TEMP/notes.md"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -68,6 +73,6 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: ${{ env.GORELEASER_VERSION }}
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

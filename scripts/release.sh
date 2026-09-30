@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Cut a release: list what landed on origin/main since the last tag, suggest a
-# version, let the maintainer choose, then sign and push the tag. The `release`
-# workflow does the rest (docs/development.md#releasing).
+# Cut a release, in two runs (docs/development.md#releasing). While
+# CHANGELOG.md on origin/main has entries under "Unreleased": list what landed
+# since the last tag, suggest a version and open the release PR that turns them
+# into that version's section. Once it is merged: tag the version of the newest
+# section, signed, and push it. The `release` workflow does the rest.
 #
 #   scripts/release.sh             interactive
-#   scripts/release.sh --dry-run   preview only: no prompt, no tag, no push
+#   scripts/release.sh --dry-run   preview only: no prompt, no PR, no tag
 #
 # Needs git and gh (logged in), and a GPG key in `user.signingkey`.
 # Written for bash 3.2 (macOS): no associative arrays, no mapfile.
@@ -177,6 +179,60 @@ ci_problems() {
     --jq '.check_runs[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | "\(.name): \(.status) \(.conclusion // "")"'
 }
 
+# choose_tag <vX.Y.Z>: asks whether to tag the release itself or a release
+# candidate of it, prints the chosen tag.
+choose_tag() {
+  local want=$1 rc choice
+  rc=$(git tag -l "$want-rc.*" | next_rc "$want")
+  {
+    echo
+    echo "CHANGELOG.md's newest section is ${want#v}. Tag:"
+    echo "  1) release  $want"
+    echo "  2) rc       $rc"
+  } >&2
+  while true; do
+    read -r -p "Choice [1]: " choice
+    case ${choice:-1} in
+      1) echo "$want"; return ;;
+      2) echo "$rc"; return ;;
+      *) echo "type 1 or 2" >&2 ;;
+    esac
+  done
+}
+
+# open_release_pr <vX.Y.Z> <sha> <changelog-file>: opens the PR that moves the
+# Unreleased entries of CHANGELOG.md to the version's section, from a worktree
+# of <sha> so the local checkout is left alone.
+open_release_pr() {
+  local version=${1%%-*} sha=$2 changelog=$3 branch dir
+  branch="chore/release-$version"
+  if [ -n "$(git ls-remote --heads origin "refs/heads/$branch")" ]; then
+    die "$branch already exists on origin: is its release PR still open?"
+  fi
+  dir=$(mktemp -d)
+  git worktree add --quiet -b "$branch" "$dir" "$sha" || die "git worktree add failed"
+  if ! "$scripts_dir/changelog.sh" cut "$version" "$(date +%Y-%m-%d)" <"$changelog" >"$dir/CHANGELOG.md"; then
+    git worktree remove --force "$dir"
+    git branch -D "$branch" >/dev/null
+    die "could not move the Unreleased entries of CHANGELOG.md to $version"
+  fi
+  git -C "$dir" commit --quiet -a -m "chore(release): $version" \
+    -m "The entries under Unreleased in CHANGELOG.md become the $version section, which the release publishes as its notes." ||
+    die "commit failed in $dir"
+  git -C "$dir" push --quiet -u origin "$branch" || die "push of $branch failed (the worktree is $dir)"
+  gh pr create --base main --head "$branch" --title "chore(release): $version" --body "## What changes
+
+- The entries under \"Unreleased\" in CHANGELOG.md become the $version section, the notes the release publishes.
+
+## Why
+
+- Cutting $version: once this is merged, \`scripts/release.sh\` tags it." || die "gh pr create failed (the branch $branch is pushed)"
+  git worktree remove --force "$dir"
+  git branch -D "$branch" >/dev/null
+  echo
+  echo "Read the $version section in the PR (edit it there if needed), merge it, then run scripts/release.sh again to tag $version."
+}
+
 # choose_version <last> <suggested-kind>: asks, prints the chosen tag.
 choose_version() {
   local last=$1 kind=$2
@@ -227,7 +283,7 @@ choose_version() {
 }
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -246,6 +302,7 @@ main() {
       ;;
   esac
 
+  scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   command -v git >/dev/null || die "git is not installed"
   command -v gh >/dev/null || die "gh is not installed (https://cli.github.com)"
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside the nops repository"
@@ -266,10 +323,11 @@ main() {
     range=$sha
   fi
 
-  local commits
+  local commits changelog
   commits=$(mktemp)
+  changelog=$(mktemp)
   # shellcheck disable=SC2064
-  trap "rm -f '$commits'" EXIT
+  trap "rm -f '$commits' '$changelog'" EXIT
   git log --reverse --format='%h%x09%s' "$range" >"$commits"
   if [ ! -s "$commits" ]; then
     echo "Nothing to release: origin/main ($(git rev-parse --short "$sha")) is $last."
@@ -282,7 +340,7 @@ main() {
   print_group "Features" feat "$commits"
   print_group "Fixes" fix "$commits"
   print_group "Changes" change "$commits"
-  print_group "Other (not in the changelog)" other "$commits"
+  print_group "Other" other "$commits"
   echo
 
   # CI on the commit, and open PRs (a warning only: the maintainer may leave one out).
@@ -301,26 +359,50 @@ main() {
   echo "reminder: audit the docs for what changed since $last (docs/development.md#doc-audit):" >&2
   echo "  git diff --stat $range -- '*.md' cmd internal scripts examples .github" >&2
 
-  local kind suggested
-  kind=$(cut -f2 "$commits" | suggest_bump "$last")
-  suggested=$(bump_version "$last" "$kind")
+  # CHANGELOG.md on origin/main says which run this is: entries under
+  # Unreleased open the release PR, none tag the newest section.
+  git show "$sha:CHANGELOG.md" >"$changelog" 2>/dev/null || die "origin/main has no CHANGELOG.md"
+  local pending newest tag answer
+  pending=$("$scripts_dir/changelog.sh" unreleased <"$changelog")
+  newest=$("$scripts_dir/changelog.sh" latest <"$changelog")
+
+  if [ -n "$pending" ]; then
+    local kind suggested
+    kind=$(cut -f2 "$commits" | suggest_bump "$last")
+    suggested=$(bump_version "$last" "$kind")
+    echo "CHANGELOG.md has entries under Unreleased: this run opens the release PR."
+    if [ "$dry_run" = 1 ]; then
+      echo "Suggested version: $suggested ($kind)"
+      echo
+      echo "Dry run: nothing was changed. A release would open the PR"
+      echo "\"chore(release): $suggested\" moving them to its section, then tag it on the next run."
+      return 0
+    fi
+    tag=$(choose_version "$last" "$kind")
+    read -r -p "Open the release PR for ${tag%%-*}? [y/N] " answer
+    case $answer in y | Y | yes) ;; *) die "aborted, nothing was changed" ;; esac
+    open_release_pr "$tag" "$sha" "$changelog"
+    return 0
+  fi
+
+  if [ -z "$newest" ]; then
+    die "CHANGELOG.md has nothing under Unreleased and no release section: write this release's entries under Unreleased first"
+  fi
+  if [ "$last" != v0.0.0 ] && ! semver_gt "v$newest" "$last"; then
+    die "the newest section of CHANGELOG.md, $newest, is already released ($last): write the next release's entries under Unreleased first"
+  fi
 
   if [ -z "$(git config --get user.signingkey || true)" ]; then
     problem "git config user.signingkey is not set: the tag has to be signed"
   fi
-
-  local tag
   if [ "$dry_run" = 1 ]; then
-    tag=$suggested
-    echo "Suggested version: $tag ($kind)"
-    echo
     echo "Dry run: nothing was tagged. A release would run:"
-    echo "  git tag -s $tag -m $tag $sha"
-    echo "  git push origin refs/tags/$tag"
+    echo "  git tag -s v$newest -m v$newest $sha"
+    echo "  git push origin refs/tags/v$newest"
     return 0
   fi
 
-  tag=$(choose_version "$last" "$kind")
+  tag=$(choose_tag "v$newest")
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
     [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
     die "$tag already exists (tags are never moved or recreated: pick another version)"
@@ -329,7 +411,6 @@ main() {
   echo
   echo "Tag $tag on $sha"
   echo "  $(git log -1 --format='%h %s' "$sha")"
-  local answer
   read -r -p "Sign and push? [y/N] " answer
   case $answer in y | Y | yes) ;; *) die "aborted, nothing was tagged" ;; esac
 

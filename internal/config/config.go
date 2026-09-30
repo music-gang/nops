@@ -69,7 +69,7 @@ type Config struct {
 	OIDCAllowedGroups    []string // values of the groups claim
 
 	// UsersFile is the local-users login's "username:bcrypt-hash" file
-	// (docs/dashboard.md#local-users), used only with AuthMode "basic".
+	// (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
 	UsersFile string
 
 	// WebhookSecret authenticates the git forge's push webhook

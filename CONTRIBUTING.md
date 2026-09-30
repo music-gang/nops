@@ -8,6 +8,9 @@ Thanks for your interest. The full guide is in
 2. Branch from `main` (`type/short-description`, e.g. `feat/hooks-package`).
    `main` is protected: all changes go through a pull request.
 3. Add tests for every behaviour change and update the docs in the same PR.
+   A `feat`, a `fix` or a breaking change also adds its line under
+   `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone
+   running Nops ([how](docs/development.md#changelog)).
 4. Make sure the checks pass (see CLAUDE.md's "Definition of done and
    commands" for the exact commands).
 5. Title the PR in [Angular style](docs/development.md#commit-messages)

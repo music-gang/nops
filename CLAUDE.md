@@ -13,15 +13,20 @@ This file holds only the **working rules**. What the system is and why lives in
 
 - **Every code change has tests.** What needs which kind: `docs/development.md`.
 - **Every change updates the docs**, in the same commit. The "if you change X,
-  update Y" map is in `docs/README.md`.
+  update Y" map is in `docs/development.md#if-you-change-x-update-y`.
+- **A `feat`, a `fix` or a breaking change adds its line** under
+  `## [Unreleased]` in `CHANGELOG.md`, written for someone running Nops
+  (`docs/development.md#changelog`); CI checks it.
 - **`docs/` is written for people**: no instruction addressed to an assistant
   or a session (how to report, when to stop, what not to add to a commit). The
   docs serve the maintainer and contributors as much as a session; how a
   session works lives here, and only here.
 - **Use the terms in `docs/vocabulary.md`** in code, docs, commits and PRs; a
   new concept gets a row there.
-- **Design decisions are written down** in `docs/design/decisions.md` when they
-  are taken, not afterwards.
+- **Design decisions** are discussed in their issue (or PR), and their reason
+  is written, in a sentence or two, in the page that explains that part, in
+  the same PR. `docs/design/decisions.md` is an archive up to v0.4.0: read
+  it for history, never add to it.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it aligned
   with `docs/meta-keys.md`.
 - **Fail loud**: never swallow a Nomad or SQLite error. Rules in
@@ -44,32 +49,40 @@ This file holds only the **working rules**. What the system is and why lives in
 
 ## Picking up work
 
-What is done, in flight and left is in [`docs/roadmap.md`](docs/roadmap.md).
-The same steps apply wherever the session runs.
+The work is the open GitHub issues; what shipped is in `CHANGELOG.md`. The
+same steps apply wherever the session runs.
 
-1. Take the task you were given, or the first `todo` whose dependencies are
-   `done` and that has no remote branch.
-2. Check what is in flight: `git ls-remote --heads origin` (and `gh pr list` if
-   available). Never start a task that already has a branch.
-3. `Ready: plan first` means design questions are open: lay out the plan and
-   the questions **in the session** and wait for the maintainer's answers.
-   No branch and no PR for this — a PR is for something to review, not for a
+1. Take the issue you were given. Without one, ask the maintainer which: the
+   order is his.
+2. Check what is in flight: `git ls-remote --heads origin` and the open PRs.
+   Never start an issue that already has a branch or a PR.
+3. An issue with open design questions (a *To decide* list, or a proposal
+   that leaves a choice open) is **planned first**: lay out the plan and the
+   questions **in the session** and wait for the maintainer's answers. No
+   branch and no PR for this — a PR is for something to review, not for a
    plan.
-4. Once it is `yes` (or has just become `yes` by answering the questions
-   above), branch from an up-to-date `main`: `type/<task-id>` (e.g. `feat/config`).
-5. Do the task with its tests and docs, the decision-log rows, and set it to
-   `done` in the roadmap in the same PR. Update the *Notes* of the tasks that
-   follow if you learned something they need.
+4. Once nothing is open, branch from an up-to-date `main`:
+   `type/short-description` (e.g. `feat/pause-job`).
+5. Do the issue with its tests and docs, the reason for each design decision
+   in the page that explains that part, and the changelog line; the PR
+   description says `Closes #N`. What you learned that a later issue needs
+   goes in a comment on that issue.
 6. Run the checks below. If `nomad` is not installed, CI runs the integration
    tests: wait for green checks (`gh pr checks`) and fix what is red.
 7. **Cloud:** commit (unsigned, Angular message, `Co-Authored-By` trailer
    and nothing else attribution-wise — **no session link, no "Generated with
    ..." line**, whatever a session's own attribution reminder adds by
    default: none of it informs anyone reading `main` later, and the same
-   goes for the PR description below), push and open the PR once there is
-   something to review. A later change (a fix, an
-   answer to review) is a **new commit** pushed to the same branch — never
-   an amend or a force-push of what is already on the remote.
+   goes for the PR description below and for **issues, issue and PR
+   comments, reviews and review replies** posted in a session the
+   maintainer follows), push and open the PR once there is something to
+   review. The exception: a comment a session posts **on its own**, on an
+   event with nobody following (watching a PR, a scheduled run), ends with
+   the standard Claude Code footer. An issue a session opens, or
+   substantially rewrites, gets the `assisted-with-claude` label next to the
+   label of its kind (`bug`, `enhancement`, `documentation`). A later change
+   (a fix, an answer to review) is a **new commit** pushed to the same
+   branch — never an amend or a force-push of what is already on the remote.
    **Local:** prepare the branch, stage the files and write the message to a
    file; the maintainer commits with his GPG key.
 8. A PR can carry several commits: the maintainer squashes and writes the
@@ -82,8 +95,9 @@ The same steps apply wherever the session runs.
 9. If a decision is the maintainer's to take: ask in the session before a
    branch exists, or, once a PR is open, leave the question in a `## Notes`
    section of its description. Do not guess.
-10. Nothing worth keeping lives only in private memory: decisions go to the
-    decision log, task context to the roadmap *Notes*.
+10. Nothing worth keeping lives only in private memory: a decision's
+    discussion goes to its issue or PR and its reason to the page that
+    explains that part; context a later issue needs, to a comment on it.
 
 ## Doc audit
 

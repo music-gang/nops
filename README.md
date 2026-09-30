@@ -18,8 +18,9 @@ dispatches for you) around each deployment.
 
 > **Status: early development.** The design is settled and documented and
 > every building block is implemented and tested end to end against a real
-> Nomad; what is left is using it on a real cluster. What is done and what
-> is left is in the [roadmap](docs/roadmap.md).
+> Nomad; what is left is using it on a real cluster. What each release
+> changed is in the [changelog](CHANGELOG.md), what is left in the
+> [issues](https://github.com/music-gang/nops/issues).
 
 Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
 but written from scratch and extended with persistent state, approvals and hooks.
@@ -129,7 +130,8 @@ The reasoning behind each is in [docs/philosophy.md](docs/philosophy.md).
 ## Documentation
 
 The full documentation is in [`docs/`](docs/README.md): architecture, the state
-machine, policies, hooks, the dashboard, error handling and the decision log.
+machine, policies, hooks, the dashboard and error handling. What each release
+changed is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
