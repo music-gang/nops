@@ -214,7 +214,7 @@ func WithClock(now func() time.Time) Option { return func(s *Store) { s.now = no
 
 // dbFileMode is the permission the database file (and its WAL/SHM sidecars)
 // are kept at: job_spec holds the full job spec, unredacted, so it can carry
-// the same secrets as the plan diff (see docs/design/engine-detection.md).
+// the same secrets as the plan diff (see docs/archive/engine-detection.md).
 const dbFileMode = 0o600
 
 // Open opens (creating if needed) the database at path and applies
@@ -513,7 +513,7 @@ func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex uint64, 
 }
 
 // AppliedSince returns the timestamp of a deployment's "-> applying" event:
-// the apply timeout is counted from it (docs/state-machine.md), so a restart
+// the apply timeout is counted from it (docs/deployment-lifecycle.md), so a restart
 // does not extend it. The applying -> applying events of a promotion wait are
 // not the state being entered, and are skipped. It returns ErrNotFound if the deployment never reached
 // applying.
@@ -606,7 +606,7 @@ func (s *Store) ActiveDeployment(ctx context.Context, namespace, jobID string) (
 // LatestDeployment returns the most recently created deployment of a job,
 // whatever its state, or ErrNotFound if the job never had one. It is how the
 // engine tells a fresh failure from one it already knows about (see
-// docs/design/engine-detection.md).
+// docs/archive/engine-detection.md).
 func (s *Store) LatestDeployment(ctx context.Context, namespace, jobID string) (*Deployment, error) {
 	d, err := scanDeployment(s.db.QueryRowContext(ctx, `SELECT `+deploymentCols+` FROM deployments
 		WHERE namespace = ? AND job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
@@ -736,7 +736,7 @@ func (s *Store) HookRevisionsInUse(ctx context.Context, namespace string) ([]str
 // nothing moves, it is the audit trail of the decision). A deployment in any
 // other state is ErrStateConflict, one already retried is ErrAlreadyRetried,
 // a missing one is ErrNotFound. It does not touch Nomad: it only stops the
-// deployment from blocking its job's next one (docs/state-machine.md).
+// deployment from blocking its job's next one (docs/deployment-lifecycle.md).
 func (s *Store) MarkRetried(ctx context.Context, id, actor string) error {
 	if actor == "" {
 		return errors.New("mark retried: actor is required")

@@ -436,7 +436,7 @@ var agentWords = regexp.MustCompile(`(?i)\bclaude\b|\bassistants?\b|\bAI\b|\bLLM
 func TestDocsSpeakToPeople(t *testing.T) {
 	for _, page := range markdownPages(t) {
 		name := filepath.ToSlash(strings.TrimPrefix(page, ".."+string(filepath.Separator)))
-		if name == "CLAUDE.md" || strings.HasPrefix(name, "docs/archive/") || name == "docs/design/decisions.md" {
+		if name == "CLAUDE.md" || strings.HasPrefix(name, "docs/archive/") {
 			continue
 		}
 		b, err := os.ReadFile(page)

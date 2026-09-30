@@ -10,7 +10,7 @@ import (
 )
 
 // findOrphans looks for the jobs nops deployed that are no longer in the
-// repository and still run in Nomad (docs/design/engine-detection.md#orphan-jobs).
+// repository and still run in Nomad (docs/archive/engine-detection.md#orphan-jobs).
 //
 // present holds the key of every job parsed from the snapshot, whatever its
 // classification: a job still in the repository without nops_managed means

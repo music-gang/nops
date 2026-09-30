@@ -24,13 +24,14 @@ repeat them, and read the relevant page before extending a part.
   ([what needs which](docs/development.md#what-needs-which-tests)), docs in
   the same commit ([which page](docs/development.md#if-you-change-x-update-y)),
   the [changelog](docs/development.md#changelog) line, the terms of
-  [`docs/vocabulary.md`](docs/vocabulary.md), the
+  [`docs/glossary.md`](docs/glossary.md) and of
+  [the code](docs/development.md#terms-used-in-the-code), the
   [Go conventions](docs/development.md#go-conventions), fail loud
   ([`docs/philosophy.md#fail-loud`](docs/philosophy.md#fail-loud)), established packages
   before a new library, English everywhere.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it
   aligned with `docs/meta-keys.md`.
-- **`docs/design/decisions.md` is an archive** up to v0.4.0: read it for
+- **`docs/archive/decisions.md` is an archive** up to v0.4.0: read it for
   history, never add to it.
 - **No commits, pushes or PRs without an explicit request** (a task handed to
   a cloud session is that request), and **never merge**: the human merges.

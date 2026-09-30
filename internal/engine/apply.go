@@ -29,7 +29,7 @@ var ErrNotInRepo = errors.New("the job is not in the repository as of the last d
 
 // RunApply runs the apply loop: every EngineInterval it picks up every
 // non-terminal deployment and advances it by one step, one goroutine per
-// deployment, until ctx is done. See docs/design/engine-apply.md.
+// deployment, until ctx is done. See docs/archive/engine-apply.md.
 func (e *Engine) RunApply(ctx context.Context) {
 	e.applyCycle(ctx)
 	ticker := time.NewTicker(e.engineInterval)
@@ -126,7 +126,7 @@ func (e *Engine) applyTransition(ctx context.Context, log *slog.Logger, d *store
 }
 
 // parseJobSpec decodes the exact job nops will register, as stored at
-// detection time (docs/design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
+// detection time (docs/archive/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
 //
 // The job goes where its deployment says: the deployment's namespace is the
 // one its CAS index was read in, and Plan and RegisterCAS act on the job's own.
@@ -351,7 +351,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		// The live index moved since detection: either the register already
 		// happened (a crash between it succeeding and the next step) or a
 		// real conflict. A plan of our spec against the live job tells them
-		// apart (state-machine.md#recovery-after-a-crash).
+		// apart (docs/deployment-lifecycle.md#recovery-after-a-crash).
 		plan, err := e.nomad.Plan(ctx, job)
 		if err != nil {
 			log.ErrorContext(ctx, "plan job", "error", err)
@@ -401,7 +401,7 @@ func (e *Engine) registerRetry(ctx context.Context, log *slog.Logger, d *store.D
 // ApplyTimeout counted from the "-> applying" event, or from the promotion of
 // the canaries if the Nomad deployment waited for one. While it waits for a
 // person to promote them there is no bound: that is not a failure to become
-// healthy (see docs/design/engine-apply.md, decision 10).
+// healthy (see docs/archive/engine-apply.md, decision 10).
 func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Deployment) {
 	waiting := !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero()
 	if !waiting {
@@ -689,7 +689,7 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 var ErrNotWaitingForPromotion = errors.New("the deployment is not waiting for a canary promotion")
 
 // Promote promotes the canaries of the Nomad deployment an applying deployment
-// waits on (see docs/design/engine-apply.md, decision 11). It is a human's
+// waits on (see docs/archive/engine-apply.md, decision 11). It is a human's
 // action, not a register: it changes no spec, so plan and CAS do not apply. It
 // refuses, without touching Nomad, unless the deployment is applying, was seen
 // waiting for a promotion and is still waiting for it in Nomad now: the Nomad

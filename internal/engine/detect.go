@@ -321,15 +321,15 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 }
 
 // reconcileDeployment applies the state-machine rules of
-// docs/state-machine.md to one job: revalidate an existing detected/
+// docs/deployment-lifecycle.md to one job: revalidate an existing detected/
 // pending_approval deployment, then create a new one if there is still drift
 // to apply. A deployment in pre_hook/applying/post_hook is left untouched:
 // detection never interferes with an apply in progress. blockedBy is the ID
 // of the deployment whose retry rule is suppressing a new deployment for
-// this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
+// this job's drift, or "" if none (see docs/archive/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
 //
-// hold, when not nil, gates the start (docs/state-machine.md, "holding a job"):
+// hold, when not nil, gates the start (docs/deployment-lifecycle.md, "holding a job"):
 // no deployment is created, and an auto deployment still `detected` is
 // superseded rather than left for apply to start, so that when the hold lifts
 // detection plans again and what is applied is never a plan from before it. A
@@ -459,9 +459,9 @@ func (e *Engine) leaveDetected(ctx context.Context, log *slog.Logger, d *store.D
 }
 
 // blockedRetry decides whether a job's drift is blocked from a new
-// deployment by its latest one, and why (docs/state-machine.md, "not
+// deployment by its latest one, and why (docs/deployment-lifecycle.md, "not
 // retrying an unchanged failure", extended by
-// docs/design/engine-apply.md, decision 6): a failed or rejected deployment
+// docs/archive/engine-apply.md, decision 6): a failed or rejected deployment
 // with the same spec_hash blocks as long as nothing has changed — the live
 // index too, unless the deployment reached the register (AppliedIndex != 0),
 // in which case it blocks regardless of the live index, since Nomad itself

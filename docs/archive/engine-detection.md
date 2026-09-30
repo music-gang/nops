@@ -1,5 +1,9 @@
 # engine-detection design
 
+> **Archive.** The plan this part of Nops was built from, kept as history and
+> not updated: some of it has changed since. How it works today is in
+> [architecture](../architecture.md).
+
 The detection half of `internal/engine` (the `engine-detection`
 task): comparing the repository with Nomad, and creating, superseding or
 revalidating deployments. It never applies anything — that is
@@ -329,7 +333,7 @@ For each managed job, in order:
 3. If the policy is `none`, or there is no drift, nothing more happens.
 4. If the retry rule applies (see above), nothing more happens.
 5. If the job is held (a pause, or a closed sync window under `auto`; see
-   [state-machine](../state-machine.md#holding-a-job)), nothing more happens: the
+   [state-machine](../deployment-lifecycle.md#holding-a-job)), nothing more happens: the
    drift is still in the observation and the hold is in it too
    (`Observation.Hold`), but no deployment is created. The retry rule comes
    first, so a job that is blocked and held shows its block, and its *Retry*,

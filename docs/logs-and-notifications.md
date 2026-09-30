@@ -36,7 +36,7 @@ Nops tells people when a deployment needs them: it sends a notification when
 a deployment becomes `pending_approval` (someone must approve) and when it
 becomes `failed`, and once when an `applying` deployment starts waiting for a
 person to promote the canaries of its Nomad deployment (a
-[promotion wait](vocabulary.md#deployment-lifecycle): its `state` is `applying`
+[promotion wait](glossary.md#deployment-lifecycle): its `state` is `applying`
 and `waiting` is `canary_promotion`; the title is `<job> waiting for canary
 promotion`, styled like `pending_approval`). A job can also opt in to a notification when a deployment
 of it becomes `completed` (`nops_notify_completed`, [meta-keys](meta-keys.md));

@@ -15,7 +15,7 @@ var ErrNotBlocked = errors.New("job is not blocked by its latest deployment")
 
 // Retry lets a human unblock a job whose drift is suppressed by the anti-loop
 // rule (a failed or rejected deployment for the same spec, see
-// docs/design/engine-apply.md, decisions 6 and 7) without a new commit.
+// docs/archive/engine-apply.md, decisions 6 and 7) without a new commit.
 //
 // It does not create a deployment and does not touch Nomad: it marks the
 // blocking deployment as retried (persisted first, invariant 7), so that the

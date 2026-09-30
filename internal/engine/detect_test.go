@@ -879,7 +879,7 @@ func TestRetryRuleDoesNotRecreateSameFailure(t *testing.T) {
 }
 
 // TestBlockedByAppliedFailureSurvivesLiveIndexChange covers the anti-loop
-// rule (docs/design/engine-apply.md, decision 6): a deployment that reached
+// rule (docs/archive/engine-apply.md, decision 6): a deployment that reached
 // the register and then failed blocks a retry for the same spec_hash even
 // once the live index changes (Nomad's own auto_revert, for example), unlike
 // the ordinary retry rule above. Only a new commit unblocks it, and the
@@ -1098,7 +1098,7 @@ func TestDetectAbortsOnStoreFailure(t *testing.T) {
 func intPtr(v int) *int { return &v }
 
 // A pending approval is only worth deciding while the job's policy still asks
-// for one: docs/state-machine.md, "Revalidating pending deployments".
+// for one: docs/deployment-lifecycle.md, "Revalidating pending deployments".
 func TestPolicyChangedToNoneSupersedesAPendingDeployment(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "approval", nil))
@@ -1177,7 +1177,7 @@ func TestADetectedDeploymentUnderApprovalIsRepairedToPending(t *testing.T) {
 
 // A file Nomad cannot parse (a typo in the HCL, Nomad unreachable for the
 // parse) looks exactly like a removed one, so it must not supersede what is
-// waiting for approval: docs/design/engine-detection.md, "Not covered by a
+// waiting for approval: docs/archive/engine-detection.md, "Not covered by a
 // rule". The removal is acted on once nothing fails to parse any more.
 func TestAFileThatDoesNotParseDoesNotSupersedeAPendingDeployment(t *testing.T) {
 	h := newHarness(t)

@@ -97,6 +97,22 @@ The real check is using it. The policies allow going in steps: start with
 `nops_policy = "none"` on a few jobs and watch `/drift`; move stateful jobs to
 `approval` and stateless ones to `auto` one at a time.
 
+## Invariant tests
+
+Each [invariant](philosophy.md#invariants) has tests that try to break it, and
+what is deliberately not tested is said too.
+
+| Invariant | Tests |
+|---|---|
+| Plan before every write | `TestEveryStoreWriteOfADeploymentsLifeCanFailOnceWithoutBreakingTheOrder` (every register has a plan of the same job in the same step, with no write in between), `TestStepRegisterEmptyPlanCompletes`, `TestAHookRevisionIsNotRegisteredWhenItsPlanFails`. |
+| CAS on every register | `TestARegisterUsesTheIndexCapturedAtDetection` (the captured index, and a live job edited between the plan and the register), `TestRegisterCASAlwaysEnforcesIndex` (the wrapper), `TestPlanAndRegisterCAS` and `TestE2EAutoRevertsOutsideEdit` (against a real Nomad). |
+| Never auto-apply under policy `approval` | `TestAnApplyStepAfterEveryWriteOfDetectionNeverAppliesUnderApproval` (an apply step after every write of detection), `TestStepDetectedNeverAdvancesADeploymentUnderApproval`, `TestRecoveryLeavesPendingApprovalAlone`, `TestApproveRefusesStaleSpecHash`, `TestApprovePassesOnTheHashOfTheFormNotTheStoredOne`, `TestPagesRequireLogin`. |
+| Git is the source of truth for Nops's behaviour | `TestAnInvalidMetaKeyIsReadFromGitAsPolicyNoneWhateverTheLiveJobSays` (a typo, or another invalid key next to a valid policy; the live job's meta is never read), `TestAnInvalidKeyIntroducedIntoAPendingApprovalSupersedesIt`, `TestTheLivePolicyIsNeverWhatDecidesWhetherToDeploy`, `TestParse`. |
+| A person's pause (under 4) | `TestPausedJobGetsNoDeployment`, `TestPauseLeavesAPendingApprovalPending`, `TestPauseLeavesADeploymentInFlightAlone`, `TestResumeLetsTheNextCycleDeployAsUsual`. |
+| Nops never writes to Git | `TestDetectionStoresTheSpecExactlyAsGitHasIt`, `TestStepRegisterRegistersTheSpecUnchanged`, `TestAHookRevisionIsRegisteredWithTheMetaOfItsSpec`. That Nops never writes to Git is structural, not tested: the clone lives in memory and nothing in the code pushes. |
+| One active deployment per job | `TestPerJobLock` (against real SQLite: every active state holds the lock, a terminal one releases it), `TestALockHeldByTheDatabaseSkipsTheJobAndNotTheCycle`. Not tested: two creations at the same time. |
+| State is persisted before acting | `TestEveryStoreWriteOfADeploymentsLifeCanFailOnceWithoutBreakingTheOrder` (a store write fails once at every point of a life: no write to Nomad before the one that authorizes it, the job registered once, the deployment still completes), `TestAFailedIntentWriteLeavesNomadUntouched`, `TestRunMarkerSaveErrorSendsNothing` (hooks), `TestGCStoreFailureIsReturned`. |
+
 ## Coverage
 
 ≥ 80% on `engine`, `store`, `meta`, `hooks` (`go test -cover`). No target on
@@ -166,10 +182,10 @@ which place.
 | Behaviour of a policy | `policies.md` |
 | Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
 | A scenario in `examples/` | `TestExamplesParse` checks every example; a new scenario needs nothing else unless it shows new behaviour worth an end-to-end test |
-| State, transition, schema, recovery | `state-machine.md` |
-| Detection cycle (parse, plan, create, supersede, freeze hooks, revision GC) | `internal/engine` **and** `design/engine-detection.md` |
-| Apply loop (approve, reject, register, health, timeouts, retry) | `internal/engine` **and** `design/engine-apply.md` |
-| Which files are read from git, the git watcher | `internal/gitwatch` **and** `design/gitwatch.md` |
+| State, transition, schema, recovery | `deployment-lifecycle.md` |
+| Detection cycle (parse, plan, create, supersede, freeze hooks, revision GC, orphans) | `internal/engine` **and** `architecture.md#detection` (and `#hook-revisions`) |
+| Apply loop (approve, reject, register, health, timeouts, promotion, retry) | `internal/engine` **and** `architecture.md#apply` |
+| Which files are read from git, the git watcher | `internal/gitwatch` **and** `architecture.md#reading-the-repository` |
 | A dashboard page, route, sync state or login | `internal/web` **and** `dashboard.md` |
 | What is logged, or which transition notifies | `logs-and-notifications.md` (the one place that says it: other pages link to it) |
 | What running Nops on a cluster needs (the Nomad job, the token's ACL, a proxy, the OIDC client, the git webhook) | `running-nops.md` (its token table is checked by `TestTokenACLForVolumes`) |
@@ -179,11 +195,11 @@ which place.
 | A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
 | A page or a heading is renamed or moved | every link to it (`TestRelativeLinksResolve` fails otherwise) |
 | The Nomad version CI tests against | `ci.yml` (`NOMAD_VERSION`, `NOMAD_SHA256`) **and** the README's *Nomad compatibility* (`docs/docs_test.go` fails otherwise); steps in [Nomad version](#nomad-version) |
-| New concept, or a renamed term | `vocabulary.md` |
+| New concept, or a renamed term | `glossary.md`, or [Terms used in the code](#terms-used-in-the-code) for one that only matters in the code |
 | Something someone running Nops would notice | a line under `## [Unreleased]` in `CHANGELOG.md` ([Changelog](#changelog)) |
 | A design decision | its reason, in a sentence or two, in the page that explains that part; the discussion stays in the issue or the PR |
 | Build or release (`Dockerfile`, `.goreleaser.yaml`, `release.yml`, `scripts/`), image tags, semver policy | [Releasing](#releasing) |
-| Invariant | `philosophy.md` (`TestInvariantTitlesMatch` fails when a copy of the list elsewhere drifts) |
+| Invariant | `philosophy.md`, and its tests in [Invariant tests](#invariant-tests) (`TestInvariantTitlesMatch` fails when a copy of the list elsewhere drifts) |
 
 ## Docs and agent instructions
 
@@ -566,7 +582,7 @@ told otherwise, so without it a boosted link would pick up the region's own
 `hx-select`/`hx-swap` and apply them to *its own* navigation — selecting
 `#live` out of whatever page it lands on (blank, if that page has no such
 element) and swapping it in with `outerHTML` over the whole body (dropping the
-header and the page's width). See the [decision log](design/decisions.md),
+header and the page's width). See the [decision log](archive/decisions.md),
 2026-09-25.
 
 Static files are cached for a day, so the templates link them through the
@@ -606,12 +622,49 @@ writes. There is no CSRF token to carry through the pages. Requests with
 neither header (a `curl`) are allowed, and still need the session cookie
 where one is required.
 
+## Terms used in the code
+
+The words of [the glossary](glossary.md), plus these, which only matter inside
+the code or the repository.
+
+### Code and tooling
+
+| Term | Meaning |
+|---|---|
+| **Nops** / **`nops`** | **Nops** is the product, written with a capital in prose (docs, README, PR descriptions), like Nomad. **`nops`** in code font is the command: the binary, the image (`ghcr.io/music-gang/nops`), the Go module, a path (`cmd/nops`), a log or config name. `NOPS_*` variables and `nops_*` meta keys are keys and keep their spelling. The logo may be lowercase: its lettering is not the prose spelling. |
+| **store** | `internal/store`: SQLite, the only place state lives. |
+| **nomadx** | `internal/nomadx`: the Nomad client wrapper, CAS-only register, sentinel errors. |
+| **engine** | `internal/engine`: the state machine that moves deployments forward. Its two loops are **detection** (also called the **reconciler**: parses, plans, creates/supersedes/revalidates deployments) and the **apply loop** (advances non-terminal deployments); **recovery** is the apply loop's first cycle. |
+| **runner** | `hooks.Runner`: runs one hook run to a terminal state. Blocking and idempotent. |
+| **sentinel error** | An exported `Err...` value the caller tests with `errors.Is` (`ErrCASConflict`, `ErrJobNotFound`, `ErrActiveDeployment`). |
+| **fake / stub** | *Fake*: an in-memory stand-in with behaviour (the fake Nomad in `hooks` tests). *Stub*: an `httptest` server that returns canned answers (`nomadx` tests). |
+| **integration test** | A test against a real `nomad agent -dev` (build tag `integration`). |
+
+### Work on the repo
+
+The mechanics behind these terms (branching, PRs, how an issue becomes a PR)
+are in [development](#workflow-and-ci); this is just what to
+call them.
+
+| Term | Meaning |
+|---|---|
+| **PR** | Pull request. Its **title** is the commit that lands on `main`, in Angular style `type(scope): subject`. |
+| **issue** | A GitHub issue: one piece of work, with its problem, its proposal and, while it is being designed, what is still to decide. The open issues are the work left. |
+| **in flight** | An issue with a remote branch or an open PR. Derived from git and GitHub, never written down. |
+| **plan first** | An issue whose design questions still need the maintainer's answer before any branch exists. |
+| **changelog** | [`CHANGELOG.md`](../CHANGELOG.md): per release, what changed for someone running Nops; a PR adds its line under `Unreleased` ([changelog](#changelog)). |
+| **release PR** | The PR `chore(release): vX.Y.Z` that `scripts/release.sh` opens: it turns the `Unreleased` lines into the version's section, the notes the release publishes. |
+| **decision log** | [`archive/decisions.md`](archive/decisions.md): the design decisions up to v0.4.0, kept as history and no longer written to. A decision's reason is now in the page that explains that part. |
+| **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
+| **doc audit** | Checking the claims of the docs against the code and its tests, before a release or on request; a report of findings, then fixes as agreed ([procedure](#doc-audit)). Not the tests that already compare tables and test names with the code. |
+| **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and the version's section of the changelog on the GitHub Release ([releasing](#releasing)). |
+
 ## Go conventions
 
 - Language: code, comments, docs, examples and commit messages are in English.
 - Go version: whatever `go.mod` says. Format with `gofmt`/`goimports`. Lint: `go vet` + `staticcheck`.
 - Package names are short, singular, without underscores. No `util`/`common`
-  packages. Identifiers use the terms in [vocabulary](vocabulary.md).
+  packages. Identifiers use the terms in [glossary](glossary.md).
 - `context.Context` is always the first argument of any function that does I/O.
 - Every state transition goes through a single store function
   (`Store.Transition`), which updates `deployments` and writes `events` in the

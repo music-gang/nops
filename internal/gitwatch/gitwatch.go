@@ -4,7 +4,7 @@
 //
 // It does not parse HCL and does not decide whether a file is a managed job,
 // a hook, or neither: that is the engine's job, through Nomad, since Nomad is
-// the only HCL interpreter. See docs/design/gitwatch.md for the full design.
+// the only HCL interpreter. See docs/archive/gitwatch.md for the full design.
 package gitwatch
 
 import (

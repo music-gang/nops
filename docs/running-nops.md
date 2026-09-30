@@ -142,7 +142,7 @@ hook that mounts read-only a volume the token can already write needs no rule of
 its own. The rule is per volume: a token without it is refused at register with
 `register job <id>: Unexpected response code: 403 (Permission denied)`, while
 `Plan` passes, since it checks no volume. The deployment stays `applying` until
-`-apply-timeout`, then fails ([engine-apply](design/engine-apply.md)).
+`-apply-timeout`, then fails ([architecture](architecture.md#apply)).
 `TestTokenACLForVolumes` checks every row of the table, and that `Plan` passes
 without them.
 
@@ -192,7 +192,7 @@ Nops renders double it.
 the base path, since an orchestrator's health check (like the
 [example job](#as-a-nomad-job)'s) hits the task's own port directly,
 bypassing whatever prefix a reverse proxy mounts the dashboard under. See
-the [decision log](design/decisions.md), 2026-09-28.
+the [decision log](archive/decisions.md), 2026-09-28.
 
 ## Logging in with OIDC
 

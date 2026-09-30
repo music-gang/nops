@@ -1,9 +1,11 @@
-# Vocabulary
+# Glossary
 
-The words Nops uses, so that code, docs, commits, PRs and conversation say the
-same thing. When a word here and a word somewhere else disagree, this page wins
-and the other place gets fixed. When a new concept appears, or a term is
-renamed, add or change its row **in the same PR**.
+The words Nops uses, so that the docs, the dashboard, code, commits and
+conversation say the same thing. When a word here and a word somewhere else
+disagree, this page wins and the other place gets fixed. When a new concept
+appears, or a term is renamed, add or change its row **in the same PR**. The
+terms that only matter inside the code or the repository are in
+[development](development.md#terms-used-in-the-code).
 
 Identifiers in code follow the term: `HookRun`, `DispatchedJobID`,
 `cas_index`. Discussion in another language keeps these terms untranslated
@@ -56,15 +58,15 @@ Some words exist in both worlds and mean different things. Say which one.
 | **observation** | The last detection cycle's drift for one managed job (policy, whether it drifted, its redacted diff), kept only in memory (`Engine.Observations()`), never in SQLite: it is always a function of the current git head and the current live job, so there is nothing to persist. It is how a `none` policy job's drift reaches the dashboard, since no deployment is ever created for it. |
 | **blocked drift** | Drift a retry rule is deliberately not turning into a new deployment (`Observation.BlockedBy`/`BlockedReason`): either the existing rule for a `failed`/`rejected` deployment with an unchanged `spec_hash` and live index, or the anti-loop rule for a deployment that `failed` after reaching the register. Only a new commit or a **retry** unblocks it. |
 | **retry** | A human lifting a **blocked drift** without a new commit (`Engine.Retry`): the blocking deployment is marked *retried* (`retried_by`, `retried_at`) and stops blocking, and the next detection cycle creates a new deployment that follows the policy. It never approves and never applies anything by itself. |
-| **hold** | A condition that keeps Nops from *starting* a deployment for a job (`Observation.Hold`, `engine.Hold`): detection still plans it and shows the drift, but creates nothing, and an `auto` deployment still `detected` is superseded. It gates the start only (a deployment in `pre_hook`/`applying`/`post_hook` finishes) and only ever subtracts. It has two sources: a person's **pause** and a closed **sync window** ([state-machine](state-machine.md#holding-a-job)). Not a **blocked drift**: that is about a failed deployment and leaves the job's policy to a *retry*. |
+| **hold** | A condition that keeps Nops from *starting* a deployment for a job (`Observation.Hold`, `engine.Hold`): detection still plans it and shows the drift, but creates nothing, and an `auto` deployment still `detected` is superseded. It gates the start only (a deployment in `pre_hook`/`applying`/`post_hook` finishes) and only ever subtracts. It has two sources: a person's **pause** and a closed **sync window** ([deployment lifecycle](deployment-lifecycle.md#holding-a-job)). Not a **blocked drift**: that is about a failed deployment and leaves the job's policy to a *retry*. |
 | **sync window** | When Nops may deploy a job **on its own** (`nops_sync_window` + `nops_sync_window_duration`, read in `-sync-window-time-zone`): a scheduled **hold**, outside of which the job is **Held** (sync state) and no deployment is created. Only under policy `auto`; it gates the start, never a deployment already running ([policies](policies.md#sync-windows)). |
 | **pause / resume** | A person holding a job (`Engine.Pause`) and lifting it (`Engine.Resume`), from the Job page or the Overview: who, when and an optional reason are kept in SQLite (`job_pauses`), the sync state is **Paused**, and Approve is refused while it lasts. It is not *frozen*: that word is taken by the **frozen hook**. |
 | **sync state** | Where a managed job stands against git, in one word, as the Jobs page shows and filters it: invalid meta, paused, blocked, not in git, awaiting approval, deploying, held, drift or in sync (the first that applies wins; [dashboard](dashboard.md#sync-state-of-a-job)). Not a deployment state: it is about the *job*. |
 | **needs attention** | What the Overview lists for a person to act on: approvals waiting, blocked jobs, failures nobody retried, meta errors, paused jobs, orphans. Not drift under policy `none`: that is a sync state. |
-| **orphan** | A job Nops deployed (it has a `completed` deployment) that is no longer in the repository but still exists in Nomad, not stopped and not `dead`. Reported (`Engine.Orphans()`, sync state **Not in git**, a line in **needs attention**), never stopped by Nops ([engine-detection](design/engine-detection.md#orphan-jobs)). A job still in the repository without `nops_managed` is not one. |
+| **orphan** | A job Nops deployed (it has a `completed` deployment) that is no longer in the repository but still exists in Nomad, not stopped and not `dead`. Reported (`Engine.Orphans()`, sync state **Not in git**, a line in **needs attention**), never stopped by Nops ([architecture](architecture.md#orphan-jobs)). A job still in the repository without `nops_managed` is not one. |
 | **apply** | The CAS register of the target spec, always preceded by a plan. Nomad carries out the update. |
-| **healthy** | What ends `applying` ([engine-apply](design/engine-apply.md#decisions), 3): the Nomad deployment that tracks the applied index is `successful`; when there is none (a `batch` job, or no `update` block), every allocation of the applied job version is `running` or `complete`. That is a weaker test than a health check: Nops does not compare the number of allocations with the counts. A job that never has an allocation of its own (periodic, parameterized, or every group at count 0) is healthy as soon as it is registered. A Nomad deployment that waits for a canary promotion is not healthy yet, and not failing either: see **promotion wait**. |
-| **promotion wait** | What an `applying` deployment does while the job's Nomad deployment is running with its canaries placed and healthy and not all of them promoted yet, and its `update` block has `auto_promote = false`: it waits for a person to promote them in Nomad. The apply timeout does not run in it, it is notified once, and the Deployment page says so; the timeout counts again from the promotion ([engine-apply](design/engine-apply.md#decisions), 10). A person promotes from the Deployment page (**Promote**) or in Nomad ([decision 11](design/engine-apply.md#decisions)). |
+| **healthy** | What ends `applying` ([architecture](architecture.md#healthy)): the Nomad deployment that tracks the applied index is `successful`; when there is none (a `batch` job, or no `update` block), every allocation of the applied job version is `running` or `complete`. That is a weaker test than a health check: Nops does not compare the number of allocations with the counts. A job that never has an allocation of its own (periodic, parameterized, or every group at count 0) is healthy as soon as it is registered. A Nomad deployment that waits for a canary promotion is not healthy yet, and not failing either: see **promotion wait**. |
+| **promotion wait** | What an `applying` deployment does while the job's Nomad deployment is running with its canaries placed and healthy and not all of them promoted yet, and its `update` block has `auto_promote = false`: it waits for a person to promote them in Nomad. The apply timeout does not run in it, it is notified once, and the Deployment page says so; the timeout counts again from the promotion ([architecture](architecture.md#the-apply-timeout)). A person promotes from the Deployment page (**Promote**) or in Nomad ([architecture](architecture.md#the-apply-timeout)). |
 | **Nomad panel** | The read-only box of the Job and Deployment pages with what Nomad reports about a job: its status, its groups against their counts, its latest Nomad deployment. Nothing computed by Nops on top ([dashboard](dashboard.md#the-nomad-panel)). |
 | **CAS** | Compare-and-set on the job's modify index. |
 | **cas index** | The live `JobModifyIndex` captured at detection (`cas_index`). `0` means "the job must not exist". |
@@ -96,35 +98,3 @@ Some words exist in both worlds and mean different things. Say which one.
 | **timeout** | The duration a hook may run (`nops_timeout` on the hook job, frozen with its revision), in whole seconds. |
 | **deadline** | `started_at + timeout`. It does not move when Nops restarts. |
 | **outcome unknown** | A run that may have been dispatched but whose dispatched job cannot be found. It is `failed` and never dispatched again. |
-
-## Code and tooling
-
-| Term | Meaning |
-|---|---|
-| **Nops** / **`nops`** | **Nops** is the product, written with a capital in prose (docs, README, PR descriptions), like Nomad. **`nops`** in code font is the command: the binary, the image (`ghcr.io/music-gang/nops`), the Go module, a path (`cmd/nops`), a log or config name. `NOPS_*` variables and `nops_*` meta keys are keys and keep their spelling. The logo may be lowercase: its lettering is not the prose spelling. |
-| **store** | `internal/store`: SQLite, the only place state lives. |
-| **nomadx** | `internal/nomadx`: the Nomad client wrapper, CAS-only register, sentinel errors. |
-| **engine** | `internal/engine`: the state machine that moves deployments forward. Its two loops are **detection** (also called the **reconciler**: parses, plans, creates/supersedes/revalidates deployments) and the **apply loop** (advances non-terminal deployments); **recovery** is the apply loop's first cycle. |
-| **runner** | `hooks.Runner`: runs one hook run to a terminal state. Blocking and idempotent. |
-| **sentinel error** | An exported `Err...` value the caller tests with `errors.Is` (`ErrCASConflict`, `ErrJobNotFound`, `ErrActiveDeployment`). |
-| **fake / stub** | *Fake*: an in-memory stand-in with behaviour (the fake Nomad in `hooks` tests). *Stub*: an `httptest` server that returns canned answers (`nomadx` tests). |
-| **integration test** | A test against a real `nomad agent -dev` (build tag `integration`). |
-
-## Work on the repo
-
-The mechanics behind these terms (branching, PRs, how an issue becomes a PR)
-are in [development](development.md#workflow-and-ci); this is just what to
-call them.
-
-| Term | Meaning |
-|---|---|
-| **PR** | Pull request. Its **title** is the commit that lands on `main`, in Angular style `type(scope): subject`. |
-| **issue** | A GitHub issue: one piece of work, with its problem, its proposal and, while it is being designed, what is still to decide. The open issues are the work left. |
-| **in flight** | An issue with a remote branch or an open PR. Derived from git and GitHub, never written down. |
-| **plan first** | An issue whose design questions still need the maintainer's answer before any branch exists. |
-| **changelog** | [`CHANGELOG.md`](../CHANGELOG.md): per release, what changed for someone running Nops; a PR adds its line under `Unreleased` ([changelog](development.md#changelog)). |
-| **release PR** | The PR `chore(release): vX.Y.Z` that `scripts/release.sh` opens: it turns the `Unreleased` lines into the version's section, the notes the release publishes. |
-| **decision log** | [`design/decisions.md`](design/decisions.md): the design decisions up to v0.4.0, kept as history and no longer written to. A decision's reason is now in the page that explains that part. |
-| **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
-| **doc audit** | Checking the claims of the docs against the code and its tests, before a release or on request; a report of findings, then fixes as agreed ([procedure](development.md#doc-audit)). Not the tests that already compare tables and test names with the code. |
-| **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and the version's section of the changelog on the GitHub Release ([releasing](development.md#releasing)). |

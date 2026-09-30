@@ -56,7 +56,7 @@ nops_sync_window_duration = "9h"           # ... and stays open until 18:00
   **Held** ("outside its sync window, next opens Fri 2026-09-25 09:00 UTC"), but
   **no deployment is created**. When the window opens, detection plans again as
   usual, so what is applied is never a plan hours old, and the state machine
-  gains no state ([state machine](state-machine.md#holding-a-job)).
+  gains no state ([deployment lifecycle](deployment-lifecycle.md#holding-a-job)).
 - It **gates the start only**: a deployment already running is never
   interrupted when the window closes, and a pre-hook counts as the start.
 - It gates **what Nops starts on its own**, self-heal included. Under
@@ -85,7 +85,7 @@ not what you want during an incident (a fix made by hand in Nomad, a
 A pause holds a job under `auto` and under `approval` alike. Any logged-in
 user can pause and resume, and both are logged with who did it. There is no
 pause for the whole instance: stopping Nops does that. How a hold works inside
-the engine is in [state machine](state-machine.md#holding-a-job).
+the engine is in [deployment lifecycle](deployment-lifecycle.md#holding-a-job).
 
 ## Approval
 
@@ -99,4 +99,4 @@ the engine is in [state machine](state-machine.md#holding-a-job).
   approve.
 - If the live job changes outside Nops, the pending deployment is
   revalidated automatically (see
-  [state machine](state-machine.md#revalidating-pending-deployments)).
+  [deployment lifecycle](deployment-lifecycle.md#revalidating-pending-deployments)).

@@ -10,10 +10,11 @@ New here? Start with the [project README](../README.md).
 ## Index
 
 **Understanding Nops**
-- [vocabulary.md](vocabulary.md): the terms used in code, docs and PRs.
+- [glossary.md](glossary.md): the words Nops uses.
 - [philosophy.md](philosophy.md): principles and invariants, with the reasoning.
-- [architecture.md](architecture.md): components, loops, apply and downtime.
-- [state-machine.md](state-machine.md): states, transitions, schema, recovery.
+- [architecture.md](architecture.md): components, loops, reading the repository,
+  detection, apply, hook revisions.
+- [deployment-lifecycle.md](deployment-lifecycle.md): states, transitions, holds, schema, recovery.
 
 **Using it**
 - [getting-started.md](getting-started.md): a first deployment on one machine, step by step.
@@ -28,13 +29,8 @@ New here? Start with the [project README](../README.md).
 **Contributing**
 - [development.md](development.md): tests, coverage, commands, the changelog,
   releasing, Go conventions.
-- [design/decisions.md](design/decisions.md): the decision log up to v0.4.0,
-  kept as history.
-- [design/gitwatch.md](design/gitwatch.md): how the git repository is read.
-- [design/engine-detection.md](design/engine-detection.md): how drift is
-  detected and deployments are created, superseded and revalidated.
-- [design/engine-apply.md](design/engine-apply.md): how a deployment is moved
-  from approval to `completed`.
+- [archive/](archive/): the decision log and the design plans up to v0.4.0,
+  kept as history and not updated.
 
 ## Keeping the docs true
 

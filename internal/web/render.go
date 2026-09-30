@@ -113,7 +113,7 @@ func (s *server) jobPath(namespace, jobID string) string {
 
 // deploymentCard is a deployment as shown in a list or on its own page. It
 // never carries JobSpec: the full unredacted job (see
-// docs/design/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
+// docs/archive/engine-detection.md#job_spec-keeps-the-full-unredacted-spec).
 // Long identifiers come twice: the short form for the text and the full one
 // for the hover title.
 type deploymentCard struct {
