@@ -26,6 +26,9 @@ Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops
 but written from scratch and extended with persistent state, approvals and hooks.
 Aimed at a self-hosted cluster for personal use: no enterprise-scale machinery.
 
+**Try it:** [getting started](docs/getting-started.md) takes one machine from
+nothing to an approved deployment in about fifteen minutes.
+
 ## How it works
 
 1. Nops reads the job files from a git repo and asks Nomad to parse them
@@ -67,28 +70,10 @@ job "api" {
 ```
 
 If a pre-hook fails or times out, the deployment stops (the hooks after it do
-not run), the live job is left untouched and you get a notification. See the
-[meta-keys reference](docs/meta-keys.md) and the [hooks guide](docs/hooks.md).
-
-### Hook examples
-
-Hooks are ordinary Nomad jobs; [`examples/`](examples/) has ready-made,
-runnable ones, each paired with the job it deploys:
-
-- [`examples/migrate/`](examples/migrate/): run database migrations before
-  the new version starts.
-- [`examples/backup-then-migrate/`](examples/backup-then-migrate/): two
-  pre-hooks in a row, a database backup and then its migration.
-- [`examples/approval/`](examples/approval/): check that the service answers
-  after the deploy.
-- [`examples/prepull-hostvolume/`](examples/prepull-hostvolume/): pre-pull a
-  heavy image on the node that holds a host volume, so a stop+start deploy
-  only pays for the restart, not for the download.
-- [`examples/backup-stateful/`](examples/backup-stateful/): back up a
-  stateful service before its deploy.
-
-The integration tests check that they still parse, that their hooks exist and
-that they need nothing but Nomad (no Consul).
+not run), the live job is left untouched and you get a notification. Every key
+is in the [meta-keys reference](docs/meta-keys.md); how to write a hook, with
+runnable [examples](examples/) for a migration, a backup, a smoke test and
+pre-pulling an image, is in the [hooks guide](docs/hooks.md).
 
 ## Nomad compatibility
 
@@ -100,43 +85,20 @@ the fields of a plan diff); each has an integration test, so an upgrade that
 changes one fails there. How to move to a new version:
 [development](docs/development.md#nomad-version).
 
-## Running it
-
-To try it on one machine: [getting started](docs/getting-started.md). To run
-it on a cluster (the image, the binary, a ready-made Nomad job, upgrading):
-[running Nops](docs/running-nops.md). Every option is a flag or a `NOPS_*`
-variable ([configuration](docs/configuration.md)).
-
-## Design principles
-
-- **Plan before every write, CAS on every write.**
-- **Never auto-apply a job whose policy is `approval`.**
-- **Git is the source of truth** for policy and hooks; Nops never writes to git
-  or into the live job's meta.
-- **One active deployment per job**, enforced by the database.
-- **State is saved before acting**, so a crash mid-deployment can be resumed
-  without repeating side effects.
-
-The reasoning behind each is in [docs/philosophy.md](docs/philosophy.md).
-
 ## Documentation
 
-The full documentation is in [`docs/`](docs/README.md): architecture, the state
-machine, policies, hooks, the dashboard and error handling. What each release
-changed is in [CHANGELOG.md](CHANGELOG.md).
+| I want to… | Read |
+|---|---|
+| try Nops on one machine | [Getting started](docs/getting-started.md) |
+| run it on a cluster, or upgrade it | [Running Nops](docs/running-nops.md) |
+| choose how a job is applied | [Policies](docs/policies.md) |
+| write a hook | [Hooks](docs/hooks.md) |
+| look up an option or a meta key | [Configuration](docs/configuration.md), [meta keys](docs/meta-keys.md) |
+| understand how it works, and why | [Philosophy](docs/philosophy.md), [architecture](docs/architecture.md) |
+| see what changed in a release | [Changelog](CHANGELOG.md) |
+| contribute | [Contributing](CONTRIBUTING.md) |
 
-## Development
-
-Requires Go and, for integration tests, a local `nomad agent -dev`.
-
-```sh
-go test -race -cover ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
-```
-
-See [docs/development.md](docs/development.md) for the testing strategy, the
-PR workflow and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for the
-short version.
+Everything else is in the [documentation index](docs/README.md).
 
 ## License
 
