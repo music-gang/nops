@@ -41,6 +41,72 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// pause is POST /jobs/{namespace}/{job}/pause: hold a job so nops starts no new
+// deployment for it until it is resumed (Engine.Pause). It only ever subtracts:
+// it creates and approves nothing. The form's optional "reason" is kept with
+// who paused and when.
+func (s *server) pause(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	ns, job := r.PathValue("namespace"), r.PathValue("job")
+	err := s.engine.Pause(r.Context(), ns, job, actor, r.FormValue("reason"))
+	switch {
+	case err == nil:
+		http.Redirect(w, r, s.backTo(r.FormValue("back"), ns, job), http.StatusSeeOther)
+	case errors.Is(err, engine.ErrNotPausable):
+		s.notFoundMessage(w, r, "This job is not in the repository as nops last read it: there is nothing to pause.")
+	case errors.Is(err, store.ErrAlreadyPaused):
+		s.conflict(w, r, "Already paused", "This job is already paused: someone paused it since the page was rendered.")
+	case errors.Is(err, engine.ErrPauseNoteTooLong):
+		w.WriteHeader(http.StatusBadRequest)
+		s.render(w, r, "error", errorData{
+			baseData: s.base(r, ""),
+			Status:   http.StatusBadRequest,
+			Title:    "Reason too long",
+			Message:  "The reason for a pause can be 500 bytes at most. Go back and shorten it.",
+		})
+	default:
+		s.serverError(w, r, "pause job", err)
+	}
+}
+
+// resume is POST /jobs/{namespace}/{job}/resume: lift a pause (Engine.Resume).
+// The next detection cycle treats the job as any other.
+func (s *server) resume(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	ns, job := r.PathValue("namespace"), r.PathValue("job")
+	err := s.engine.Resume(r.Context(), ns, job, actor)
+	switch {
+	case err == nil:
+		http.Redirect(w, r, s.backTo(r.FormValue("back"), ns, job), http.StatusSeeOther)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This job does not exist.")
+	case errors.Is(err, store.ErrNotPaused):
+		s.conflict(w, r, "Not paused", "This job is not paused: it was already resumed since the page was rendered.")
+	default:
+		s.serverError(w, r, "resume job", err)
+	}
+}
+
+// conflict renders the 409 page of an action that found the job in another
+// state than the page it was sent from said.
+func (s *server) conflict(w http.ResponseWriter, r *http.Request, title, message string) {
+	w.WriteHeader(http.StatusConflict)
+	s.render(w, r, "error", errorData{
+		baseData: s.base(r, ""),
+		Status:   http.StatusConflict,
+		Title:    title,
+		Message:  message,
+	})
+}
+
 // promote is POST /deployments/{id}/promote: promote the canaries of the Nomad
 // deployment an applying deployment waits on (Engine.Promote). Like Approve it
 // is an authenticated human action; unlike it, it applies nothing new: it

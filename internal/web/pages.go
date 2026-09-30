@@ -160,10 +160,18 @@ type blockingView struct {
 	RetryPath string
 }
 
+// heldView says a deployment's job is paused, so it cannot be approved, and how
+// to lift the pause.
+type heldView struct {
+	Reason     string
+	ResumePath string
+}
+
 type deploymentDetailData struct {
 	baseData
 	Deployment deploymentCard
 	Blocking   *blockingView // set while this deployment blocks its job
+	Paused     *heldView     // set while the deployment's job is paused
 	// PromotionWait is set while the deployment waits for someone to promote the
 	// canaries of its Nomad deployment (the apply timeout does not run meanwhile).
 	PromotionWait bool
@@ -254,7 +262,9 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {
 			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry"}
-			break
+		}
+		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil {
+			data.Paused = &heldView{Reason: o.Hold.Reason, ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume"}
 		}
 	}
 	if data.CanDecide {
@@ -331,10 +341,13 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, approve bool) {
 		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
-	case errors.Is(err, engine.ErrStaleApproval), errors.Is(err, engine.ErrNotInRepo):
+	case errors.Is(err, engine.ErrStaleApproval), errors.Is(err, engine.ErrNotInRepo), errors.Is(err, engine.ErrPaused):
 		notice := "The spec changed since this page loaded: review the new diff before deciding."
-		if errors.Is(err, engine.ErrNotInRepo) {
+		switch {
+		case errors.Is(err, engine.ErrNotInRepo):
 			notice = "This job is not in the repository as nops last read it (removed, or its file does not parse): there is nothing to approve until it is back. You can still reject it."
+		case errors.Is(err, engine.ErrPaused):
+			notice = "This job is paused: resume it to approve. You can still reject it."
 		}
 		data, ok := s.deploymentView(w, r, id, notice)
 		if !ok {

@@ -37,6 +37,7 @@ key twice, and a parser that rejects duplicates would drop the line.
 | State transition | INFO |
 | An `applying` deployment starts waiting for a canary promotion, or sees the canaries promoted | INFO |
 | Canaries promoted from the dashboard (`Engine.Promote`, with the `actor`) | INFO |
+| A job paused or resumed from the dashboard (`Engine.Pause`, `Engine.Resume`, with the `actor` and, for a pause, the reason) | INFO |
 | Nomad refuses to promote, or a read for the dashboard's Nomad panel fails (once per cached panel) | ERROR |
 | Unknown meta key | WARN |
 | Notification not delivered | WARN |

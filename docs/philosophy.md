@@ -55,6 +55,19 @@ scale", we don't build it.
    is never read), `TestAnInvalidKeyIntroducedIntoAPendingApprovalSupersedesIt`,
    `TestTheLivePolicyIsNeverWhatDecidesWhetherToDeploy`, `TestParse`.
 
+   *The one thing Nops reads from SQLite that decides whether it acts* is a
+   person's **pause** of a job ([state-machine](state-machine.md#holding-a-job)).
+   It is not a second source of policy: it changes neither the policy nor the
+   hooks git gives, and it can only make Nops do *less*. A paused job gets no
+   new deployment and no approval, never a different one; a deployment already
+   running finishes; resuming gives the job back to whatever git says. It
+   exists because the brake has to work during an incident, when a commit that
+   sets `nops_policy = "none"` is one more round trip through git.
+   *Proven by:* `TestPausedJobGetsNoDeployment`,
+   `TestPauseLeavesAPendingApprovalPending`,
+   `TestPauseLeavesADeploymentInFlightAlone`,
+   `TestResumeLetsTheNextCycleDeployAsUsual`.
+
 5. **Nops never writes to Git** and **never writes meta into the live job**.
    Tool state lives only in SQLite.
    *Why:* writing meta into the live job causes "meta-drift": the next

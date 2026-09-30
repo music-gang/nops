@@ -471,6 +471,19 @@ form { margin: 0; }
   border-radius: 999px;
 }
 
+/* A text field inside a box, like the reason of a pause. */
+.input {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 5px 12px;
+  color: var(--fg);
+  font: 14px/20px var(--font-sans);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 /* -- error page and login ---------------------------------------------------------------------- */
 
 .error-page { max-width: 520px; margin: 48px auto; }

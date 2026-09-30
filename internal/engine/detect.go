@@ -71,13 +71,21 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		hooks[ns][*h.job.ID] = h
 	}
 
+	// A pause that cannot be read is a store failure like any other: a job must
+	// not be deployed on the guess that nobody paused it (invariant 7).
+	pauses, err := e.store.ActivePauses(ctx)
+	if err != nil {
+		return st, fmt.Errorf("list active pauses: %w", err)
+	}
+	held := holds(pauses)
+
 	seen := make(map[jobKey]bool, len(managed))
 	observations := make(map[jobKey]Observation, len(managed))
 	for _, mf := range managed {
 		key := keyOf(mf.job)
 		seen[key] = true // classified as managed: never "removed from repo" this cycle
 
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace])
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], held[key])
 		if err != nil {
 			return st, err
 		}
@@ -238,10 +246,11 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 }
 
 // reconcileJob computes the drift of one managed job and reconciles its
-// deployment. hooks are the hook jobs of the job's own namespace, by ID. ok is false when the job was skipped because of a Nomad
-// failure scoped to it (already logged): the caller keeps no observation for
-// it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile) (obs Observation, ok bool, err error) {
+// deployment. hooks are the hook jobs of the job's own namespace, by ID. hold is
+// what holds the job this cycle, nil if nothing does. ok is false when the job
+// was skipped because of a Nomad failure scoped to it (already logged): the
+// caller keeps no observation for it this cycle rather than showing stale data.
+func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, hold *Hold) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
 	jobID, ns := key.id, key.namespace
 	log := e.log.With("job", jobID, "namespace", ns, "commit", commit.sha)
@@ -295,13 +304,13 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	obs = Observation{
 		JobID: jobID, Namespace: ns, FilePath: mf.path,
 		Policy: mf.cfg.Policy, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
-		Issues: mf.cfg.Issues, ObservedAt: e.now(),
+		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold,
 	}
 	if drift {
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob, hold)
 	if err != nil {
 		return obs, true, err
 	}
@@ -317,8 +326,15 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // of the deployment whose retry rule is suppressing a new deployment for
 // this job's drift, or "" if none (see docs/design/engine-apply.md, decisions
 // 6 and 7); it feeds Observation.BlockedBy/BlockedReason for the dashboard.
+//
+// hold, when not nil, gates the start (docs/state-machine.md, "holding a job"):
+// no deployment is created, and an auto deployment still `detected` is
+// superseded rather than left for apply to start, so that when the hold lifts
+// detection plans again and what is applied is never a plan from before it. A
+// pending_approval deployment is left as it is (Approve refuses while the job
+// is paused), and so is one in pre_hook/applying/post_hook.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
-	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hold *Hold) (blockedBy, blockedReason string, err error) {
 
 	jobID := key.id
 	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
@@ -351,6 +367,10 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 				if err := e.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
 					return "", "", err
 				}
+			case hold != nil && active.State == store.StateDetected && active.Policy == store.PolicyAuto:
+				if err := e.transition(ctx, log, active, store.StateSuperseded, hold.Reason); err != nil {
+					return "", "", err
+				}
 			default:
 				if active.State == store.StateDetected && active.Policy == store.PolicyApproval {
 					// Left `detected` under approval: created by a nops that moved
@@ -365,6 +385,10 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	}
 
 	if cfg.Policy == meta.PolicyNone || !drift {
+		return "", "", nil
+	}
+	if hold != nil {
+		log.DebugContext(ctx, "job held: no deployment created", "reason", hold.Reason)
 		return "", "", nil
 	}
 

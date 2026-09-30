@@ -24,6 +24,7 @@ type syncKey string
 
 const (
 	syncInvalid   syncKey = "invalid"   // its meta has an error: nops ignores its policy and hooks
+	syncPaused    syncKey = "paused"    // a person paused it: nops starts no deployment for it
 	syncBlocked   syncKey = "blocked"   // a failed or rejected deployment holds its drift back
 	syncOrphan    syncKey = "orphan"    // deployed by nops, gone from git, still running in Nomad
 	syncPending   syncKey = "pending"   // a deployment waits for a human decision
@@ -32,7 +33,7 @@ const (
 	syncInSync    syncKey = "sync"      // the cluster is what git says
 )
 
-var syncOrder = []syncKey{syncInvalid, syncBlocked, syncOrphan, syncPending, syncDeploying, syncDrift, syncInSync}
+var syncOrder = []syncKey{syncInvalid, syncPaused, syncBlocked, syncOrphan, syncPending, syncDeploying, syncDrift, syncInSync}
 
 // valid reports whether k is one of the sync states.
 func (k syncKey) valid() bool {
@@ -48,6 +49,8 @@ func (k syncKey) label() string {
 	switch k {
 	case syncInvalid:
 		return "Invalid meta"
+	case syncPaused:
+		return "Paused"
 	case syncBlocked:
 		return "Blocked"
 	case syncOrphan:
@@ -68,7 +71,7 @@ func (k syncKey) class() string {
 	switch k {
 	case syncInvalid, syncBlocked:
 		return "state-failed"
-	case syncPending, syncDrift, syncOrphan:
+	case syncPending, syncDrift, syncOrphan, syncPaused:
 		return "state-pending"
 	case syncDeploying:
 		return "state-running"
@@ -84,6 +87,11 @@ func jobSync(o engine.Observation, latest *store.Deployment) syncKey {
 		if iss.Severity == meta.SeverityError {
 			return syncInvalid
 		}
+	}
+	// A pause is a person's decision that holds everything below it, so it says
+	// so whether or not the job drifts: a forgotten one must show.
+	if o.Hold != nil {
+		return syncPaused
 	}
 	if o.BlockedBy != "" {
 		return syncBlocked
@@ -139,6 +147,9 @@ func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 		Namespace: o.Namespace, JobID: o.JobID, Title: o.Namespace + "/" + o.JobID, Path: s.jobPath(o.Namespace, o.JobID),
 		Policy: o.Policy, Sync: k, SyncLabel: k.label(), SyncClass: k.class(),
 		BlockedReason: o.BlockedReason, File: o.FilePath, Observed: s.when(o.ObservedAt),
+	}
+	if k == syncPaused {
+		row.BlockedReason = o.Hold.Reason
 	}
 	if latest != nil {
 		c := s.card(latest)
@@ -257,6 +268,14 @@ type orphanView struct {
 	StopCommand string
 }
 
+// pauseView is the pause of a job as its page shows it.
+type pauseView struct {
+	By, Note string
+	Since    timeView
+	// ResumePath is where the "Resume" button posts.
+	ResumePath string
+}
+
 type jobData struct {
 	baseData
 	Namespace, JobID, Title string
@@ -272,6 +291,8 @@ type jobData struct {
 	BlockedReason           string
 	BlockedBy               string
 	RetryPath               string // where the "Retry" button posts, set when Blocked
+	Paused                  *pauseView
+	PausePath               string // where the "Pause" form posts, set when the job is in the repository and not paused
 	Drift                   bool
 	Diff                    *api.JobDiff
 	Summary                 diffSummary
@@ -340,6 +361,11 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		if data.Blocked {
 			data.RetryPath = s.jobPath(ns, id) + "/retry"
 		}
+		if h := obs.Hold; h != nil {
+			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since), ResumePath: s.jobPath(ns, id) + "/resume"}
+		} else {
+			data.PausePath = s.jobPath(ns, id) + "/pause"
+		}
 		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, summarize(diff), obs.Issues
 	}
 	s.render(w, r, "job", data)
@@ -354,7 +380,7 @@ const recentFailure = 7 * 24 * time.Hour
 // attentionItem is one line of "Needs attention": something a person has to
 // look at, with why and where to act.
 type attentionItem struct {
-	Kind      string // "pending", "blocked", "failed" or "invalid"
+	Kind      string // "pending", "blocked", "failed", "invalid", "paused" or "orphan"
 	KindLabel string
 	KindClass string // palette color, like a state's
 	Title     string // namespace/job
@@ -363,11 +389,14 @@ type attentionItem struct {
 	When      timeView
 	// RetryPath, when set, is where the "Retry" button of a blocked job posts.
 	RetryPath string
+	// ResumePath, when set, is where the "Resume" button of a paused job posts.
+	ResumePath string
 }
 
 // attention collects what needs a person, most urgent first: approvals (oldest
-// waiting first), blocked jobs, failures nobody has retried, meta errors. A
-// job under policy "none" that drifts is not here: leaving it is its policy.
+// waiting first), blocked jobs, failures nobody has retried, meta errors, paused
+// jobs. A job under policy "none" that drifts is not here: leaving it is its
+// policy.
 func (s *server) attention(obs []engine.Observation, active []*store.Deployment, latest map[string]*store.Deployment) []attentionItem {
 	var items []attentionItem
 
@@ -430,6 +459,19 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 			})
 			break // one line per job: its page lists them all
 		}
+	}
+
+	// A pause is deliberate, but a forgotten one stops a job converging with
+	// nothing else saying so.
+	for _, o := range obs {
+		if o.Hold == nil || o.Hold.Kind != engine.HoldPaused {
+			continue
+		}
+		items = append(items, attentionItem{
+			Kind: "paused", KindLabel: "Paused", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
+			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.Hold.Reason, When: s.when(o.Hold.Since),
+			ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume",
+		})
 	}
 
 	// Least urgent: nothing is broken, a service nobody asked for keeps

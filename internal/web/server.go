@@ -51,8 +51,9 @@ type Store interface {
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to
-// retry a blocked job, to promote the canaries of a deployment that waits for
-// it and to read the drift of "none"-policy jobs. *engine.Engine implements it.
+// retry a blocked job, to pause and resume a job, to promote the canaries of a
+// deployment that waits for it and to read the drift of "none"-policy jobs.
+// *engine.Engine implements it.
 type Engine interface {
 	Approve(ctx context.Context, id, specHash, actor string) error
 	Reject(ctx context.Context, id, actor string) error
@@ -60,6 +61,8 @@ type Engine interface {
 	Orphans() []engine.Orphan
 	Retry(ctx context.Context, namespace, jobID, actor string) error
 	Promote(ctx context.Context, id, actor string) error
+	Pause(ctx context.Context, namespace, jobID, actor, reason string) error
+	Resume(ctx context.Context, namespace, jobID, actor string) error
 	Status() engine.Status
 }
 
@@ -254,6 +257,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
 	mux.Handle("POST /deployments/{id}/promote", s.auth.Require(http.HandlerFunc(s.promote)))
 	mux.Handle("POST /jobs/{namespace}/{job}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
+	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.auth.Require(http.HandlerFunc(s.pause)))
+	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.auth.Require(http.HandlerFunc(s.resume)))
 	if s.trigger != nil {
 		mux.Handle("POST /fetch", s.auth.Require(http.HandlerFunc(s.fetchNow)))
 	}
