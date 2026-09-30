@@ -80,6 +80,8 @@ jobs:
       NOMAD_VERSION: "2.0.7"
       NOMAD_SHA256: 4c9b8a0850d6fd9caadbbab09b3e6fdf8b77aa777729543c70c61b85acca68c1
       NOPS_TEST_NOMAD_ADDR: http://127.0.0.1:4646
+      # A second agent, with ACLs, for what the token needs (acl_test.go).
+      NOPS_TEST_NOMAD_ACL_ADDR: http://127.0.0.1:5646
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,8 +110,39 @@ jobs:
           echo "Nomad did not become ready in time"
           cat nomad.log
           exit 1
+      - name: Start Nomad dev agent with ACLs
+        run: |
+          printf 'ports {\n  http = 5646\n  rpc  = 5647\n  serf = 5648\n}\nacl {\n  enabled = true\n}\n' > acl-agent.hcl
+          nomad agent -dev -bind=127.0.0.1 -config=acl-agent.hcl > nomad-acl.log 2>&1 &
+          # The step's shell has no pipefail: the pipeline's status is jq's, so
+          # the loop looks at the token, not at the status.
+          token=""
+          for _ in $(seq 1 60); do
+            token=$(curl -sf -X POST "${NOPS_TEST_NOMAD_ACL_ADDR}/v1/acl/bootstrap" | jq -r '.SecretID // empty')
+            if [ -n "${token}" ]; then break; fi
+            sleep 1
+          done
+          if [ -z "${token}" ]; then
+            echo "The ACL agent could not be bootstrapped in time"
+            cat nomad-acl.log
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          echo "NOPS_TEST_NOMAD_ACL_TOKEN=${token}" >> "${GITHUB_ENV}"
+          for _ in $(seq 1 60); do
+            if curl -sf -H "X-Nomad-Token: ${token}" "${NOPS_TEST_NOMAD_ACL_ADDR}/v1/nodes" | grep -q '"Status":"ready"'; then
+              echo "Nomad with ACLs is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Nomad with ACLs did not become ready in time"
+          cat nomad-acl.log
+          exit 1
       - name: Integration tests
         run: go test -tags integration -race -count=1 -v ./tests/integration/...
       - name: Nomad log
         if: failure()
-        run: tail -n 200 nomad.log
+        run: |
+          tail -n 200 nomad.log
+          if [ -f nomad-acl.log ]; then tail -n 200 nomad-acl.log; fi

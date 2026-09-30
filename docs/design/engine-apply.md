@@ -343,9 +343,11 @@ expanded here.
    deployment, block the job for that `spec_hash` (decision 6), and a promotion
    after the fact would find a `failed` deployment whose post-hooks never run.
    So `canaryHealth` reads a running Nomad deployment against the stored
-   `job_spec`: for every group that has canaries and does not `auto_promote`
-   (one that does is Nomad's to finish, and keeps the timeout), all canaries
-   placed and healthy and none promoted is a **promotion wait**. The first time
+   `job_spec`: when every group that has canaries and does not `auto_promote`
+   (one that does is Nomad's to finish, and keeps the timeout) has all its
+   canaries placed and healthy or is already promoted, and at least one of them
+   is not promoted yet, it is a **promotion wait** (a group can be promoted on
+   its own, with `nomad deployment promote -group`). The first time
    the step sees it, `Store.MarkAwaitingPromotion` writes `promotion_wait_since`
    and an `applying → applying` event, and only that call sends the
    notification (`waiting: canary_promotion`), so a restart or the next cycle

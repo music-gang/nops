@@ -241,7 +241,8 @@ usual, `pending_approval` still waits for a human. For the rest:
   response is not reliable (see the decision log).
 - `applying` with `applied_index` set: wait for health as before, the timeout
   counted from the `→ applying` event, or from `promoted_at` if the Nomad
-  deployment waited for a canary promotion (see below). If the live job's index is no longer
+  deployment waited for a canary promotion; while it waits for one there is no
+  timeout at all ([engine-apply](design/engine-apply.md#decisions), 10). If the live job's index is no longer
   `applied_index` and no Nomad deployment tracks it, the job was modified
   outside Nops (for instance while it was down): the deployment is `failed`
   rather than judged on someone else's allocations.
