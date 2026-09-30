@@ -211,6 +211,7 @@
       {{if .Deployment.CommitURL}}<a class="mono" href="{{.Deployment.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</a>{{else}}<span class="mono" title="{{.Deployment.CommitSHA}}">{{.Deployment.CommitShort}}</span>{{end}}
       {{if .Deployment.CommitSubj}}<span class="pagehead__subject" title="{{.Deployment.CommitSubj}}">{{.Deployment.CommitSubj}}</span>{{end}}
       <span class="muted pagehead__meta">{{if .Deployment.CommitAuthor}}by {{.Deployment.CommitAuthor}} &middot; {{end}}created {{template "time" .Deployment.CreatedAt}}</span>
+      {{if .NomadURL}}<a class="pagehead__meta" href="{{.NomadURL}}" target="_blank" rel="noopener noreferrer">Open in Nomad</a>{{end}}
     </p>
   </div>
 
@@ -227,7 +228,7 @@
   {{if .Notice}}<p class="flash flash--warn">{{.Notice}}</p>{{end}}
   {{if .PromotionWait}}
   <section class="flash flash--warn flash--action">
-    <div><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries here or in Nomad, or fail the Nomad deployment, to move on.</div>
+    <div><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries here or in Nomad, or fail the Nomad deployment, to move on.{{if .NomadDeploymentsURL}} <a href="{{.NomadDeploymentsURL}}" target="_blank" rel="noopener noreferrer">Open in Nomad</a>{{end}}</div>
     <form method="post" action="{{.Deployment.Path}}/promote">
       <button type="submit" class="btn btn--primary">Promote</button>
     </form>
@@ -284,8 +285,8 @@
   <p class="panel-note">Allocations of the live version, counted by the status Nomad gives them.</p>
   {{end}}
   {{with .Deployment}}
-  <div class="box__body">
-    <p><strong>Nomad deployment</strong> <span class="mono" title="{{.ID}}">{{.ShortID}}</span> <span class="pill {{nomadClass .Status}}">{{.Status}}</span> <span class="muted">{{.Description}}</span></p>
+  <div class="box__body nomad-deployment">
+    <p><strong>Nomad deployment</strong> {{if $.DeploymentsURL}}<a class="mono" href="{{$.DeploymentsURL}}" target="_blank" rel="noopener noreferrer" title="{{.ID}}: open the job's deployments in Nomad">{{.ShortID}}</a>{{else}}<span class="mono" title="{{.ID}}">{{.ShortID}}</span>{{end}} <span class="pill {{nomadClass .Status}}">{{.Status}}</span> <span class="muted">{{.Description}}</span></p>
     {{if $.Tracked}}<p class="muted">This is the one this deployment waits on.</p>{{else if $.Another}}<p class="muted">Not the one tracking this deployment&rsquo;s apply: the job&rsquo;s latest Nomad deployment is another (someone changed the job since, or Nomad started one of its own).</p>{{end}}
     {{if .Groups}}
     <table class="table">

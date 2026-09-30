@@ -170,15 +170,18 @@ type deploymentDetailData struct {
 	// Nomad is what Nomad says of the job while the deployment is applying: the
 	// deployment it waits on, its groups and canaries. Nil otherwise, or without
 	// a Nomad to ask.
-	Nomad     *nomadView
-	Diff      *api.JobDiff
-	Summary   diffSummary
-	Steps     []planStep // what Approve will do; only while it can be approved
-	Events    []eventView
-	HookRuns  []hookRunView
-	CanDecide bool   // state is pending_approval: show Approve/Reject
-	Notice    string // set after a stale-approval conflict
-	OOB       bool   // the status fragment: the side column swaps out of band
+	Nomad *nomadView
+	// NomadURL and NomadDeploymentsURL are the job and its Deployments tab in the
+	// Nomad UI; "" without a -nomad-ui-url.
+	NomadURL, NomadDeploymentsURL string
+	Diff                          *api.JobDiff
+	Summary                       diffSummary
+	Steps                         []planStep // what Approve will do; only while it can be approved
+	Events                        []eventView
+	HookRuns                      []hookRunView
+	CanDecide                     bool   // state is pending_approval: show Approve/Reject
+	Notice                        string // set after a stale-approval conflict
+	OOB                           bool   // the status fragment: the side column swaps out of band
 }
 
 // planSteps reads what approving d will run: the hooks it froze at detection,
@@ -244,6 +247,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		Notice:        notice,
 		PromotionWait: d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero(),
 	}
+	data.NomadURL, data.NomadDeploymentsURL = s.nomadJobURL(d.Namespace, d.JobID), s.nomadDeploymentsURL(d.Namespace, d.JobID)
 	if d.State == store.StateApplying {
 		data.Nomad = s.nomadPanel(r.Context(), d.Namespace, d.JobID, d.AppliedIndex)
 	}

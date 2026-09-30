@@ -15,6 +15,7 @@
     {{else}}
     <span class="muted">Not in the repository any more, or nops could not read it in the last cycle: only its past deployments remain.</span>
     {{end}}
+    {{if .NomadURL}}<span class="muted">&middot;</span> <a href="{{.NomadURL}}" target="_blank" rel="noopener noreferrer">Open in Nomad</a>{{end}}
   </p>
 </div>
 

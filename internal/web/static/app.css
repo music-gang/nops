@@ -394,6 +394,9 @@ form { margin: 0; }
 .table .col-last { width: 15rem; }
 .table .col-file { width: 22%; }
 .cell-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Nomad deployment of the panel: its line, the note under it and the table of groups need air between them. */
+.nomad-deployment > p + p { margin-top: 4px; }
+.nomad-deployment .table { margin-top: 12px; }
 .panel-note { padding: 6px 16px 8px; color: var(--fg-muted); font-size: 12px; }
 .cell-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-size: 12px; }
 .table .row__title { display: inline-block; max-width: 100%; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; }

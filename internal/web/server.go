@@ -93,6 +93,11 @@ type Options struct {
 	Engine Engine
 	Git    Git
 
+	// NomadUIURL is where a person opens Nomad in a browser (-nomad-ui-url), the
+	// base the dashboard's "Open in Nomad" links are built on. Optional: empty
+	// shows no link.
+	NomadUIURL string
+
 	// Nomad is what the Nomad panel of the Job and Deployment pages reads.
 	// Optional: without it the panel is not shown.
 	Nomad Nomad
@@ -136,7 +141,8 @@ type server struct {
 	store     Store
 	engine    Engine
 	git       Git
-	nomad     Nomad // nil: no Nomad panel
+	nomad     Nomad  // nil: no Nomad panel
+	nomadUI   string // "": no links into the Nomad UI
 	panels    panelCache
 	trigger   func()
 	commitURL func(sha string) string
@@ -177,6 +183,7 @@ func New(o Options) (http.Handler, error) {
 		engine:    o.Engine,
 		git:       o.Git,
 		nomad:     o.Nomad,
+		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
 		trigger:   o.Trigger,
 		commitURL: o.CommitURL,
 		now:       o.Now,

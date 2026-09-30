@@ -99,7 +99,9 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			}},
 	}
 	other := &nomadView{Status: "dead", Deployment: &nomadDeploymentView{ID: "x", Status: "successful", JobModifyIndex: 3}, AppliedIndex: 9}
+	nv.DeploymentsURL = "https://nomad.example.com/ui/jobs/web@default/deployments"
 	dd.Nomad, dd.PromotionWait = nv, true
+	dd.NomadURL, dd.NomadDeploymentsURL = "https://nomad.example.com/ui/jobs/web@default", nv.DeploymentsURL
 	oob := dd
 	oob.OOB = true
 	ddOther, ddErr, ddMissing, ddNone := dd, dd, dd, dd
@@ -139,6 +141,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Issues:      []meta.Issue{{Severity: meta.SeverityError, Key: "k", Message: "m"}, {Severity: meta.SeverityWarn, Key: "k2", Message: "m2"}},
 			Deployments: []deploymentCard{dc},
 			Nomad:       nv,
+			NomadURL:    "https://nomad.example.com/ui/jobs/web@default",
 		},
 		"job (nomad error)":           jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", Nomad: &nomadView{Err: "Nomad did not answer (job): boom"}},
 		"job (missing in nomad)":      jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", Nomad: &nomadView{Missing: true}},

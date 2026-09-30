@@ -278,6 +278,7 @@ type jobData struct {
 	Issues                  []meta.Issue
 	Deployments             []deploymentCard
 	Nomad                   *nomadView // what Nomad says of the job; nil without a Nomad to ask
+	NomadURL                string     // the job in the Nomad UI; "" without a -nomad-ui-url
 }
 
 func (s *server) job(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +312,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 
 	data := jobData{baseData: s.base(r, "jobs"), Namespace: ns, JobID: id, Title: ns + "/" + id}
 	data.Nomad = s.nomadPanel(r.Context(), ns, id, 0)
+	data.NomadURL = s.nomadJobURL(ns, id)
 	for _, d := range deps {
 		data.Deployments = append(data.Deployments, s.card(d))
 	}

@@ -142,6 +142,7 @@ func TestLoadEveryOption(t *testing.T) {
 	// Every option shared by both auth modes.
 	common := map[string]string{
 		"nomad-addr":                "https://nomad.example.com:4646",
+		"nomad-ui-url":              "https://infra.example.com/nomad/",
 		"nomad-namespaces":          "apps,infra, apps",
 		"nomad-token-file":          nomadTok,
 		"nomad-ca-cert":             ca,
@@ -175,6 +176,7 @@ func TestLoadEveryOption(t *testing.T) {
 	}
 	commonWant := Config{
 		NomadAddr:              "https://nomad.example.com:4646",
+		NomadUIURL:             "https://infra.example.com/nomad",
 		NomadNamespaces:        []string{"apps", "infra"},
 		NomadTokenFile:         nomadTok,
 		NomadToken:             "nomad-secret",
@@ -358,6 +360,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"notify-gotify-url", "gotify", "not an http"},
 		{"notify-gotify-token-file", missing, "no such file"},
 		{"public-url", "nops.example.com", "not an http"},
+		{"nomad-ui-url", "nomad.example.com", "not an http"},
+		{"nomad-ui-url", "/ui", "not an http"},
 		{"notify-timeout", "10", "missing unit"},
 		{"notify-timeout", "0s", "must be positive"},
 		{"git-poll-interval", "-1m", "must be positive"},
@@ -464,6 +468,42 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	}
 	if c.PublicURL != "http://localhost:8080" {
 		t.Errorf("oidc public URL = %q, want the derived default", c.PublicURL)
+	}
+}
+
+// TestLoadNomadUIURL covers -nomad-ui-url: unset means no link (it is never
+// taken from -nomad-addr, which is the address nops uses, not one a browser
+// can reach), a value is an absolute http(s) URL whose sub path is kept, and the
+// variable and the flag say the same.
+func TestLoadNomadUIURL(t *testing.T) {
+	args := func(extra ...string) []string { return append([]string{"-git-url", repo}, extra...) }
+
+	c, err := Load(args("-nomad-addr", "http://nomad.service.consul:4646"), envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NomadUIURL != "" {
+		t.Errorf("NomadUIURL = %q with only -nomad-addr set, want none: a link built from it would be a wrong one", c.NomadUIURL)
+	}
+
+	for in, want := range map[string]string{
+		"https://nomad.example.com":        "https://nomad.example.com",
+		"https://nomad.example.com/":       "https://nomad.example.com",
+		"https://infra.example.com/nomad/": "https://infra.example.com/nomad",
+		"http://127.0.0.1:4646":            "http://127.0.0.1:4646",
+	} {
+		c, err := Load(args("-nomad-ui-url", in), envOf(nil), io.Discard)
+		if err != nil || c.NomadUIURL != want {
+			t.Errorf("-nomad-ui-url %q = %q, %v; want %q", in, c.NomadUIURL, err, want)
+		}
+		c, err = Load(args(), envOf(map[string]string{"NOPS_NOMAD_UI_URL": in}), io.Discard)
+		if err != nil || c.NomadUIURL != want {
+			t.Errorf("NOPS_NOMAD_UI_URL %q = %q, %v; want %q", in, c.NomadUIURL, err, want)
+		}
+	}
+
+	if _, err := Load(args("-nomad-ui-url", "ftp://nomad.example.com"), envOf(nil), io.Discard); err == nil {
+		t.Error("an ftp:// address was accepted")
 	}
 }
 

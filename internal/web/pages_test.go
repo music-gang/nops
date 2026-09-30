@@ -217,11 +217,18 @@ func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testS
 // newTestServerWithNomad is newTestServer with a Nomad for the panel (nil: none).
 func newTestServerWithNomad(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad) *testServer {
 	t.Helper()
+	return newTestServerOptions(t, st, en, secret, nomad, "")
+}
+
+// newTestServerOptions is newTestServerWithNomad with the address the Nomad UI
+// is opened at (empty: no links into it).
+func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string) *testServer {
+	t.Helper()
 	now := testNow
 	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}, clock: &now}
 	log := slog.New(slog.NewTextHandler(ts.logs, nil))
 	h, err := New(Options{
-		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Nomad: nomad, WebhookSecret: secret,
+		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
 		Now:       func() time.Time { return *ts.clock },

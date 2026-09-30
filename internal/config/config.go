@@ -27,7 +27,11 @@ import (
 
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
-	NomadAddr          string
+	NomadAddr string
+	// NomadUIURL is the address a person opens Nomad at in a browser, without
+	// trailing slash; "" means the dashboard links to no Nomad page. It is never
+	// derived from NomadAddr, the address nops itself uses.
+	NomadUIURL         string
 	NomadNamespaces    []string // the namespaces nops manages, in the order given, without duplicates
 	NomadTokenFile     string
 	NomadToken         string // content of NomadTokenFile, read by Load
@@ -121,6 +125,8 @@ func (o option) env() string {
 var options = []option{
 	{name: "nomad-addr", def: "http://127.0.0.1:4646", usage: "Nomad HTTP API address",
 		set: func(c *Config, v string) (err error) { c.NomadAddr, err = httpURL(v); return }},
+	{name: "nomad-ui-url", usage: "address a person opens the Nomad UI at in a browser, e.g. https://nomad.example.com (a sub path is kept): the dashboard links to Nomad from it; unset: no link, it is never taken from -nomad-addr",
+		set: func(c *Config, v string) (err error) { c.NomadUIURL, err = optionalURL(v); return }},
 	{name: "nomad-namespaces", def: api.DefaultNamespace, usage: "comma-separated Nomad namespaces of the managed jobs and hooks",
 		set: func(c *Config, v string) (err error) { c.NomadNamespaces, err = namespaceList(v); return }},
 	{name: "nomad-token-file", usage: "file holding the Nomad ACL token (empty: no token)",

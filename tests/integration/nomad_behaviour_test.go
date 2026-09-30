@@ -5,6 +5,9 @@ package integration
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -419,5 +422,61 @@ func TestPromoteDeploymentAndTheAllocationFieldsThePanelReads(t *testing.T) {
 		t.Error("promoting a finished deployment succeeded: Nomad is expected to refuse it")
 	} else {
 		t.Logf("Nomad on promoting a finished deployment: %v", err)
+	}
+}
+
+// TestNomadUIServesTheLinkedRoutes checks what the dashboard's links into the
+// Nomad UI rely on (docs/dashboard.md#the-nomad-panel): a job is at
+// /ui/jobs/<id>@<namespace> and its deployments at .../deployments. The UI is a
+// JavaScript app that answers every /ui/ path with the same page, so a request
+// alone proves nothing about a route: the test reads the routes out of the
+// application's own bundle, which is where Nomad defines them. A Nomad version
+// that renames them fails here, in the CI that tests against it.
+func TestNomadUIServesTheLinkedRoutes(t *testing.T) {
+	base := testAddr(t)
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+
+	for _, path := range []string{"/ui/", "/ui/jobs/web@default", "/ui/jobs/web@default/deployments"} {
+		status, ctype, body := get(path)
+		if status != http.StatusOK || !strings.HasPrefix(ctype, "text/html") || !strings.Contains(body, "nomad-ui") {
+			t.Errorf("GET %s = %d %s, want the UI's page", path, status, ctype)
+		}
+	}
+
+	_, _, shell := get("/ui/")
+	// The UI lives under /ui/ and routes by the path (not the fragment).
+	for _, want := range []string{"%22rootURL%22%3A%22%2Fui%2F%22", "%22locationType%22%3A%22history%22"} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("the UI's page does not carry %q: its URLs are not /ui/<route> any more", want)
+		}
+	}
+	m := regexp.MustCompile(`src="(/ui/assets/nomad-ui-[0-9a-f]+\.js)"`).FindStringSubmatch(shell)
+	if m == nil {
+		t.Fatal("the UI's page references no nomad-ui-<hash>.js: where its routes are defined moved")
+	}
+	status, _, bundle := get(m[1])
+	if status != http.StatusOK {
+		t.Fatalf("GET %s = %d", m[1], status)
+	}
+	for what, want := range map[string]string{
+		"a job is a route of jobs, by name":        `this.route("job",{path:"/:job_name"}`,
+		"a job has a deployments tab":              `this.route("deployments")`,
+		"the name is <id>@<namespace> in one part": `lastIndexOf("@")`,
+	} {
+		if !strings.Contains(bundle, want) {
+			t.Errorf("the UI's bundle does not contain %s (%s): the links of the dashboard may be wrong for this Nomad", want, what)
+		}
 	}
 }
