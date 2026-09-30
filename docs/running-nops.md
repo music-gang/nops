@@ -250,9 +250,10 @@ under `-git-path` changed.
 
 ## Upgrading
 
-- **Read the [changelog](../CHANGELOG.md)** for every version between yours
-  and the new one. A line starting with **Breaking:** says what to change
-  when upgrading (an option, a meta key, the job).
+- **Read the [release notes](https://github.com/music-gang/nops/releases)** of every version between
+  yours and the new one. *Breaking changes* lists what may break, and a
+  release that breaks something has *Upgrade notes* at the top saying what to
+  change (an option, a meta key, the job, the database).
 - **Pin a minor** (`0.4`) or an exact version (`0.4.1`) in the job, never
   `latest`: while the major is 0, a new minor may break the configuration or
   the database, and `latest` would take it on the next restart.

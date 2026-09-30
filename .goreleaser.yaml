@@ -26,10 +26,31 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# No changelog block: the release notes are the version's section of
-# CHANGELOG.md, passed by release.yml with --release-notes, and goreleaser then
-# builds no list of commits. Not "changelog.disable", which would skip reading
-# that file too.
+# The release notes are built from the subjects of the commits since the
+# previous tag, which the maintainer writes by hand at squash time for someone
+# running Nops. One line per change, its subject only (the PR number is in it,
+# and GitHub links it); docs, ci, chore, build, test and style are left out.
+changelog:
+  use: git
+  sort: asc
+  format: "{{ .Message }}"
+  # A subject with "!" before the colon (feat(config)!: ...) is a breaking
+  # change and goes first, whatever its type. The groups are tried in order.
+  groups:
+    - title: Breaking changes
+      regexp: '^[a-z]+(\(.+\))?!:'
+      order: 0
+    - title: Features
+      regexp: '^feat(\(.+\))?:'
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\(.+\))?:'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^(docs|ci|chore|build|test|style)(\(.+\))?:'
 
 dockers_v2:
   - images:

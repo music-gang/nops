@@ -32,11 +32,11 @@ with the [project README](../README.md).
 
 | I want to… | Read |
 |---|---|
-| contribute a change | [Contributing](../CONTRIBUTING.md), then [development](development.md): the flow of a change, tests, the changelog, releasing, Go conventions |
+| contribute a change | [Contributing](../CONTRIBUTING.md), then [development](development.md): the flow of a change, tests, releasing, Go conventions |
 | know which page a change updates | [If you change X, update Y](development.md#if-you-change-x-update-y) |
 | read how an earlier decision was taken | [Archive](archive/): the decision log and the design plans up to v0.4.0, kept as history and not updated |
 
 Each fact is written in one page and linked from the others; tests check the
 links, the option and meta-key tables, and the tests the pages name
 ([development](development.md#what-needs-which-tests)). What each release
-changed is in the [changelog](../CHANGELOG.md).
+changed is in its [release notes](https://github.com/music-gang/nops/releases).

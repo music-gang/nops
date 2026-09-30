@@ -19,7 +19,7 @@ dispatches for you) around each deployment.
 > **Status: early development.** The design is settled and documented and
 > every building block is implemented and tested end to end against a real
 > Nomad; what is left is using it on a real cluster. What each release
-> changed is in the [changelog](CHANGELOG.md), what is left in the
+> changed is in its [release notes](https://github.com/music-gang/nops/releases), what is left in the
 > [issues](https://github.com/music-gang/nops/issues).
 
 Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
@@ -95,7 +95,7 @@ changes one fails there. How to move to a new version:
 | write a hook | [Hooks](docs/hooks.md) |
 | look up an option or a meta key | [Configuration](docs/configuration.md), [meta keys](docs/meta-keys.md) |
 | understand how it works, and why | [Philosophy](docs/philosophy.md), [architecture](docs/architecture.md) |
-| see what changed in a release | [Changelog](CHANGELOG.md) |
+| see what changed in a release | [Releases](https://github.com/music-gang/nops/releases) |
 | contribute | [Contributing](CONTRIBUTING.md) |
 
 Everything else is in the [documentation index](docs/README.md).
