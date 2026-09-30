@@ -360,6 +360,34 @@ expanded here.
    promoting or failing the Nomad deployment from Nops (decision 5; the
    *Promote* button is a separate issue, #78).
 
+11. **Promote is a human action on Nomad, not a register.** The Deployment
+    page of a deployment in a promotion wait has a *Promote* button
+    (`Engine.Promote(ctx, id, actor)`, called by `POST /deployments/{id}/promote`
+    for any logged-in user, like Approve). It promotes every group of the Nomad
+    deployment (`nomadx.PromoteDeployment`, the API of `nomad deployment
+    promote`). It changes no spec, so plan and CAS do not apply (invariants 1
+    and 2 are about registers), and it follows invariant 7 the way a hook stop
+    does: the request is persisted first (`Store.MarkPromotionRequested`, an
+    `applying → applying` event by the actor, message `promotion requested`) and
+    only then is Nomad asked. It refuses (`ErrNotWaitingForPromotion`, a 409 on
+    the page) unless the deployment is `applying`, was seen in a promotion wait
+    and is not promoted, **and** Nomad still says so now: its latest deployment
+    tracks the `applied_index`, is `running`, and `canaryHealth` is
+    `healthAwaitingPromotion`. A page a few seconds old therefore cannot promote
+    what someone already promoted or what another apply replaced, and a canary
+    that stopped being healthy is Nomad's to judge, not the button's. A Nomad
+    error (a token without `submit-job`, a canary Nomad does not find healthy) is
+    returned and logged at ERROR; the request stays on record. The apply loop
+    needs no change: it sees the canaries promoted and restarts the timeout as
+    for a promotion made in Nomad (decision 10). Not chosen: a button on the Job
+    page (it would need the deployment to name, and the Job page already links
+    to it), gating it by policy (the human who presses it is the authority, as
+    with *Retry*), and promoting from the panel of a Nomad deployment that Nops
+    did not apply. The Nomad panel that shows the wait is read-only and cached 4
+    seconds per job ([dashboard](../dashboard.md#the-nomad-panel)); the token
+    needs `submit-job` to promote, verified against a Nomad with ACLs on
+    ([configuration](../configuration.md#token-acl)).
+
 ## Tests
 
 `internal/engine`: a fake `Nomad`/`Hooks` and a real, temp-file `store.Store`,
@@ -392,4 +420,10 @@ wait, and `canaryHealth` per group); against a real Nomad,
 `TestCanaryWaitsForManualPromotion` records what Nomad does while canaries wait
 (it does not fail the deployment at its progress deadline) and
 `TestE2EApplyWaitsForCanaryPromotion` runs the binary through a wait longer
-than its apply timeout, a promotion in Nomad and the post-hook.
+than its apply timeout, a promotion in Nomad and the post-hook. Decision 11:
+`Promote`'s refusals, the request on record before Nomad is asked and kept when
+Nomad refuses (`promotion_test.go`), `nomadx.PromoteDeployment` and the
+allocation fields the panel reads against a real Nomad
+(`TestPromoteDeploymentAndTheAllocationFieldsThePanelReads`), and
+`TestE2EPromoteFromTheDashboard` (the panel, the button, the actor on the
+timeline, the post-hook, a second click refused).

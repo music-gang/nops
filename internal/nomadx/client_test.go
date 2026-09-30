@@ -61,6 +61,7 @@ func TestNamespaceIsPerCall(t *testing.T) {
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "apps", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "apps", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "apps", "web") },
+		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "apps", "dep-1") },
 		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "apps", "hook", nil, ""); return err },
 		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "apps", "hook", "t"); return err },
 		"plan":        func(c *Client) error { _, err := c.Plan(ctx, testJobIn("apps", "web")); return err },
@@ -91,6 +92,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "", "web") },
+		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "", "dep-1") },
 		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "", "hook", nil, ""); return err },
 		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "", "hook", "t"); return err },
 		"plan nil":    func(c *Client) error { _, err := c.Plan(ctx, unset); return err },
@@ -283,6 +285,59 @@ func TestAllocations(t *testing.T) {
 	_, c = newStub(t, 500, "boom")
 	if _, err := c.Allocations(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
+	}
+}
+
+// The panel of the dashboard reads which group an allocation is in and what its
+// Nomad deployment decided about it.
+func TestAllocationsCarryGroupAndDeploymentHealth(t *testing.T) {
+	s, c := newStub(t, 200, `[
+	  {"ID":"a1","TaskGroup":"web","ClientStatus":"running","DeploymentStatus":{"Healthy":true,"Canary":true}},
+	  {"ID":"a2","TaskGroup":"web","ClientStatus":"pending","DeploymentStatus":{"Canary":false}},
+	  {"ID":"a3","TaskGroup":"db","ClientStatus":"running"}
+	]`)
+	got, err := c.Allocations(context.Background(), "default", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s
+	if len(got) != 3 {
+		t.Fatalf("got %d allocs: %+v", len(got), got)
+	}
+	if got[0].TaskGroup != "web" || got[0].Healthy == nil || !*got[0].Healthy || !got[0].Canary {
+		t.Errorf("a1 = %+v, want group web, healthy, canary", got[0])
+	}
+	if got[1].Healthy != nil || got[1].Canary {
+		t.Errorf("a2 = %+v, want undecided and not a canary", got[1])
+	}
+	if got[2].TaskGroup != "db" || got[2].Healthy != nil {
+		t.Errorf("a3 = %+v, want group db, no deployment status", got[2])
+	}
+}
+
+func TestPromoteDeployment(t *testing.T) {
+	s, c := newStub(t, 200, `{"EvalID":"e1","DeploymentModifyIndex":9}`)
+	if err := c.PromoteDeployment(context.Background(), "apps", "dep-1"); err != nil {
+		t.Fatal(err)
+	}
+	if s.method != http.MethodPut && s.method != http.MethodPost {
+		t.Errorf("method = %s, want a write", s.method)
+	}
+	if s.path != "/v1/deployment/promote/dep-1" || s.query["namespace"][0] != "apps" {
+		t.Errorf("request = %s %v", s.path, s.query)
+	}
+	var req struct {
+		DeploymentID string
+		All          bool
+	}
+	if err := json.Unmarshal(s.body, &req); err != nil || req.DeploymentID != "dep-1" || !req.All {
+		t.Errorf("body = %s (%v), want every group of dep-1 promoted", s.body, err)
+	}
+
+	_, c = newStub(t, 500, "task group web does not have healthy canaries")
+	err := c.PromoteDeployment(context.Background(), "apps", "dep-1")
+	if err == nil || !strings.Contains(err.Error(), "does not have healthy canaries") {
+		t.Errorf("500: err = %v, want Nomad's reason passed on", err)
 	}
 }
 

@@ -287,3 +287,151 @@ func twoManual() *api.Job {
 	b.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &no}
 	return managed("web", "auto", nil, a, b)
 }
+
+// -- Promote ---------------------------------------------------------------
+
+// waiting is a deployment the apply step has seen waiting for a promotion.
+func (h *harness) waiting(job *api.Job) *store.Deployment {
+	h.t.Helper()
+	d := h.waitingForPromotion(job)
+	h.step(d)
+	return h.get(d.ID)
+}
+
+func TestPromotePromotesTheCanariesAndRecordsWho(t *testing.T) {
+	h := newHarness(t)
+	d := h.waiting(canaryJob(false, nil))
+
+	// The request is on record when Nomad is asked, not after.
+	var eventsWhenAsked []store.Event
+	h.nomad.onPromote = func() {
+		eventsWhenAsked, _ = h.store.Events(context.Background(), d.ID)
+	}
+	if err := h.engine.Promote(context.Background(), d.ID, "iacopo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if len(h.nomad.promoted) != 1 || h.nomad.promoted[0] != "dep-1" {
+		t.Fatalf("promoted = %v, want the Nomad deployment dep-1 once", h.nomad.promoted)
+	}
+	if len(eventsWhenAsked) == 0 {
+		t.Fatal("no events when Nomad was asked")
+	}
+	last := eventsWhenAsked[len(eventsWhenAsked)-1]
+	if last.Actor != "iacopo" || last.Message != "promotion requested" {
+		t.Errorf("last event when Nomad was asked = %+v, want the request by iacopo (invariant 7)", last)
+	}
+
+	// The apply loop sees the canaries promoted and the timeout counts again.
+	h.clock.Advance(time.Hour)
+	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+	h.step(h.get(d.ID))
+	got := h.get(d.ID)
+	if got.State != store.StateApplying || got.PromotedAt.IsZero() {
+		t.Fatalf("after the promotion: %+v, want applying with promoted_at set", got)
+	}
+}
+
+func TestPromoteKeepsTheRequestWhenNomadRefuses(t *testing.T) {
+	h := newHarness(t)
+	d := h.waiting(canaryJob(false, nil))
+	h.nomad.promoteErr = errors.New("permission denied")
+
+	err := h.engine.Promote(context.Background(), d.ID, "iacopo")
+	if err == nil || !errors.Is(err, h.nomad.promoteErr) {
+		t.Fatalf("Promote err = %v, want Nomad's error passed on", err)
+	}
+	evs, _ := h.store.Events(context.Background(), d.ID)
+	if last := evs[len(evs)-1]; last.Message != "promotion requested" || last.Actor != "iacopo" {
+		t.Errorf("last event = %+v, want the request to stay on record", last)
+	}
+	if got := h.get(d.ID); got.State != store.StateApplying || !got.PromotedAt.IsZero() {
+		t.Errorf("deployment = %+v, want still applying and not promoted", got)
+	}
+}
+
+func TestPromoteRefusals(t *testing.T) {
+	ctx := context.Background()
+	notWaiting := func(h *harness) *store.Deployment {
+		// applying, canaries healthy in Nomad, but the apply step has not seen it yet
+		return h.waitingForPromotion(canaryJob(false, nil))
+	}
+	for name, tt := range map[string]struct {
+		prepare func(h *harness) *store.Deployment
+		want    error
+	}{
+		"not seen waiting by the apply loop": {notWaiting, ErrNotWaitingForPromotion},
+		"already promoted": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+			h.step(d)
+			return h.get(d.ID)
+		}, ErrNotWaitingForPromotion},
+		"promoted in Nomad since the last cycle": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+			return d
+		}, ErrNotWaitingForPromotion},
+		"the Nomad deployment is another one": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			dep := canaryDeployment(healthyCanary())
+			dep.JobModifyIndex = 12
+			h.nomad.setDeployment("web", dep)
+			return d
+		}, ErrNotWaitingForPromotion},
+		"no Nomad deployment any more": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			h.nomad.setDeployment("web", nil)
+			return d
+		}, ErrNotWaitingForPromotion},
+		"the canaries are not healthy": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			starting := healthyCanary()
+			starting.HealthyAllocs = 0
+			h.nomad.setDeployment("web", canaryDeployment(starting))
+			return d
+		}, ErrNotWaitingForPromotion},
+		"not applying": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			h.nomad.setDeployment("web", &api.Deployment{ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusSuccessful})
+			h.step(d)
+			return h.get(d.ID)
+		}, ErrNotWaitingForPromotion},
+		"a namespace nops does not manage": {func(h *harness) *store.Deployment {
+			d := h.waiting(canaryJob(false, nil))
+			h.engine.managedNS = map[string]bool{"other": true}
+			return d
+		}, store.ErrNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			d := tt.prepare(h)
+			evsBefore, _ := h.store.Events(ctx, d.ID)
+
+			if err := h.engine.Promote(ctx, d.ID, "iacopo"); !errors.Is(err, tt.want) {
+				t.Fatalf("Promote err = %v, want %v", err, tt.want)
+			}
+			if len(h.nomad.promoted) != 0 {
+				t.Errorf("Nomad was asked to promote %v", h.nomad.promoted)
+			}
+			if evsAfter, _ := h.store.Events(ctx, d.ID); len(evsAfter) != len(evsBefore) {
+				t.Errorf("a refused Promote logged an event: %+v", evsAfter[len(evsBefore):])
+			}
+		})
+	}
+
+	h := newHarness(t)
+	d := h.waiting(canaryJob(false, nil))
+	if err := h.engine.Promote(ctx, d.ID, ""); err == nil {
+		t.Error("Promote without an actor should fail")
+	}
+	if err := h.engine.Promote(ctx, "nope", "iacopo"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Promote of a missing deployment: err = %v, want ErrNotFound", err)
+	}
+	h.nomad.deployErr[nsKey(testNamespace, "web")] = errors.New("nomad is down")
+	if err := h.engine.Promote(ctx, d.ID, "iacopo"); err == nil || errors.Is(err, ErrNotWaitingForPromotion) {
+		t.Errorf("Promote while Nomad is down: err = %v, want Nomad's error, not a refusal", err)
+	}
+	if len(h.nomad.promoted) != 0 {
+		t.Errorf("Nomad was asked to promote %v", h.nomad.promoted)
+	}
+}

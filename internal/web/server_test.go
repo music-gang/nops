@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/nomad/api"
 
@@ -87,8 +88,25 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		Sync: syncBlocked, SyncLabel: "Blocked", SyncClass: "state-failed", BlockedReason: "failed before", File: "web.nomad.hcl",
 		Observed: tv, Last: &dc, Warnings: 2,
 	}
+	tk := time.Date(2026, 1, 2, 4, 6, 0, 0, time.UTC)
+	nv := &nomadView{
+		Status: "running", Type: "service", Version: 4, AppliedIndex: 9,
+		Groups: []groupView{{Name: "g", Desired: 2, Running: 1, Pending: 1, Failed: 1, Lost: 1, Healthy: 1, Canaries: 1}},
+		Deployment: &nomadDeploymentView{ID: "0123456789abcdef", Status: "running", Description: "Deployment is running", JobModifyIndex: 9,
+			Groups: []deploymentGroupView{
+				{Name: "g", Healthy: 1, Desired: 2, Placed: 2, DesiredCanaries: 1, PlacedCanaries: 1, ProgressBy: tk, Progress: tv},
+				{Name: "h", Healthy: 1, Desired: 1},
+			}},
+	}
+	other := &nomadView{Status: "dead", Deployment: &nomadDeploymentView{ID: "x", Status: "successful", JobModifyIndex: 3}, AppliedIndex: 9}
+	dd.Nomad, dd.PromotionWait = nv, true
 	oob := dd
 	oob.OOB = true
+	ddOther, ddErr, ddMissing, ddNone := dd, dd, dd, dd
+	ddOther.Nomad = other
+	ddErr.Nomad = &nomadView{Err: "Nomad did not answer (job): boom"}
+	ddMissing.Nomad = &nomadView{Missing: true}
+	ddNone.Nomad = &nomadView{Status: "running", Type: "batch"}
 
 	tmpl, err := parseTemplates()
 	if err != nil {
@@ -120,7 +138,11 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Drift: true, Diff: diff, Summary: summary,
 			Issues:      []meta.Issue{{Severity: meta.SeverityError, Key: "k", Message: "m"}, {Severity: meta.SeverityWarn, Key: "k2", Message: "m2"}},
 			Deployments: []deploymentCard{dc},
+			Nomad:       nv,
 		},
+		"job (nomad error)":           jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", Nomad: &nomadView{Err: "Nomad did not answer (job): boom"}},
+		"job (missing in nomad)":      jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", Nomad: &nomadView{Missing: true}},
+		"job (no nomad deployment)":   jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", Nomad: &nomadView{Status: "running", Type: "batch"}},
 		"job (not in the repository)": jobData{baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "gone", Title: "default/gone"},
 		"job (an orphan)": jobData{
 			baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "old", Title: "default/old", Policy: meta.PolicyAuto,
@@ -133,9 +155,13 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Days:    []activityDay{{Label: "Today", Rows: []deploymentCard{dc}}},
 			Filters: []filterLink{{Label: "All", Count: 1, Active: true}},
 		},
-		"deployment":      dd,
-		"status_fragment": oob,
-		"error":           errorData{baseData: baseData{}, Status: 404, Title: "Not found", Message: "gone"},
+		"deployment":                     dd,
+		"deployment (another nomad dep)": ddOther,
+		"deployment (nomad error)":       ddErr,
+		"deployment (missing in nomad)":  ddMissing,
+		"deployment (no nomad dep)":      ddNone,
+		"status_fragment":                oob,
+		"error":                          errorData{baseData: baseData{}, Status: 404, Title: "Not found", Message: "gone"},
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

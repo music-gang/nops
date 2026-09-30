@@ -88,6 +88,10 @@ type fakeNomad struct {
 	allocsErr  map[string]error
 	deployment map[string]*api.Deployment
 	deployErr  map[string]error
+
+	promoted   []string // Nomad deployment IDs PromoteDeployment was called for
+	promoteErr error    // what PromoteDeployment returns
+	onPromote  func()   // runs inside PromoteDeployment, before it answers
 }
 
 type registerCall struct {
@@ -298,6 +302,17 @@ func (f *fakeNomad) Allocations(_ context.Context, ns, jobID string) ([]nomadx.A
 		return nil, err
 	}
 	return append([]nomadx.Alloc(nil), f.allocs[jobID]...), nil
+}
+
+func (f *fakeNomad) PromoteDeployment(_ context.Context, _, deploymentID string) error {
+	f.mu.Lock()
+	hook, err := f.onPromote, f.promoteErr
+	f.promoted = append(f.promoted, deploymentID)
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return err
 }
 
 func (f *fakeNomad) LatestDeployment(_ context.Context, ns, jobID string) (*api.Deployment, error) {

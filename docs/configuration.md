@@ -134,6 +134,13 @@ A name in a policy may hold only letters, digits, `-` and `*`, so a volume
 declared as `nomad_backup_data` cannot be written as it is. Match it with a
 glob (`host_volume "nomad*backup*data"`: `*` stands for `_` too) or name the
 volume with `-` in the client configuration, the jobs and the policy.
+The dashboard's [Nomad panel](dashboard.md#the-nomad-panel) reads with
+`read-job`, and its *Promote* button, which promotes the canaries of a Nomad
+deployment, needs `submit-job`: checked against a Nomad 2.0.7 agent with ACLs
+on, a token with `list-jobs`, `read-job` and `submit-job` (and no `dispatch-job`)
+promotes, and one with `list-jobs` and `read-job` only is refused with `403
+(Permission denied)`. Without it the button fails, the request stays on the
+deployment's timeline, and the canaries stay unpromoted.
 See Nomad's [ACL policy reference](https://developer.hashicorp.com/nomad/docs/secure/acl/policies).
 
 ## Git

@@ -658,6 +658,60 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	return nil
 }
 
+// ErrNotWaitingForPromotion is returned by Promote when the deployment is not
+// waiting for its canaries to be promoted, as Nomad reports it now: it moved on,
+// or someone else promoted them since the page was rendered.
+var ErrNotWaitingForPromotion = errors.New("the deployment is not waiting for a canary promotion")
+
+// Promote promotes the canaries of the Nomad deployment an applying deployment
+// waits on (see docs/design/engine-apply.md, decision 11). It is a human's
+// action, not a register: it changes no spec, so plan and CAS do not apply. It
+// refuses, without touching Nomad, unless the deployment is applying, was seen
+// waiting for a promotion and is still waiting for it in Nomad now: the Nomad
+// deployment tracks the applied index and canaryHealth says its canaries are
+// healthy and not promoted. Who asked is on record (an event) before Nomad is
+// asked (invariant 7); the apply loop then sees the promoted canaries and
+// restarts the apply timeout as for any promotion.
+func (e *Engine) Promote(ctx context.Context, id, actor string) error {
+	if actor == "" {
+		return errors.New("promote: actor is required")
+	}
+	d, err := e.store.GetDeployment(ctx, id)
+	if err != nil {
+		return fmt.Errorf("promote %s: %w", id, err)
+	}
+	if !e.managedNS[d.Namespace] {
+		return fmt.Errorf("promote %s: %w", id, store.ErrNotFound)
+	}
+	if d.State != store.StateApplying || d.PromotionWaitSince.IsZero() || !d.PromotedAt.IsZero() {
+		return fmt.Errorf("promote %s: %w", id, ErrNotWaitingForPromotion)
+	}
+	job, err := parseJobSpec(d)
+	if err != nil {
+		return fmt.Errorf("promote %s: %w", id, err)
+	}
+	dep, err := e.nomad.LatestDeployment(ctx, d.Namespace, d.JobID)
+	if err != nil {
+		return fmt.Errorf("promote %s: %w", id, err)
+	}
+	if dep == nil || dep.JobModifyIndex != d.AppliedIndex || dep.Status != api.DeploymentStatusRunning ||
+		canaryHealth(dep, job) != healthAwaitingPromotion {
+		return fmt.Errorf("promote %s: %w", id, ErrNotWaitingForPromotion)
+	}
+
+	if err := e.store.MarkPromotionRequested(ctx, id, actor); err != nil {
+		return fmt.Errorf("promote %s: %w", id, err)
+	}
+	if err := e.nomad.PromoteDeployment(ctx, d.Namespace, dep.ID); err != nil {
+		e.log.ErrorContext(ctx, "promote canaries", "deployment_id", id, "job", d.JobID, "namespace", d.Namespace,
+			"nomad_deployment", dep.ID, "actor", actor, "error", err)
+		return fmt.Errorf("promote %s: %w", id, err)
+	}
+	e.log.InfoContext(ctx, "canaries promoted", "deployment_id", id, "job", d.JobID, "namespace", d.Namespace,
+		"nomad_deployment", dep.ID, "actor", actor)
+	return nil
+}
+
 // Reject moves a pending_approval deployment to rejected.
 func (e *Engine) Reject(ctx context.Context, id, actor string) error {
 	if actor == "" {

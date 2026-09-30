@@ -131,6 +131,7 @@ type eventView struct {
 	Actor    string
 	Msg      string
 	Retry    bool // from and to are the same terminal state: a retry was asked
+	Same     bool // from and to are the same state that is not terminal: something happened in it (its message says what)
 }
 
 type hookRunView struct {
@@ -166,14 +167,18 @@ type deploymentDetailData struct {
 	// PromotionWait is set while the deployment waits for someone to promote the
 	// canaries of its Nomad deployment (the apply timeout does not run meanwhile).
 	PromotionWait bool
-	Diff          *api.JobDiff
-	Summary       diffSummary
-	Steps         []planStep // what Approve will do; only while it can be approved
-	Events        []eventView
-	HookRuns      []hookRunView
-	CanDecide     bool   // state is pending_approval: show Approve/Reject
-	Notice        string // set after a stale-approval conflict
-	OOB           bool   // the status fragment: the side column swaps out of band
+	// Nomad is what Nomad says of the job while the deployment is applying: the
+	// deployment it waits on, its groups and canaries. Nil otherwise, or without
+	// a Nomad to ask.
+	Nomad     *nomadView
+	Diff      *api.JobDiff
+	Summary   diffSummary
+	Steps     []planStep // what Approve will do; only while it can be approved
+	Events    []eventView
+	HookRuns  []hookRunView
+	CanDecide bool   // state is pending_approval: show Approve/Reject
+	Notice    string // set after a stale-approval conflict
+	OOB       bool   // the status fragment: the side column swaps out of band
 }
 
 // planSteps reads what approving d will run: the hooks it froze at detection,
@@ -239,6 +244,9 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		Notice:        notice,
 		PromotionWait: d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero(),
 	}
+	if d.State == store.StateApplying {
+		data.Nomad = s.nomadPanel(r.Context(), d.Namespace, d.JobID, d.AppliedIndex)
+	}
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {
 			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry"}
@@ -255,7 +263,8 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	}
 	for _, e := range events {
 		data.Events = append(data.Events, eventView{
-			Time: s.when(e.Time), From: e.From, To: e.To, Actor: e.Actor, Msg: e.Message, Retry: e.From == e.To,
+			Time: s.when(e.Time), From: e.From, To: e.To, Actor: e.Actor, Msg: e.Message,
+			Retry: e.From == e.To && isTerminal(e.To), Same: e.From == e.To && !isTerminal(e.To),
 		})
 	}
 	runs, err := s.store.ListHookRuns(r.Context(), id)

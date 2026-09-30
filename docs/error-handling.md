@@ -36,6 +36,8 @@ key twice, and a parser that rejects duplicates would drop the line.
 |---|---|
 | State transition | INFO |
 | An `applying` deployment starts waiting for a canary promotion, or sees the canaries promoted | INFO |
+| Canaries promoted from the dashboard (`Engine.Promote`, with the `actor`) | INFO |
+| Nomad refuses to promote, or a read for the dashboard's Nomad panel fails (once per cached panel) | ERROR |
 | Unknown meta key | WARN |
 | Notification not delivered | WARN |
 | Deployment `failed`, meta with an invalid value, job that cannot be parsed | ERROR |

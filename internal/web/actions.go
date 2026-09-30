@@ -41,6 +41,36 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// promote is POST /deployments/{id}/promote: promote the canaries of the Nomad
+// deployment an applying deployment waits on (Engine.Promote). Like Approve it
+// is an authenticated human action; unlike it, it applies nothing new: it
+// releases what the job's own update block asked to hold for a person.
+func (s *server) promote(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	err := s.engine.Promote(r.Context(), id, actor)
+	switch {
+	case err == nil:
+		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFound(w, r)
+	case errors.Is(err, engine.ErrNotWaitingForPromotion):
+		w.WriteHeader(http.StatusConflict)
+		s.render(w, r, "error", errorData{
+			baseData: s.base(r, ""),
+			Status:   http.StatusConflict,
+			Title:    "Nothing to promote",
+			Message:  "This deployment is not waiting for a canary promotion any more: the canaries were already promoted, or the Nomad deployment moved on.",
+		})
+	default:
+		s.serverError(w, r, "promote canaries", err)
+	}
+}
+
 // fetchNow is POST /fetch: ask the git watcher for a poll right away, the
 // same trigger the git webhook pulls, instead of waiting for the next tick.
 // It never blocks and says nothing about the outcome: the poll is

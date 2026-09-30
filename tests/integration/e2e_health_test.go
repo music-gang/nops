@@ -5,8 +5,10 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,5 +203,73 @@ func TestE2EApplyWaitsForCanaryPromotion(t *testing.T) {
 	// the promotion is still running, which for one allocation is milliseconds.
 	if got.PromotionWaitSince.IsZero() {
 		t.Error("promotion_wait_since is not recorded for a deployment that waited")
+	}
+}
+
+// TestE2EPromoteFromTheDashboard is the flow of TestE2EApplyWaitsForCanaryPromotion
+// with the promotion done where the person sees the wait: the Nomad panel shows
+// the Nomad deployment and its canary, the Promote button posts, the request is
+// on the timeline with who made it, and the deployment completes and runs its
+// post-hook without anyone touching Nomad.
+func TestE2EPromoteFromTheDashboard(t *testing.T) {
+	e := newE2E(t, "NOPS_APPLY_TIMEOUT=8s")
+	jobID := uniqueID(t, e.raw, "promotesvc")
+	hookID := uniqueID(t, e.raw, "promotehook")
+	marker := filepath.Join(t.TempDir(), "post-hook-ran")
+
+	files := func(tag string) map[string]string {
+		return map[string]string{
+			file(jobID):  managedCanaryHCL(jobID, tag, hookID),
+			file(hookID): hookCmdHCL(hookID, "touch "+marker, true),
+		}
+	}
+	e.repo.commit(t, "job "+jobID+" v1", files("v1"))
+	d1 := e.waitNew(jobID, "", store.StateCompleted)
+
+	e.repo.commit(t, "job "+jobID+" v2", files("v2"))
+	d2 := e.waitNew(jobID, d1.ID, store.StateApplying)
+
+	// The wait, as the dashboard says it: the notice, the button, and Nomad's own
+	// account of the deployment it waits on, on the deployment's page and the job's.
+	page := "/deployments/" + d2.ID
+	e.dash.waitBody(t, page, "Waiting for canary promotion in Nomad.")
+	// The panel is up to a few seconds behind Nomad (its cache), so wait for it.
+	e.dash.waitBody(t, page, "requires manual promotion")
+	_, body := e.dash.get(t, page)
+	for _, want := range []string{`action="` + page + `/promote"`, "This is the one this deployment waits on.", "requires manual promotion", "Nomad deployment"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the deployment page is missing %q while it waits for a promotion", want)
+		}
+	}
+	e.dash.waitBody(t, "/jobs/default/"+jobID, "requires manual promotion")
+
+	if status, _ := e.dash.post(t, page+"/promote", nil); status != http.StatusOK && status != http.StatusSeeOther {
+		t.Fatalf("POST %s/promote answered %d", page, status)
+	}
+	e.waitState(d2.ID, store.StateCompleted)
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the post-hook did not run after the promotion: %v", err)
+	}
+
+	evs, err := e.st.Events(context.Background(), d2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requested int
+	for _, ev := range evs {
+		if ev.Message == "promotion requested" {
+			requested++
+			if ev.Actor != e2eUser || ev.From != store.StateApplying || ev.To != store.StateApplying {
+				t.Errorf("promotion event = %+v, want applying -> applying by %s", ev, e2eUser)
+			}
+		}
+	}
+	if requested != 1 {
+		t.Errorf("%d promotion requests on the timeline, want 1: %+v", requested, evs)
+	}
+
+	// Nothing left to promote: a second click is refused, and asks nothing of Nomad.
+	if status, _ := e.dash.post(t, page+"/promote", nil); status != http.StatusConflict {
+		t.Errorf("a second promote answered %d, want 409", status)
 	}
 }

@@ -113,11 +113,14 @@ func (f *fakeStore) ListHookRuns(ctx context.Context, deploymentID string) ([]*s
 type approveCall struct{ id, specHash, actor string }
 type rejectCall struct{ id, actor string }
 type retryCall struct{ namespace, job, actor string }
+type promoteCall struct{ id, actor string }
 
 type fakeEngine struct {
 	approveErr   error
 	rejectErr    error
 	retryErr     error
+	promoteErr   error
+	promoteCalls []promoteCall
 	approveCalls []approveCall
 	rejectCalls  []rejectCall
 	retryCalls   []retryCall
@@ -139,6 +142,11 @@ func (f *fakeEngine) Reject(ctx context.Context, id, actor string) error {
 func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) error {
 	f.retryCalls = append(f.retryCalls, retryCall{namespace, jobID, actor})
 	return f.retryErr
+}
+
+func (f *fakeEngine) Promote(ctx context.Context, id, actor string) error {
+	f.promoteCalls = append(f.promoteCalls, promoteCall{id, actor})
+	return f.promoteErr
 }
 
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }
@@ -198,17 +206,25 @@ type testServer struct {
 	trig   int
 	engine *fakeEngine
 	git    *fakeGit
+	clock  *time.Time // what the server's clock reads: a test moves it
 }
 
 func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testServer {
 	t.Helper()
-	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}}
+	return newTestServerWithNomad(t, st, en, secret, nil)
+}
+
+// newTestServerWithNomad is newTestServer with a Nomad for the panel (nil: none).
+func newTestServerWithNomad(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad) *testServer {
+	t.Helper()
+	now := testNow
+	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}, clock: &now}
 	log := slog.New(slog.NewTextHandler(ts.logs, nil))
 	h, err := New(Options{
-		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, WebhookSecret: secret,
+		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Nomad: nomad, WebhookSecret: secret,
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
-		Now:       func() time.Time { return testNow },
+		Now:       func() time.Time { return *ts.clock },
 		Version:   "v0.0.0-test",
 		Log:       log,
 	})
