@@ -1,7 +1,7 @@
 # gitwatch design
 
 The plan for `internal/gitwatch`, agreed before writing the code (the
-[`gitwatch`](../roadmap.md#gitwatch) task). gitwatch keeps the repository of
+`gitwatch` task). gitwatch keeps the repository of
 job files in memory, read-only (invariant 5 in
 [philosophy](../philosophy.md)), and tells the engine which files exist at
 which commit. It does not parse HCL and does not decide what a file is: that

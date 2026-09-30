@@ -26,26 +26,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
-changelog:
-  use: git
-  sort: asc
-  # A subject with "!" before the colon (feat(config)!: ...) is a breaking
-  # change and goes first, whatever its type. The groups are tried in order.
-  groups:
-    - title: Breaking changes
-      regexp: '^[a-z]+(\(.+\))?!:'
-      order: 0
-    - title: Features
-      regexp: '^feat(\(.+\))?:'
-      order: 1
-    - title: Fixes
-      regexp: '^fix(\(.+\))?:'
-      order: 2
-    - title: Other
-      order: 999
-  filters:
-    exclude:
-      - '^(docs|ci|chore|build|test|style)(\(.+\))?:'
+# No changelog block: the release notes are the version's section of
+# CHANGELOG.md, passed by release.yml with --release-notes, and goreleaser then
+# builds no list of commits. Not "changelog.disable", which would skip reading
+# that file too.
 
 dockers_v2:
   - images:

@@ -191,12 +191,12 @@ set the client up at Authentik or Authelia, is in
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-users-file` | `NOPS_USERS_FILE` | none, **required** | File holding one `username:bcrypt-hash` per line (blank lines and `#` comments ignored), read once at startup. Generate a line with `htpasswd -nB <user>`. See [dashboard](dashboard.md#local-users). |
+| `-users-file` | `NOPS_USERS_FILE` | none, **required** | File holding one `username:bcrypt-hash` per line (blank lines and `#` comments ignored), read once at startup. Generate a line with `htpasswd -nB <user>`. See [dashboard](dashboard.md#local-users--auth-modebasic). |
 
 No OIDC provider needed: Nops checks the password itself against the file.
 The actor recorded with a decision is the username as is. There is no
 lockout or rate limiting on failed attempts — a known limitation for this
-personal-use tool, see [dashboard](dashboard.md#local-users).
+personal-use tool, see [dashboard](dashboard.md#local-users--auth-modebasic).
 
 ## Notifications
 

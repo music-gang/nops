@@ -1,9 +1,9 @@
 # engine-detection design
 
-The detection half of `internal/engine` (the [`engine-detection`](../roadmap.md)
+The detection half of `internal/engine` (the `engine-detection`
 task): comparing the repository with Nomad, and creating, superseding or
 revalidating deployments. It never applies anything — that is
-[`engine-apply`](../roadmap.md#engine-apply).
+[`engine-apply`](engine-apply.md).
 
 ## Scope
 

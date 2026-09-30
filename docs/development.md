@@ -81,8 +81,8 @@ The version the integration tests run on is `NOMAD_VERSION` in
 It is the only place a version is set: the README states it in its *Nomad
 compatibility* section (`docs/docs_test.go` fails if the two differ), and the
 other pages and the code comments name the test that checks a behaviour, not a
-version. The decision log is the exception: a row says what was true the day it
-was written.
+version. The archived decision log is the exception: a row says what was true
+the day it was written.
 
 To move to a new Nomad: change `NOMAD_VERSION` and `NOMAD_SHA256`, update the
 README line, read the release notes between the two versions for the API
@@ -108,8 +108,8 @@ The tests above catch names and defaults that drift. What they cannot catch is a
 claim that was never true, or stopped being: an invariant, a transition, what a
 page says a test covers. A **doc audit** checks those, and is done before a
 release (`scripts/release.sh` reminds you) or when someone asks for it. The code
-and its tests are the evidence; the docs, their cross-references and the
-decision log are only the claims being checked.
+and its tests are the evidence; the docs and their cross-references are only
+the claims being checked.
 
 **Scope.** The pages and packages changed since the last tag:
 `git diff --stat <last-tag>..HEAD -- '*.md' cmd internal scripts examples .github`.
@@ -120,7 +120,7 @@ The first audit, or one with no tag, covers everything.
 1. **Inventory the claims** of the pages in scope, plus the pages that describe
    a package in scope: invariants and state transitions, defaults, flag and env
    names, meta keys, errors and notifications, what the dashboard shows, what a
-   test is said to cover, and the decision-log rows still in force.
+   test is said to cover, and the reason a page gives for a design choice.
 2. **Check each against the code**, noting where it is implemented and which
    test proves it, with one verdict: *OK* (code and a test agree), *UNTESTED*
    (the code seems to do it, no test proves it), *DOC WRONG* (the code is
@@ -134,8 +134,8 @@ The first audit, or one with no tag, covers everything.
    *CODE WRONG?* and *UNCLEAR* the options and a recommendation. The maintainer
    decides; nothing changes before.
 5. **Fix** as agreed: the doc-only fixes and the missing tests in one PR, every
-   behaviour change in its own, each with a test that fails before the fix and a
-   decision-log row.
+   behaviour change in its own, each with a test that fails before the fix, its
+   reason in the page that explains that part, and a line in the changelog.
 
 A finding that is a fact stated on several pages is fixed by stating it once and
 linking (as the notifications and *healthy* are), not by editing each copy.
@@ -151,7 +151,37 @@ A commit/PR is complete only if:
    green against a `nomad agent -dev`;
 3. every behaviour change has its test;
 4. the docs (and `examples/`) are updated if the HCL syntax, states or a
-   decision change.
+   decision change;
+5. a change someone running Nops would notice has its line in
+   [`CHANGELOG.md`](#changelog).
+
+## If you change X, update Y
+
+A fact is written in one place and linked from the others; this table says
+which place.
+
+| Change | Update |
+|---|---|
+| New meta key or different valid values | `internal/meta` **and** `meta-keys.md` (its table is tested against the keys) |
+| Behaviour of a policy | `policies.md` |
+| Hook contract or dispatch meta | `hooks.md` and the example in `examples/` |
+| A scenario in `examples/` | `TestExamplesParse` checks every example; a new scenario needs nothing else unless it shows new behaviour worth an end-to-end test |
+| State, transition, schema, recovery | `state-machine.md` |
+| Detection cycle (parse, plan, create, supersede, freeze hooks, revision GC) | `internal/engine` **and** `design/engine-detection.md` |
+| Apply loop (approve, reject, register, health, timeouts, retry) | `internal/engine` **and** `design/engine-apply.md` |
+| Which files are read from git, the git watcher | `internal/gitwatch` **and** `design/gitwatch.md` |
+| A dashboard page, route, sync state or login | `internal/web` **and** `dashboard.md` |
+| What is logged, or which transition notifies | `error-handling.md` (the one place that says it: other pages link to it) |
+| Flag or env var | `internal/config` **and** `configuration.md` (its tables are tested against the options: name, variable, default) |
+| Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
+| A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
+| A page or a heading is renamed or moved | every link to it (`TestRelativeLinksResolve` fails otherwise) |
+| The Nomad version CI tests against | `ci.yml` (`NOMAD_VERSION`, `NOMAD_SHA256`) **and** the README's *Nomad compatibility* (`docs/docs_test.go` fails otherwise); steps in [Nomad version](#nomad-version) |
+| New concept, or a renamed term | `vocabulary.md` |
+| Something someone running Nops would notice | a line under `## [Unreleased]` in `CHANGELOG.md` ([Changelog](#changelog)) |
+| A design decision | its reason, in a sentence or two, in the page that explains that part; the discussion stays in the issue or the PR |
+| Build or release (`Dockerfile`, `.goreleaser.yaml`, `release.yml`, `scripts/`), image tags, semver policy | [Releasing](#releasing) |
+| Invariant | `philosophy.md` **and** the list in CLAUDE.md |
 
 ## Commands
 
@@ -229,8 +259,8 @@ are disabled). The bug form labels an issue `bug`, the feature form
 he has read the issue. An issue opened with `gh issue create` skips the forms
 and gets no label. The other labels are `documentation`, and `dependencies`
 and `go`, which Dependabot puts on its PRs. The scope already sits in the
-title (`feat(web): ...`), and what is planned and in which order lives in the
-[roadmap](roadmap.md), so neither has a label.
+title (`feat(web): ...`), so it has no label. The open issues are the list of
+work: there is no roadmap file.
 
 | Check | Required | What it runs |
 |---|---|---|
@@ -238,6 +268,7 @@ title (`feat(web): ...`), and what is planned and in which order lives in the
 | `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`), `shellcheck` and the tests of `scripts/`, `goreleaser check` of `.goreleaser.yaml` |
 | `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev` and a second one with ACLs (bootstrapped, its token masked), runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
 | `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject (at most 72 characters) without trailing period |
+| `changelog` | yes | A PR whose title is a `feat`, a `fix` or has `!` adds a `- ` line to `CHANGELOG.md`, and with `!` one starting with `**Breaking:**` ([Changelog](#changelog)). It runs `scripts/changelog.sh` from `main` on the PR's patch, never the PR's own code |
 | `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
 
 CodeQL (default setup), secret scanning with push protection, and Dependabot
@@ -257,6 +288,35 @@ test -z "$(gofmt -l .)" && go mod tidy && git diff --exit-code go.mod go.sum
 go vet -tags integration ./...
 ```
 
+## Changelog
+
+[`CHANGELOG.md`](../CHANGELOG.md) says what each release changed for someone
+running Nops, newest first. It follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and a version's
+section is the text of its GitHub Release.
+
+- **Who adds a line:** a PR whose title is a `feat`, a `fix` or a breaking
+  change (`!`), under `## [Unreleased]`, in the section that fits: `Added`,
+  `Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`, in that order,
+  each only when it has a line. Any other PR may add one when a person would
+  notice it (a `perf` that shows, a `docs` fix to an instruction people
+  follow). The `changelog` check enforces the first rule.
+- **How it reads:** one line per change, for someone running Nops rather than
+  for a reviewer: what they now see or can do, not how the code changed, with
+  the issue or PR number.
+- **A breaking change** starts its line with `**Breaking:**` and says what to
+  do when upgrading:
+  `**Breaking:** -git-url is now -repo-url: rename it in the job's env (#101).`
+- **Two open PRs** that both add a line conflict on the same lines: the
+  second one to merge brings `main` in ("Update branch") and keeps both.
+- **At release time** the lines move to their version's section in the
+  release PR ([Releasing](#releasing)); the lines of a section are never
+  edited after the release.
+
+`TestChangelogFormat` checks the shape (headings, sections and their order,
+dates, versions newest first). `scripts/changelog.sh` reads the file for the
+check, the release PR and the release notes.
+
 ## Releasing
 
 A release is a `vX.Y.Z` tag on a commit of `main`. There is no image of
@@ -268,26 +328,38 @@ plain semver (a major breaks, a minor adds, a patch fixes). The maintainer
 decides when Nops is stable enough for `v1`. A breaking change in a `v0`
 minor is named in the release notes.
 
-**Cutting one:**
+**Cutting one** takes two runs of `scripts/release.sh`, with a PR between
+them:
 
 1. `main` is green, nothing you want in it is still open (`gh pr list`) and
    the [doc audit](#doc-audit) of what changed since the last tag is done.
 2. Run `scripts/release.sh`. It looks only at `origin/main`: it lists the
    commits since the last tag (breaking, features, fixes, the rest), checks
-   that CI is green on the commit, and **suggests** a version, which you
-   confirm or change (patch, minor, major, release candidate or one you type).
-   Then it signs the tag with your GPG key and pushes it. `--dry-run` only
-   shows the list and the suggestion: nothing is tagged, no prompt.
-   The suggestion follows the rules above: at `v0` a release with only `fix`,
-   `docs`, `ci`, `chore`, `build`, `test` and `style` commits is a patch,
-   anything else (a `feat`, a `refactor`, a `perf`, a `revert`, a breaking
-   change) is a minor; from `v1`, `!` is a major, `feat` a minor, the rest a
-   patch. A commit that does not follow the Angular style counts as `other`.
-3. A risky change (a migration, a renamed option) goes out as a release
-   candidate first, `v0.2.0-rc.1` (the script's "rc" choice): it gets only its
-   exact tag, is marked a prerelease on GitHub and does not move `0.2` or
-   `latest`. Try it on the cluster, then tag the final one.
-4. What the script does, if you ever need it by hand: tag the commit of
+   that CI is green on the commit, and, while `## [Unreleased]` in
+   `CHANGELOG.md` has lines, **suggests** a version, which you confirm or
+   change (patch, minor, major, release candidate or one you type). Then it
+   opens the **release PR**, `chore(release): vX.Y.Z`: its only change turns
+   the `Unreleased` lines into a `## [X.Y.Z] - <today>` section, under a new
+   empty `Unreleased`. The suggestion follows the rules above: at `v0` a
+   release with only `fix`, `docs`, `ci`, `chore`, `build`, `test` and
+   `style` commits is a patch, anything else (a `feat`, a `refactor`, a
+   `perf`, a `revert`, a breaking change) is a minor; from `v1`, `!` is a
+   major, `feat` a minor, the rest a patch. A commit that does not follow the
+   Angular style counts as `other`.
+3. Read the section as the release notes it will be, fix its wording in the
+   PR if needed, and merge it.
+4. Run `scripts/release.sh` again. `Unreleased` is now empty, so it offers to
+   tag the version of the newest section (or a release candidate of it),
+   signs the tag with your GPG key and pushes it. It stops when that version
+   is already released, or when there is neither a line under `Unreleased`
+   nor a section: a release says what it changes. `--dry-run` only shows what
+   a run would do: nothing is opened, tagged or asked.
+5. A risky change (a migration, a renamed option) goes out as a release
+   candidate first, `v0.2.0-rc.1` (the "rc" choice of the second run): it
+   uses the section of the release it leads to, gets only its exact tag, is
+   marked a prerelease on GitHub and does not move `0.2` or `latest`. Try it
+   on the cluster, then run the script again to tag the final one.
+6. What the second run does, if you ever need it by hand: tag the commit of
    `origin/main`, not a local `main` that may be behind:
 
    ```sh
@@ -296,34 +368,32 @@ minor is named in the release notes.
    git push origin v0.2.0
    ```
 
-5. Watch the run (`gh run watch`), then check the result:
+7. Watch the run (`gh run watch`), then check the result:
    `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version` and the Release
    page.
-6. If the release breaks something, add an "Upgrade notes" section by hand
-   at the top of the Release (what to change in the job or the database).
-7. Update the image in Nops's own Nomad job.
-8. If it goes wrong, **never move or recreate a tag** (the ruleset below
+8. Update the image in Nops's own Nomad job.
+9. If it goes wrong, **never move or recreate a tag** (the ruleset below
    forbids it): go back to the previous image in the job and cut a patch.
 
 A breaking change is marked with `!` before the colon in its commit subject
 (`feat(config)!: rename -git-url`) **and** carries a `BREAKING CHANGE:` footer
-(see [Commit messages](#commit-messages)). The changelog lists the `!`
-commits first, under *Breaking changes*, whatever their type, but reads only
-the subject: the footer does not change where a commit goes, it is what
-explains the break to the person upgrading. The maintainer writes the final
+(see [Commit messages](#commit-messages)), and its line in `CHANGELOG.md`
+starts with `**Breaking:**` and says what to do when upgrading. The `!` is
+what the version suggestion and the `changelog` check read; the changelog
+line is what the person upgrading reads. The maintainer writes the final
 subject and footer at merge time.
 
 The `release` workflow (`.github/workflows/release.yml`) then:
 
 1. refuses a tag whose commit is not on `main`;
-2. builds everything with goreleaser (`.goreleaser.yaml`) as a snapshot,
+2. takes the tag's section of `CHANGELOG.md` as the release notes, and fails
+   before building anything if it is missing or empty;
+3. builds everything with goreleaser (`.goreleaser.yaml`) as a snapshot,
    without publishing, and runs the image's `-version`, which must print the
    tag;
-3. runs the real release: the `linux/amd64` binary as a `tar.gz`,
-   `checksums.txt` and a changelog from the commit subjects (*Breaking
-   changes*, *Features*, *Fixes* and an *Other* group for what remains, such as
-   `refactor`, `perf` and `revert`; `docs`, `ci`, `chore`, `build`, `test` and
-   `style` are left out) go on the GitHub Release, and the image goes to
+4. runs the real release: the `linux/amd64` binary as a `tar.gz`,
+   `checksums.txt` and the notes (passed with `--release-notes`, so goreleaser
+   builds no list of commits) go on the GitHub Release, and the image goes to
    `ghcr.io/music-gang/nops`.
 
 It is the only job with write permissions (`contents` for the Release,
@@ -404,10 +474,10 @@ public.
   it.
 - **Breaking changes** (state machine, schema, HCL meta syntax, flags and
   environment variables): **both** `!` after the scope, and a
-  `BREAKING CHANGE:` footer saying what breaks and what to do about it. The
-  `!` is what puts the commit under *Breaking changes* in the release
-  changelog, which reads only the subject
-  ([Releasing](#releasing)); the footer is what a person reads there.
+  `BREAKING CHANGE:` footer saying what breaks and what to do about it, for
+  `git log`. The `!` is what the version suggestion and the `changelog` check
+  read ([Releasing](#releasing)); the `**Breaking:**` line of `CHANGELOG.md`
+  is what the person upgrading reads ([Changelog](#changelog)).
 - **Attribution:** a commit made with an assistant's help carries a
   `Co-Authored-By` trailer, and nothing else attribution-wise: no session link
   or URL, no "Generated with ..." line, in a commit or in a PR description.

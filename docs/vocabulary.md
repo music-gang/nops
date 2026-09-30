@@ -112,18 +112,19 @@ Some words exist in both worlds and mean different things. Say which one.
 
 ## Work on the repo
 
-The mechanics behind these terms (branching, PRs, how a task moves through
-the roadmap) are in [CLAUDE.md](../CLAUDE.md#picking-up-work); this is just
-what to call them.
+The mechanics behind these terms (branching, PRs, how an issue becomes a PR)
+are in [CLAUDE.md](../CLAUDE.md#picking-up-work); this is just what to call
+them.
 
 | Term | Meaning |
 |---|---|
 | **PR** | Pull request. Its **title** is the commit that lands on `main`, in Angular style `type(scope): subject`. |
-| **roadmap** | [`roadmap.md`](roadmap.md): the tasks left, with dependencies, what to read and when each is done. |
-| **task** | One block of the roadmap. Its ID is the suffix of the branch that works on it. |
-| **in flight** | A task with a remote branch (or an open PR). Derived from git, never written in the roadmap. |
-| **ready / plan first** | Whether a task can be started as it is, or its open design questions still need the maintainer's answer before any branch exists. |
-| **decision log** | [`design/decisions.md`](design/decisions.md): one row per design decision, added in the PR that takes it. |
+| **issue** | A GitHub issue: one piece of work, with its problem, its proposal and, while it is being designed, what is still to decide. The open issues are the work left. |
+| **in flight** | An issue with a remote branch or an open PR. Derived from git and GitHub, never written down. |
+| **plan first** | An issue whose design questions still need the maintainer's answer before any branch exists. |
+| **changelog** | [`CHANGELOG.md`](../CHANGELOG.md): per release, what changed for someone running Nops; a PR adds its line under `Unreleased` ([changelog](development.md#changelog)). |
+| **release PR** | The PR `chore(release): vX.Y.Z` that `scripts/release.sh` opens: it turns the `Unreleased` lines into the version's section, the notes the release publishes. |
+| **decision log** | [`design/decisions.md`](design/decisions.md): the design decisions up to v0.4.0, kept as history and no longer written to. A decision's reason is now in the page that explains that part. |
 | **invariant** | One of the seven rules in [philosophy](philosophy.md) that no change may break. |
 | **doc audit** | Checking the claims of the docs against the code and its tests, before a release or on request; a report of findings, then fixes as agreed ([procedure](development.md#doc-audit)). Not the tests that already compare tables and test names with the code. |
-| **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and changelog on the GitHub Release ([releasing](development.md#releasing)). |
+| **release** | A `vX.Y.Z` tag on `main` and what the `release` workflow publishes for it: the image on GHCR, the binary, checksums and the version's section of the changelog on the GitHub Release ([releasing](development.md#releasing)). |

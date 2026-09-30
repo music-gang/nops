@@ -57,11 +57,14 @@ jobs:
       # Pinned version: bump it by hand (Dependabot does not track `go run` targets).
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags integration ./...
-      # scripts/release.sh cuts the releases; shellcheck is preinstalled on the runner.
-      - name: release script
+      # scripts/release.sh cuts the releases, scripts/changelog.sh reads
+      # CHANGELOG.md for it and for the PR check; shellcheck is preinstalled on
+      # the runner.
+      - name: release scripts
         run: |
           shellcheck -x scripts/*.sh
           bash scripts/release_test.sh
+          bash scripts/changelog_test.sh
       # A broken .goreleaser.yaml fails here, not when a release is tagged.
       # Same pinned version as release.yml: bump both by hand.
       - name: goreleaser check
