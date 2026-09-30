@@ -14,8 +14,8 @@
 | `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers, with fakes for the store, the engine and git and a fixed clock: every page in every state it has (empty, pending, blocked, failed, invalid meta, a store error), the helpers (relative times, the diff summary, sync state, the plan steps), that the whole `spec_hash` is in the approve form and `job_spec` never on a page; the login against a fake OIDC provider (`httptest` serving discovery, keys, token and userinfo, signing real ID tokens), cross-origin refusals and 401/403. No coverage target. |
 | `cmd/nops` | Almost entirely straight-line wiring, so almost entirely covered by the integration smoke test below, not unit tests: a unit test only for the one piece of actual logic (`newAuthenticator` picking the login backend by `-auth-mode`). No coverage target. |
-| The docs | Tests inside `go test ./...` that read the pages: the option tables of `configuration.md` and the key table of `meta-keys.md` against `internal/config` and `internal/meta` (both directions, defaults included), and `docs/docs_test.go`, which fails when a test named in any `.md` (a name ending in `*` is a group) is not a function in the repo, and when the README names a Nomad version other than `NOMAD_VERSION` in `ci.yml`. They prove the page and the code agree on names and defaults, not that a cited test asserts the claim. |
-| `scripts/release.sh` | `scripts/release_test.sh` (plain bash, run by the `lint` job) covers the pure functions: the suggested bump, the next version, the release candidate number, semver validation and order. `shellcheck` on every script. The flow around them (git, `gh`, prompts) is looked at with `--dry-run`, never in CI: it would tag. |
+| The docs | Tests inside `go test ./...` that read the pages: the option tables of `configuration.md` and the key table of `meta-keys.md` against `internal/config` and `internal/meta` (both directions, defaults included), and `docs/docs_test.go`, which fails when a test named in any `.md` (a name ending in `*` is a group) is not a function in the repo, and when the README names a Nomad version other than `NOMAD_VERSION` in `ci.yml`; the same file checks every relative link and anchor, the shape of `CHANGELOG.md`, and that the docs speak to people ([below](#docs-and-agent-instructions)). They prove the page and the code agree on names and defaults, not that a cited test asserts the claim. |
+| `scripts/release.sh` | `scripts/release_test.sh` (plain bash, run by the `lint` job) covers the pure functions: the suggested bump, the next version, the release candidate number, semver validation and order. `shellcheck` on every script. The flow around them (git, `gh`, the questions it asks) is looked at with `--dry-run`, never in CI: it would tag. |
 | Real interaction with Nomad | Integration. |
 
 ## Integration
@@ -181,7 +181,19 @@ which place.
 | Something someone running Nops would notice | a line under `## [Unreleased]` in `CHANGELOG.md` ([Changelog](#changelog)) |
 | A design decision | its reason, in a sentence or two, in the page that explains that part; the discussion stays in the issue or the PR |
 | Build or release (`Dockerfile`, `.goreleaser.yaml`, `release.yml`, `scripts/`), image tags, semver policy | [Releasing](#releasing) |
-| Invariant | `philosophy.md` **and** the list in CLAUDE.md |
+| Invariant | `philosophy.md` (`TestInvariantTitlesMatch` fails when a copy of the list elsewhere drifts) |
+
+## Docs and agent instructions
+
+The docs, the README and the contributing guide describe Nops and how anyone
+contributes. What only a coding agent needs (how it works in a session, how it
+reports, how it marks what it wrote) lives in the file for agents at the root
+of the repository, which links to these pages instead of repeating them.
+`TestDocsSpeakToPeople` fails when a page other than that file names an agent
+tool or talks to one; `TestInvariantTitlesMatch` keeps that file's short list
+of invariants the same as [philosophy](philosophy.md). The first checks words,
+not tone: it was added because a written rule alone kept being broken, and
+every line that slipped through named the tool or the session.
 
 ## Commands
 
@@ -211,10 +223,33 @@ force pushes and deletion are blocked. No approvals are required (there is a
 single maintainer): CI is the gate. Release tags have their own two rulesets,
 described in [Releasing](#releasing).
 
-The step-by-step flow — branching, committing, opening a PR, the PR
-description's `## What changes` / `## Why` / `## Notes` shape — is in
-[CLAUDE.md](../CLAUDE.md#picking-up-work). What's specific to this repo's CI
-and merge mechanics, not covered there:
+**The flow of a change:**
+
+1. The work is the open issues. Pick one that has no branch and no open PR
+   yet (`git ls-remote --heads origin`, the pull requests page). An issue
+   whose proposal still leaves a design choice open is settled in the issue
+   first: no branch and no PR for a plan, since a PR is something to review.
+2. Branch from an up-to-date `main`, named `type/short-description`
+   (`feat/pause-job`), the type as in [Commit messages](#commit-messages).
+3. Make the change with its tests and docs
+   ([When a piece of work is "done"](#when-a-piece-of-work-is-done)), the
+   reason for a design decision in the page that explains that part, and its
+   line in the [changelog](#changelog).
+4. Commit in [Angular style](#commit-messages). A branch can carry several
+   commits, each a plain, honest step (what changes and why, no
+   superlatives): the maintainer squashes them and writes the commit that
+   lands on `main` by hand at merge time.
+5. Open a PR whose **title** is an Angular-style message
+   (`type(scope): subject`): it becomes the subject on `main`. Its
+   **description** is for the reviewer and never reaches `main`: the
+   template's headings below, and `Closes #N` for the issue it finishes. A
+   question left to the maintainer goes in its `## Notes`.
+6. A change after the PR is open (a fix, an answer to review) is a **new
+   commit** on the same branch, never an amend or a force-push of what is
+   already pushed.
+7. Only the maintainer merges.
+
+What's specific to this repo's CI and merge mechanics:
 
 - Commits inside a branch do not need to be signed, whoever makes them: the
   squash commit on `main` is created and signed by GitHub, and the ruleset
@@ -241,9 +276,10 @@ The PR template (`.github/pull_request_template.md`) has these headings:
 ## Notes
 ```
 
-It is only the three headings (`## Notes` is optional, see CLAUDE.md: delete
-it when there is nothing to say), and
-every section is filled in by hand, never left as a placeholder (see the
+It is only the three headings (`## Notes` is optional: delete it when there
+is nothing to say), each section a short bullet list filled in by hand, never
+left as a placeholder, with no HTML comment, no boilerplate and no unchecked
+checklist item (see the
 decision log, 2026-09-24: an earlier template leaked its HTML comments and
 an unfilled checklist into commit bodies, `a933a4c` and `8052989`, back when
 the squash setting copied the PR description verbatim). The template
@@ -257,11 +293,9 @@ Issues go through the two forms in `.github/ISSUE_TEMPLATE/` (blank issues
 are disabled). The bug form labels an issue `bug`, the feature form
 `enhancement`, and both add `needs-triage`, which the maintainer removes once
 he has read the issue. An issue opened with `gh issue create` skips the forms
-and gets no label. The other labels are `documentation`; `dependencies` and
-`go`, which Dependabot puts on its PRs; and `assisted-with-claude`, on an
-issue drafted or substantially rewritten with an assistant (see
-[Commit messages](#commit-messages), *Attribution*). The scope already sits in
-the title (`feat(web): ...`), so it has no label. The open issues are the list
+and gets no label. The other labels are `documentation`, and `dependencies`
+and `go`, which Dependabot puts on its PRs. The scope already sits in the
+title (`feat(web): ...`), so it has no label. The open issues are the list
 of work: there is no roadmap file.
 
 | Check | Required | What it runs |
@@ -480,22 +514,14 @@ public.
   `git log`. The `!` is what the version suggestion and the `changelog` check
   read ([Releasing](#releasing)); the `**Breaking:**` line of `CHANGELOG.md`
   is what the person upgrading reads ([Changelog](#changelog)).
-- **Attribution:** a commit made with an assistant's help carries a
-  `Co-Authored-By` trailer, and nothing else attribution-wise: no session link
-  or URL, no "Generated with ..." line, in a commit or in a PR description.
-  `Co-Authored-By` alone says who or what wrote it. Issues, comments and
-  reviews carry no footer either: the maintainer reads what an assistant
-  drafts before it goes out under his account, and answers for it. The one
-  exception is a comment an assistant posts on its own with nobody reading it
-  first (answering a reviewer while it watches a PR, say), which ends with
-  the assistant's standard footer, since there it tells the reader something
-  true. An issue drafted or substantially rewritten with an assistant gets
-  the `assisted-with-claude` label.
+- **Co-author:** someone who wrote part of a commit is named in a
+  `Co-Authored-By` trailer.
 - One logical change per PR. Code and the docs describing it go in the
-  **same** PR (see the rules in CLAUDE.md).
+  **same** PR.
 
 ## Go conventions
 
+- Language: code, comments, docs, examples and commit messages are in English.
 - Go version: whatever `go.mod` says. Format with `gofmt`/`goimports`. Lint: `go vet` + `staticcheck`.
 - Package names are short, singular, without underscores. No `util`/`common`
   packages. Identifiers use the terms in [vocabulary](vocabulary.md).

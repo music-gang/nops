@@ -422,3 +422,74 @@ func TestChangelogFormatCatches(t *testing.T) {
 		}
 	}
 }
+
+// agentWords are words that only belong in an instruction to an AI agent.
+// "agent" and "session" alone are not among them: in the docs they are a
+// Nomad agent and a dashboard login.
+var agentWords = regexp.MustCompile(`(?i)\bclaude\b|\bassistants?\b|\bAI\b|\bLLMs?\b|\bprompts?\b|\bin the session\b`)
+
+// TestDocsSpeakToPeople fails when a Markdown page other than CLAUDE.md, the
+// file for agents, talks about or to an AI agent: the docs describe Nops and
+// how anyone contributes, and what only an agent needs lives in CLAUDE.md
+// (docs/development.md#docs-and-agent-instructions). It reads words, not
+// tone.
+func TestDocsSpeakToPeople(t *testing.T) {
+	for _, page := range markdownPages(t) {
+		name := filepath.ToSlash(strings.TrimPrefix(page, ".."+string(filepath.Separator)))
+		if name == "CLAUDE.md" || strings.HasPrefix(name, "docs/archive/") || name == "docs/design/decisions.md" {
+			continue
+		}
+		b, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n, line := range strings.Split(string(b), "\n") {
+			// A product, not an assistant: one of the notification targets.
+			line = strings.ReplaceAll(line, "Home Assistant", "")
+			if w := agentWords.FindString(line); w != "" {
+				t.Errorf("%s:%d says %q: what only an agent needs goes in CLAUDE.md, not in the docs", name, n+1, w)
+			}
+		}
+	}
+}
+
+// numberedBold is the first bold phrase of a numbered list item.
+var numberedBold = regexp.MustCompile(`^\d+\.\s+\*\*(.+?)\*\*`)
+
+// invariantTitles returns the first bold phrase of each numbered item under
+// the "## Invariants" heading of a page, without a trailing period.
+func invariantTitles(b []byte) []string {
+	var titles []string
+	in := false
+	for _, line := range proseLines(b) {
+		if strings.HasPrefix(line, "## ") {
+			in = strings.HasPrefix(line, "## Invariants")
+			continue
+		}
+		if m := numberedBold.FindStringSubmatch(line); in && m != nil {
+			titles = append(titles, strings.TrimSuffix(m[1], "."))
+		}
+	}
+	return titles
+}
+
+// TestInvariantTitlesMatch keeps the short list of invariants in CLAUDE.md
+// the same as the one philosophy.md explains, in the same order, so the copy
+// cannot drift.
+func TestInvariantTitlesMatch(t *testing.T) {
+	philosophy, err := os.ReadFile("philosophy.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, err := os.ReadFile("../CLAUDE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, got := invariantTitles(philosophy), invariantTitles(claude)
+	if len(want) == 0 {
+		t.Fatal("philosophy.md: no numbered bold item under \"## Invariants\"")
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the invariants of CLAUDE.md differ from philosophy.md:\n  CLAUDE.md:     %q\n  philosophy.md: %q", got, want)
+	}
+}

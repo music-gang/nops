@@ -143,8 +143,8 @@ go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 ```
 
 See [docs/development.md](docs/development.md) for the testing strategy, the
-PR workflow and conventions, [CONTRIBUTING.md](CONTRIBUTING.md) for the short
-version, and [CLAUDE.md](CLAUDE.md) for the working rules.
+PR workflow and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for the
+short version.
 
 ## License
 
