@@ -257,10 +257,12 @@ Issues go through the two forms in `.github/ISSUE_TEMPLATE/` (blank issues
 are disabled). The bug form labels an issue `bug`, the feature form
 `enhancement`, and both add `needs-triage`, which the maintainer removes once
 he has read the issue. An issue opened with `gh issue create` skips the forms
-and gets no label. The other labels are `documentation`, and `dependencies`
-and `go`, which Dependabot puts on its PRs. The scope already sits in the
-title (`feat(web): ...`), so it has no label. The open issues are the list of
-work: there is no roadmap file.
+and gets no label. The other labels are `documentation`; `dependencies` and
+`go`, which Dependabot puts on its PRs; and `assisted-with-claude`, on an
+issue drafted or substantially rewritten with an assistant (see
+[Commit messages](#commit-messages), *Attribution*). The scope already sits in
+the title (`feat(web): ...`), so it has no label. The open issues are the list
+of work: there is no roadmap file.
 
 | Check | Required | What it runs |
 |---|---|---|
@@ -481,7 +483,14 @@ public.
 - **Attribution:** a commit made with an assistant's help carries a
   `Co-Authored-By` trailer, and nothing else attribution-wise: no session link
   or URL, no "Generated with ..." line, in a commit or in a PR description.
-  `Co-Authored-By` alone says who or what wrote it.
+  `Co-Authored-By` alone says who or what wrote it. Issues, comments and
+  reviews carry no footer either: the maintainer reads what an assistant
+  drafts before it goes out under his account, and answers for it. The one
+  exception is a comment an assistant posts on its own with nobody reading it
+  first (answering a reviewer while it watches a PR, say), which ends with
+  the assistant's standard footer, since there it tells the reader something
+  true. An issue drafted or substantially rewritten with an assistant gets
+  the `assisted-with-claude` label.
 - One logical change per PR. Code and the docs describing it go in the
   **same** PR (see the rules in CLAUDE.md).
 

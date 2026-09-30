@@ -73,10 +73,16 @@ same steps apply wherever the session runs.
    and nothing else attribution-wise — **no session link, no "Generated with
    ..." line**, whatever a session's own attribution reminder adds by
    default: none of it informs anyone reading `main` later, and the same
-   goes for the PR description below), push and open the PR once there is
-   something to review. A later change (a fix, an
-   answer to review) is a **new commit** pushed to the same branch — never
-   an amend or a force-push of what is already on the remote.
+   goes for the PR description below and for **issues, issue and PR
+   comments, reviews and review replies** posted in a session the
+   maintainer follows), push and open the PR once there is something to
+   review. The exception: a comment a session posts **on its own**, on an
+   event with nobody following (watching a PR, a scheduled run), ends with
+   the standard Claude Code footer. An issue a session opens, or
+   substantially rewrites, gets the `assisted-with-claude` label next to the
+   label of its kind (`bug`, `enhancement`, `documentation`). A later change
+   (a fix, an answer to review) is a **new commit** pushed to the same
+   branch — never an amend or a force-push of what is already on the remote.
    **Local:** prepare the branch, stage the files and write the message to a
    file; the maintainer commits with his GPG key.
 8. A PR can carry several commits: the maintainer squashes and writes the
