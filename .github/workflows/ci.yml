@@ -114,8 +114,12 @@ jobs:
         run: |
           printf 'ports {\n  http = 5646\n  rpc  = 5647\n  serf = 5648\n}\nacl {\n  enabled = true\n}\n' > acl-agent.hcl
           nomad agent -dev -bind=127.0.0.1 -config=acl-agent.hcl > nomad-acl.log 2>&1 &
+          # The step's shell has no pipefail: the pipeline's status is jq's, so
+          # the loop looks at the token, not at the status.
+          token=""
           for _ in $(seq 1 60); do
-            token=$(curl -sf -X POST "${NOPS_TEST_NOMAD_ACL_ADDR}/v1/acl/bootstrap" | jq -r .SecretID) && break
+            token=$(curl -sf -X POST "${NOPS_TEST_NOMAD_ACL_ADDR}/v1/acl/bootstrap" | jq -r '.SecretID // empty')
+            if [ -n "${token}" ]; then break; fi
             sleep 1
           done
           if [ -z "${token}" ]; then
