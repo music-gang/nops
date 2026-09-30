@@ -225,6 +225,7 @@
   </section>
   {{end}}
   {{if .Notice}}<p class="flash flash--warn">{{.Notice}}</p>{{end}}
+  {{if .PromotionWait}}<p class="flash flash--warn"><strong>Waiting for canary promotion in Nomad.</strong> The apply timeout does not run meanwhile. Promote the canaries, or fail the Nomad deployment, to move on.</p>{{end}}
 
   {{if .CanDecide}}
   <section class="box decision">

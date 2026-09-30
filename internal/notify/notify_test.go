@@ -365,3 +365,63 @@ func TestInvalidURLIsNotLogged(t *testing.T) {
 		t.Errorf("log = %s", buf)
 	}
 }
+
+// A deployment applying whose Nomad deployment waits for a person to promote
+// its canaries is told to them by name, in every adapter, and once promoted (or
+// with no wait at all) an applying deployment carries no such marker.
+func TestWaitingForCanaryPromotion(t *testing.T) {
+	waiting := &store.Deployment{
+		ID: "01J8ZW", JobID: "web", Namespace: "apps", CommitSHA: "0123456789abcdef0123",
+		State: store.StateApplying, PromotionWaitSince: updated, UpdatedAt: updated,
+	}
+	const want = "web waiting for canary promotion"
+
+	srvs := map[string]*server{}
+	var o Options
+	for name, dst := range map[string]*Endpoint{"webhook": &o.Webhook, "discord": &o.Discord, "slack": &o.Slack, "ntfy": &o.Ntfy, "gotify": &o.Gotify} {
+		srvs[name] = newServer(t, http.StatusOK)
+		dst.URL = srvs[name].URL
+	}
+	o.Timeout = time.Second
+	log, buf := logger()
+	New(o, log).Notify(context.Background(), waiting)
+	if buf.Len() > 0 {
+		t.Fatalf("log = %s", buf)
+	}
+
+	body := func(name string) received {
+		t.Helper()
+		reqs := srvs[name].requests()
+		if len(reqs) != 1 {
+			t.Fatalf("%s: %d requests, want 1", name, len(reqs))
+		}
+		return reqs[0]
+	}
+	if m := decode(t, body("webhook").body); m["state"] != "applying" || m["waiting"] != WaitingCanaryPromotion {
+		t.Errorf("webhook payload = %v, want state applying and waiting %q", m, WaitingCanaryPromotion)
+	}
+	if got := decode(t, body("discord").body)["embeds"].([]any)[0].(map[string]any)["title"]; got != want {
+		t.Errorf("discord title = %v, want %q", got, want)
+	}
+	if got := decode(t, body("slack").body)["text"].(string); !strings.Contains(got, want) {
+		t.Errorf("slack text = %q, want it to contain %q", got, want)
+	}
+	if got := body("ntfy").header.Get("Title"); got != want {
+		t.Errorf("ntfy title = %q, want %q", got, want)
+	}
+	if got := decode(t, body("gotify").body)["title"]; got != want {
+		t.Errorf("gotify title = %v, want %q", got, want)
+	}
+
+	for name, d := range map[string]*store.Deployment{
+		"promoted":     {ID: "a", JobID: "web", State: store.StateApplying, PromotionWaitSince: updated, PromotedAt: updated},
+		"never waited": {ID: "b", JobID: "web", State: store.StateApplying},
+		"failed after": {ID: "c", JobID: "web", State: store.StateFailed, PromotionWaitSince: updated},
+	} {
+		srv := newServer(t, http.StatusOK)
+		New(Options{Webhook: Endpoint{URL: srv.URL}, Timeout: time.Second}, log).Notify(context.Background(), d)
+		if m := decode(t, srv.requests()[0].body); m["waiting"] != nil {
+			t.Errorf("%s: payload = %v, want no waiting key", name, m)
+		}
+	}
+}

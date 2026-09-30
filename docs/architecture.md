@@ -36,8 +36,11 @@ the dashboard. There are three loops, all with configurable intervals:
    was left half-way (see
    [state machine](state-machine.md#recovery-after-a-crash)).
 
-The only state that waits for an external event is `pending_approval`, by
-design (invariant 3 in [philosophy.md](philosophy.md)).
+The only state that waits for an external event with no time limit is
+`pending_approval`, by design (invariant 3 in [philosophy.md](philosophy.md)).
+The other is a part of `applying`: while a job's Nomad deployment waits for a
+person to promote its canaries, the apply timeout does not run
+([promotion wait](vocabulary.md#deployment-lifecycle)).
 
 ## Apply and downtime
 
@@ -50,7 +53,8 @@ downtime and break the CAS sequence.
 the Nomad deployment is `successful` or, if the job produces none, every
 allocation of the new version is `running` or `complete` (a periodic or
 parameterized job, or one whose groups all have count 0, has none: it is healthy
-once registered). The timeout is configurable.
+once registered). The timeout is configurable, and does not run while the Nomad
+deployment waits for a person to promote its canaries.
 
 ## What Nops does not do
 

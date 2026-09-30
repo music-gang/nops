@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/nomad/api"
 )
 
 // scalableHCL is a service job whose only group has a scaling policy, the
@@ -218,5 +220,121 @@ func TestLongJobIDIsAccepted(t *testing.T) {
 	live, err := c.Job(ctx, "default", id)
 	if err != nil || live.ID == nil || *live.ID != id {
 		t.Fatalf("live = %+v, %v; want the job back under its long ID", live, err)
+	}
+}
+
+// canaryHCL is a service with one canary and no auto-promotion: what a job
+// needs for its Nomad deployment to wait for a human. tag changes the task's
+// environment, so a second registration is a new version. The deadlines are
+// short so the test does not take long, but the progress deadline is shorter
+// than the wait the test makes.
+func canaryHCL(id, tag string) string {
+	return fmt.Sprintf(`
+job %q {
+  type = "service"
+  update {
+    max_parallel      = 1
+    canary            = 1
+    auto_promote      = false
+    min_healthy_time  = "1s"
+    healthy_deadline  = "10s"
+    progress_deadline = "15s"
+  }
+  group "g" {
+    count = 1
+    task "t" {
+      driver = "raw_exec"
+      env {
+        TAG = %q
+      }
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }
+}`, id, tag)
+}
+
+// TestCanaryWaitsForManualPromotion settles what docs/design/engine-apply.md
+// relies on for a job with canary > 0 and auto_promote = false: its Nomad
+// deployment stays running, with the canaries placed and healthy and not
+// promoted, and the progress deadline does not fail it while it waits for a
+// human. Promoting it makes it successful.
+func TestCanaryWaitsForManualPromotion(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	id := uniqueID(t, raw, "canary")
+	register := func(tag string) {
+		t.Helper()
+		job, err := c.ParseHCL(ctx, canaryHCL(id, tag), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		live, _, err := raw.Jobs().Info(id, nil)
+		var index uint64
+		if err == nil {
+			index = *live.JobModifyIndex
+		}
+		if _, err := c.RegisterCAS(ctx, job, index, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest := func() *api.Deployment {
+		t.Helper()
+		d, err := c.LatestDeployment(ctx, "default", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	waitFor := func(what string, deadline time.Duration, ok func(*api.Deployment) bool) *api.Deployment {
+		t.Helper()
+		end := time.Now().Add(deadline)
+		for {
+			if d := latest(); d != nil && ok(d) {
+				return d
+			}
+			if time.Now().After(end) {
+				t.Fatalf("no Nomad deployment %s within %s: %+v", what, deadline, latest())
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+
+	// The first version has nothing to be a canary of: it rolls out whole.
+	register("v1")
+	waitFor("successful", 60*time.Second, func(d *api.Deployment) bool { return d.Status == api.DeploymentStatusSuccessful })
+
+	register("v2")
+	waiting := waitFor("with a healthy canary", 60*time.Second, func(d *api.Deployment) bool {
+		g := d.TaskGroups["g"]
+		return d.Status == api.DeploymentStatusRunning && g != nil && g.HealthyAllocs >= 1
+	})
+	g := waiting.TaskGroups["g"]
+	t.Logf("waiting: status=%q description=%q group=%+v", waiting.Status, waiting.StatusDescription, *g)
+	if g.DesiredCanaries != 1 || len(g.PlacedCanaries) != 1 || g.Promoted {
+		t.Errorf("group = %+v, want 1 desired canary, 1 placed, not promoted", *g)
+	}
+
+	// Past the progress deadline: nothing is failing, a human is expected.
+	time.Sleep(20 * time.Second)
+	still := latest()
+	t.Logf("after the progress deadline: status=%q description=%q", still.Status, still.StatusDescription)
+	if still.ID != waiting.ID || still.Status != api.DeploymentStatusRunning {
+		t.Fatalf("after the progress deadline the deployment is %s %q (%s), want %s still running",
+			still.ID, still.Status, still.StatusDescription, waiting.ID)
+	}
+
+	if _, _, err := raw.Deployments().PromoteAll(waiting.ID, nil); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	done := waitFor("successful after the promotion", 60*time.Second, func(d *api.Deployment) bool {
+		return d.Status == api.DeploymentStatusSuccessful
+	})
+	if !done.TaskGroups["g"].Promoted {
+		t.Errorf("group of the successful deployment = %+v, want promoted", *done.TaskGroups["g"])
 	}
 }

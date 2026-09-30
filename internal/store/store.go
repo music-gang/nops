@@ -120,8 +120,15 @@ type Deployment struct {
 	// reason a job's drift is blocked.
 	RetriedBy string
 	RetriedAt time.Time // zero if not retried
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// PromotionWaitSince is when an applying deployment was first seen waiting
+	// for a human to promote the canaries of its Nomad deployment (set by
+	// MarkAwaitingPromotion), PromotedAt when they were seen promoted (set by
+	// MarkPromoted): the apply timeout does not run in between and counts from
+	// PromotedAt after it. Both are zero if it never waited.
+	PromotionWaitSince time.Time
+	PromotedAt         time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	// Hooks are the hooks the deployment runs, frozen with it. CreateDeployment
 	// writes them; reading a deployment does not load them, see DeploymentHooks.
 	Hooks []DeploymentHook
@@ -507,12 +514,13 @@ func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex uint64, 
 
 // AppliedSince returns the timestamp of a deployment's "-> applying" event:
 // the apply timeout is counted from it (docs/state-machine.md), so a restart
-// does not extend it. It returns ErrNotFound if the deployment never reached
+// does not extend it. The applying -> applying events of a promotion wait are
+// not the state being entered, and are skipped. It returns ErrNotFound if the deployment never reached
 // applying.
 func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Time, error) {
 	var ts string
 	err := s.db.QueryRowContext(ctx, `SELECT ts FROM events
-		WHERE deployment_id = ? AND to_state = ? ORDER BY id DESC LIMIT 1`,
+		WHERE deployment_id = ? AND to_state = ? AND from_state <> to_state ORDER BY id DESC LIMIT 1`,
 		deploymentID, string(StateApplying)).Scan(&ts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, fmt.Errorf("applied since %s: %w", deploymentID, ErrNotFound)
@@ -525,7 +533,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 
 const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
 	plan_diff, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
-	retried_by, retried_at, created_at, updated_at`
+	retried_by, retried_at, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -534,13 +542,14 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		d                                   Deployment
 		plan, eval, errMsg, by, decidedAt   sql.NullString
 		subject, author, retriedBy, retried sql.NullString
+		waitSince, promoted                 sql.NullString
 		applied                             sql.NullInt64
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan,
 		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
-		&createdAt, &updatedAt); err != nil {
+		&waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	d.PlanDiff, d.EvalID, d.Error, d.DecidedBy = plan.String, eval.String, errMsg.String, by.String
@@ -551,6 +560,12 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		return nil, err
 	}
 	if d.RetriedAt, err = parseTime(retried.String); err != nil {
+		return nil, err
+	}
+	if d.PromotionWaitSince, err = parseTime(waitSince.String); err != nil {
+		return nil, err
+	}
+	if d.PromotedAt, err = parseTime(promoted.String); err != nil {
 		return nil, err
 	}
 	if d.CreatedAt, err = parseTime(createdAt); err != nil {
@@ -762,6 +777,64 @@ func (s *Store) MarkRetried(ctx context.Context, id, actor string) error {
 		return fmt.Errorf("mark retried %s: commit: %w", id, err)
 	}
 	return nil
+}
+
+// MarkAwaitingPromotion records that an applying deployment's Nomad deployment
+// waits for a person to promote its canaries: the apply timeout does not run
+// from now until MarkPromoted. It reports whether it wrote, which is only the
+// first time (the caller notifies then, once), and returns ErrStateConflict if
+// the deployment is not applying. The state does not change: the wait is an
+// event of applying, persisted before anything is done about it (invariant 7).
+func (s *Store) MarkAwaitingPromotion(ctx context.Context, id string) (bool, error) {
+	return s.markPromotion(ctx, id, "promotion_wait_since", "promotion_wait_since IS NULL",
+		"waiting for canary promotion in Nomad")
+}
+
+// MarkPromoted records that the canaries of an applying deployment that was
+// waiting for them (MarkAwaitingPromotion) are promoted: the apply timeout
+// counts again, from now. It reports whether it wrote, and returns
+// ErrStateConflict if the deployment is not applying.
+func (s *Store) MarkPromoted(ctx context.Context, id string) (bool, error) {
+	return s.markPromotion(ctx, id, "promoted_at", "promotion_wait_since IS NOT NULL AND promoted_at IS NULL",
+		"canaries promoted in Nomad: the apply timeout counts again")
+}
+
+// markPromotion sets column (one of the two above, never caller input) and
+// logs message as an applying -> applying event, in one transaction, when the
+// deployment is applying and guard holds.
+func (s *Store) markPromotion(ctx context.Context, id, column, guard, message string) (bool, error) {
+	now := s.ts()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("%s %s: %w", column, id, err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `UPDATE deployments SET `+column+` = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND `+guard, now, now, id, string(StateApplying))
+	if err != nil {
+		return false, fmt.Errorf("%s %s: %w", column, id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var state string
+		err := tx.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, id).Scan(&state)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return false, fmt.Errorf("%s %s: %w", column, id, ErrNotFound)
+		case err != nil:
+			return false, fmt.Errorf("%s %s: %w", column, id, err)
+		case State(state) != StateApplying:
+			return false, fmt.Errorf("%s %s: %w (is %s, want applying)", column, id, ErrStateConflict, state)
+		}
+		return false, nil // already recorded
+	}
+	if err := insertEvent(ctx, tx, id, now, StateApplying, StateApplying, "nops", message); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("%s %s: commit: %w", column, id, err)
+	}
+	return true, nil
 }
 
 // ListHistory returns terminal deployments, newest first.

@@ -488,8 +488,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 4 {
-		t.Errorf("user_version = %d, %v; want 4", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
+		t.Errorf("user_version = %d, %v; want 5", v, err)
 	}
 }
 
@@ -1122,6 +1122,147 @@ func TestUpgradeFromV3(t *testing.T) {
 	}
 	if next, created, err := s.EnsureHookRun(ctx, "old", "pre", 1, "second", time.Minute); err != nil || !created || next.IdempotencyToken != "old:pre:1" {
 		t.Errorf("a second position after the upgrade = %+v, %v, %v", next, created, err)
+	}
+}
+
+// applyingDep is a deployment moved on to applying.
+func applyingDep(t *testing.T, s *Store, job string) *Deployment {
+	t.Helper()
+	d := mustCreate(t, s, newDep(job))
+	if err := s.Transition(context.Background(), d.ID, StateApplying, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestPromotionWait(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := applyingDep(t, s, "web")
+
+	if got, _ := s.GetDeployment(ctx, d.ID); !got.PromotionWaitSince.IsZero() || !got.PromotedAt.IsZero() {
+		t.Fatalf("a new deployment already waits: %+v", got)
+	}
+	// Promoted before it was ever waiting is nothing to record.
+	if wrote, err := s.MarkPromoted(ctx, d.ID); err != nil || wrote {
+		t.Fatalf("MarkPromoted before the wait = %v, %v, want false, nil", wrote, err)
+	}
+
+	if wrote, err := s.MarkAwaitingPromotion(ctx, d.ID); err != nil || !wrote {
+		t.Fatalf("MarkAwaitingPromotion = %v, %v, want true, nil", wrote, err)
+	}
+	if wrote, err := s.MarkAwaitingPromotion(ctx, d.ID); err != nil || wrote {
+		t.Errorf("second MarkAwaitingPromotion = %v, %v, want false, nil: it is what makes the notification once", wrote, err)
+	}
+	got, _ := s.GetDeployment(ctx, d.ID)
+	if got.PromotionWaitSince.IsZero() || !got.PromotedAt.IsZero() || got.State != StateApplying {
+		t.Errorf("waiting: %+v, want promotion_wait_since set, promoted_at not, still applying", got)
+	}
+
+	if wrote, err := s.MarkPromoted(ctx, d.ID); err != nil || !wrote {
+		t.Fatalf("MarkPromoted = %v, %v, want true, nil", wrote, err)
+	}
+	if wrote, err := s.MarkPromoted(ctx, d.ID); err != nil || wrote {
+		t.Errorf("second MarkPromoted = %v, %v, want false, nil", wrote, err)
+	}
+	if wrote, err := s.MarkAwaitingPromotion(ctx, d.ID); err != nil || wrote {
+		t.Errorf("MarkAwaitingPromotion after the promotion = %v, %v, want false, nil (one wait per deployment)", wrote, err)
+	}
+	got, _ = s.GetDeployment(ctx, d.ID)
+	if got.PromotedAt.IsZero() || got.PromotedAt.Before(got.PromotionWaitSince) {
+		t.Errorf("promoted: %+v, want promoted_at set, not before promotion_wait_since", got)
+	}
+
+	// The events of the wait are not the deployment entering applying: the apply
+	// timeout still counts from the real one.
+	entered, err := s.AppliedSince(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !entered.Before(got.PromotionWaitSince) {
+		t.Errorf("AppliedSince = %v, want before the wait began (%v)", entered, got.PromotionWaitSince)
+	}
+
+	evs, err := s.Events(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 4 { // detected, applying, waiting, promoted
+		t.Fatalf("events = %+v, want exactly one per recorded change", evs)
+	}
+	for i, msg := range []string{"waiting for canary promotion in Nomad", "canaries promoted in Nomad: the apply timeout counts again"} {
+		if e := evs[2+i]; e.From != StateApplying || e.To != StateApplying || e.Actor != "nops" || e.Message != msg {
+			t.Errorf("event %d = %+v, want applying -> applying %q", 2+i, e, msg)
+		}
+	}
+}
+
+func TestPromotionWaitRefusals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	detected := mustCreate(t, s, newDep("web"))
+	if _, err := s.MarkAwaitingPromotion(ctx, detected.ID); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("detected deployment: err = %v, want ErrStateConflict", err)
+	}
+	done := applyingDep(t, s, "db")
+	if err := s.Transition(ctx, done.ID, StateCompleted, Transition{From: StateApplying, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkAwaitingPromotion(ctx, done.ID); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("completed deployment: err = %v, want ErrStateConflict", err)
+	}
+	if _, err := s.MarkPromoted(ctx, done.ID); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("MarkPromoted on a completed deployment: err = %v, want ErrStateConflict", err)
+	}
+	if _, err := s.MarkAwaitingPromotion(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+	if evs, _ := s.Events(ctx, detected.ID); len(evs) != 1 {
+		t.Errorf("a refused mark logged an event: %+v", evs)
+	}
+}
+
+// TestUpgradeFromV4 opens a database left by the schema before the promotion
+// wait, with an applying deployment in it, and checks it reads back as one that
+// never waited, and can start waiting.
+func TestUpgradeFromV4(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"0001_init.sql", "0002_dashboard.sql", "0003_hook_revisions.sql", "0004_multi_hooks.sql"} {
+		body, err := migrationsFS.ReadFile("migrations/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", f, err)
+		}
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 4",
+		`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, applied_index, created_at, updated_at)
+		 VALUES ('old', 'web', 'default', 'abc1234', 'h', '{}', 'auto', 'applying', 7, 9, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v4: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	ctx := context.Background()
+	got, err := s.GetDeployment(ctx, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateApplying || got.AppliedIndex != 9 || !got.PromotionWaitSince.IsZero() || !got.PromotedAt.IsZero() {
+		t.Errorf("upgraded deployment = %+v, want applying, index 9, never waited", got)
+	}
+	if wrote, err := s.MarkAwaitingPromotion(ctx, "old"); err != nil || !wrote {
+		t.Errorf("MarkAwaitingPromotion after the upgrade = %v, %v", wrote, err)
 	}
 }
 

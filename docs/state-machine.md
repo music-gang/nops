@@ -97,12 +97,18 @@ The detail lives in `internal/store/migrations/`; this is the summary.
 - `deployments`: id (ULID), job_id, namespace, commit_sha, commit_subject,
   commit_author, spec_hash, job_spec (JSON), plan_diff (redacted JSON),
   policy, state, cas_index, applied_index, eval_id, error, decided_by,
-  decided_at, retried_by, retried_at, created_at, updated_at.
+  decided_at, retried_by, retried_at, promotion_wait_since, promoted_at,
+  created_at, updated_at.
   `commit_subject` (first line of the message) and `commit_author` (name, no
   email) are copied from the commit when the deployment is created, because
   the git clone is shallow and only ever holds the head; they are empty for a
   deployment created before they were recorded. `retried_by`/`retried_at` are
   set by `Store.MarkRetried`, only on a `failed` or `rejected` deployment.
+  `promotion_wait_since`/`promoted_at` are set by `Store.MarkAwaitingPromotion`
+  and `Store.MarkPromoted`, only on an `applying` deployment whose Nomad
+  deployment waited for a person to promote its canaries: the first time Nops
+  saw it wait and the first time it saw the canaries promoted. Each is written
+  once, and both are empty for a deployment that never waited.
   `UNIQUE INDEX (namespace, job_id) WHERE state IN (detected,
   pending_approval, pre_hook, applying, post_hook)` is the per-job lock.
 - `deployment_hooks`: deployment_id, phase, position, hook_id, revision,
@@ -124,7 +130,10 @@ The detail lives in `internal/store/migrations/`; this is the summary.
   message). It feeds the history view in the dashboard. `Store.MarkRetried`
   appends one event whose `from_state` and `to_state` are both the
   deployment's (terminal) state, message `retry requested`: nothing moves, it
-  is the audit trail of who asked.
+  is the audit trail of who asked. `MarkAwaitingPromotion` and `MarkPromoted`
+  append one whose two states are both `applying` (messages `waiting for canary
+  promotion in Nomad` and `canaries promoted in Nomad: the apply timeout counts
+  again`).
 
 Store rules:
 
@@ -134,6 +143,10 @@ Store rules:
 - `Store.MarkRetried` is the only other write on a terminal deployment: it
   changes no state, is guarded on `state IN (failed, rejected) AND retried_at
   IS NULL`, and writes its event in the same transaction.
+- `Store.MarkAwaitingPromotion` and `Store.MarkPromoted` change no state
+  either: each is guarded on `state = applying` and on its own column still
+  being empty, so it writes (and reports it wrote) once, and writes its event
+  in the same transaction.
 - A single SQLite connection: writes are serialized.
 
 ## Recovery after a crash
@@ -162,7 +175,8 @@ usual, `pending_approval` still waits for a human. For the rest:
   To record `applied_index`, re-read the live job: the index in the register
   response is not reliable (see the decision log).
 - `applying` with `applied_index` set: wait for health as before, the timeout
-  counted from the `→ applying` event. If the live job's index is no longer
+  counted from the `→ applying` event, or from `promoted_at` if the Nomad
+  deployment waited for a canary promotion (see below). If the live job's index is no longer
   `applied_index` and no Nomad deployment tracks it, the job was modified
   outside Nops (for instance while it was down): the deployment is `failed`
   rather than judged on someone else's allocations.

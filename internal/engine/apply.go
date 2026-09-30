@@ -382,28 +382,37 @@ func (e *Engine) registerRetry(ctx context.Context, log *slog.Logger, d *store.D
 }
 
 // stepHealth waits for the applied job version to become healthy, bounded by
-// ApplyTimeout counted from the "-> applying" event.
+// ApplyTimeout counted from the "-> applying" event, or from the promotion of
+// the canaries if the Nomad deployment waited for one. While it waits for a
+// person to promote them there is no bound: that is not a failure to become
+// healthy (see docs/design/engine-apply.md, decision 10).
 func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Deployment) {
-	since, err := e.store.AppliedSince(ctx, d.ID)
-	if err != nil {
-		log.ErrorContext(ctx, "read applied timestamp", "error", err)
-		return
-	}
-	if e.now().After(since.Add(e.applyTimeout)) {
-		e.applyTransition(ctx, log, d, store.StateFailed,
-			fmt.Sprintf("apply did not become healthy within %s", e.applyTimeout))
-		return
+	waiting := !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero()
+	if !waiting {
+		since, err := e.store.AppliedSince(ctx, d.ID)
+		if err != nil {
+			log.ErrorContext(ctx, "read applied timestamp", "error", err)
+			return
+		}
+		if !d.PromotedAt.IsZero() {
+			since = d.PromotedAt
+		}
+		if e.now().After(since.Add(e.applyTimeout)) {
+			e.applyTransition(ctx, log, d, store.StateFailed,
+				fmt.Sprintf("apply did not become healthy within %s", e.applyTimeout))
+			return
+		}
 	}
 
-	healthy, failed, reason, err := e.applyHealth(ctx, d)
+	verdict, reason, err := e.applyHealth(ctx, d)
 	if err != nil {
 		log.ErrorContext(ctx, "check apply health", "error", err)
-		return // retried next cycle, still bounded by the timeout above
+		return // retried next cycle, still bounded by the timeout above unless waiting for a promotion
 	}
-	switch {
-	case failed:
+	switch verdict {
+	case healthFailed:
 		e.applyTransition(ctx, log, d, store.StateFailed, "apply did not become healthy: "+reason)
-	case healthy:
+	case healthHealthy:
 		job, err := parseJobSpec(d)
 		if err != nil {
 			log.ErrorContext(ctx, "decode job spec", "error", err)
@@ -414,50 +423,112 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 			next = store.StatePostHook
 		}
 		e.applyTransition(ctx, log, d, next, "")
+	case healthAwaitingPromotion:
+		e.awaitPromotion(ctx, log, d)
+	case healthPromoted:
+		if waiting {
+			e.promoted(ctx, log, d)
+		}
 	default:
 		// still waiting: nothing to do this cycle.
 	}
 }
 
+// awaitPromotion records, once, that the deployment waits for a person to
+// promote its canaries in Nomad, and tells them. The notification follows the
+// write (invariant 7) and is sent only by the call that wrote it, so a restart
+// or another cycle does not send it again.
+func (e *Engine) awaitPromotion(ctx context.Context, log *slog.Logger, d *store.Deployment) {
+	wrote, err := e.store.MarkAwaitingPromotion(ctx, d.ID)
+	if err != nil {
+		log.ErrorContext(ctx, "record the wait for a canary promotion", "error", err)
+		return
+	}
+	if !wrote {
+		return
+	}
+	log.InfoContext(ctx, "deployment waiting for canary promotion in Nomad")
+	fresh, err := e.store.GetDeployment(ctx, d.ID)
+	if err != nil {
+		log.ErrorContext(ctx, "reload deployment before notify", "error", err)
+		return
+	}
+	go e.notifier.Notify(ctx, fresh)
+}
+
+// promoted records that the canaries a deployment waited for are promoted: the
+// apply timeout counts again, from now, for the rest of the rollout.
+func (e *Engine) promoted(ctx context.Context, log *slog.Logger, d *store.Deployment) {
+	wrote, err := e.store.MarkPromoted(ctx, d.ID)
+	if err != nil {
+		log.ErrorContext(ctx, "record the promotion of the canaries", "error", err)
+		return
+	}
+	if wrote {
+		log.InfoContext(ctx, "canaries promoted in Nomad: the apply timeout counts again", "apply_timeout", e.applyTimeout)
+	}
+}
+
+// health is what applyHealth makes of the job version nops applied.
+type health int
+
+const (
+	healthWaiting health = iota // neither healthy nor failed: look again next cycle
+	healthHealthy
+	healthFailed
+	// healthAwaitingPromotion: the Nomad deployment is running, its canaries are
+	// placed and healthy, and it waits for a person to promote them.
+	healthAwaitingPromotion
+	// healthPromoted: the Nomad deployment is running and its canaries have been
+	// promoted; the rest of the rollout is Nomad's.
+	healthPromoted
+)
+
 // applyHealth decides whether the job version nops applied is healthy: via
 // its Nomad deployment when there is one tracking exactly that apply, else
 // via the allocations of that job version (a batch job, or an update stanza
-// that produces no Nomad deployment). Neither healthy nor failed means still
-// waiting.
-func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy, failed bool, reason string, err error) {
+// that produces no Nomad deployment). healthWaiting means neither healthy nor
+// failed; reason says why for healthFailed.
+func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (health, string, error) {
 	dep, err := e.nomad.LatestDeployment(ctx, d.Namespace, d.JobID)
 	if err != nil {
-		return false, false, "", err
+		return healthWaiting, "", err
 	}
 	if dep != nil && dep.JobModifyIndex == d.AppliedIndex {
 		switch dep.Status {
 		case api.DeploymentStatusSuccessful:
-			return true, false, "", nil
+			return healthHealthy, "", nil
 		case api.DeploymentStatusFailed, api.DeploymentStatusCancelled:
-			return false, true, fmt.Sprintf("nomad deployment %s: %s", dep.Status, dep.StatusDescription), nil
+			return healthFailed, fmt.Sprintf("nomad deployment %s: %s", dep.Status, dep.StatusDescription), nil
+		case api.DeploymentStatusRunning:
+			job, err := parseJobSpec(d)
+			if err != nil {
+				return healthWaiting, "", err
+			}
+			return canaryHealth(dep, job), "", nil
 		default:
-			return false, false, "", nil
+			return healthWaiting, "", nil
 		}
 	}
 
 	live, err := e.nomad.Job(ctx, d.Namespace, d.JobID)
 	if err != nil {
-		return false, false, "", err
+		return healthWaiting, "", err
 	}
 	// The allocations of the live version are ours only while the live job is
 	// still the one nops registered: after an outside edit (for instance while
 	// nops was down) they belong to someone else's spec.
 	if liveIndex := derefUint64(live.JobModifyIndex); liveIndex != d.AppliedIndex {
-		return false, true, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
+		return healthFailed, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
 			liveIndex, d.AppliedIndex), nil
 	}
 	if neverHasAllocations(live) {
-		return true, false, "", nil // registered at the applied index: nothing to wait for
+		return healthHealthy, "", nil // registered at the applied index: nothing to wait for
 	}
 	version := derefUint64(live.Version)
 	allocs, err := e.nomad.Allocations(ctx, d.Namespace, d.JobID)
 	if err != nil {
-		return false, false, "", err
+		return healthWaiting, "", err
 	}
 	var ours []nomadx.Alloc
 	for _, a := range allocs {
@@ -466,19 +537,68 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (healthy,
 		}
 	}
 	if len(ours) == 0 {
-		return false, false, "", nil // scheduling not done yet
+		return healthWaiting, "", nil // scheduling not done yet
 	}
 	for _, a := range ours {
 		if a.ClientStatus == "failed" || a.ClientStatus == "lost" {
-			return false, true, a.Failure, nil
+			return healthFailed, a.Failure, nil
 		}
 	}
 	for _, a := range ours {
 		if a.ClientStatus != "running" && a.ClientStatus != "complete" {
-			return false, false, "", nil // still starting
+			return healthWaiting, "", nil // still starting
 		}
 	}
-	return true, false, "", nil
+	return healthHealthy, "", nil
+}
+
+// canaryHealth is the verdict on a running Nomad deployment of the job nops
+// registered, for the groups that have canaries a person has to promote (a
+// group with auto_promote promotes them itself, and is Nomad's to finish):
+// healthAwaitingPromotion once every one of them has all its canaries placed
+// and healthy and none is promoted yet, healthPromoted once they are promoted,
+// else healthWaiting (the canaries are still starting, or there are none).
+func canaryHealth(dep *api.Deployment, job *api.Job) health {
+	manual := 0
+	promoted := 0
+	ready := 0
+	for _, g := range job.TaskGroups {
+		if g == nil || g.Name == nil {
+			continue
+		}
+		st := dep.TaskGroups[*g.Name]
+		if st == nil || st.DesiredCanaries == 0 || autoPromotes(job, g) {
+			continue
+		}
+		manual++
+		switch {
+		case st.Promoted:
+			promoted++
+		case len(st.PlacedCanaries) >= st.DesiredCanaries && st.HealthyAllocs >= st.DesiredCanaries:
+			ready++
+		}
+	}
+	switch {
+	case manual == 0:
+		return healthWaiting
+	case promoted == manual:
+		return healthPromoted
+	case ready+promoted == manual:
+		return healthAwaitingPromotion
+	}
+	return healthWaiting
+}
+
+// autoPromotes reports whether Nomad promotes the canaries of a group by
+// itself. The job comes canonicalized from Nomad, which merges the job-level
+// update into the group's, so the group's own is the one that counts; the
+// job's is only a fallback for a spec that was not canonicalized.
+func autoPromotes(job *api.Job, g *api.TaskGroup) bool {
+	u := g.Update
+	if u == nil {
+		u = job.Update
+	}
+	return u != nil && u.AutoPromote != nil && *u.AutoPromote
 }
 
 // neverHasAllocations reports whether a job has no allocation of its own to

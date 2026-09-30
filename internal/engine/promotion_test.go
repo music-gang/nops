@@ -1,0 +1,289 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/hashicorp/nomad/api"
+
+	"github.com/music-gang/nops/internal/store"
+)
+
+// A job with canary > 0 and auto_promote = false leaves its Nomad deployment
+// running until a person promotes the canaries. That wait is not a failure to
+// become healthy: the apply timeout does not run in it, and counts again from the
+// promotion (docs/design/engine-apply.md, decision 10).
+
+// canaryJob is a managed job whose one group "g" has a canary.
+func canaryJob(autoPromote bool, extra map[string]string) *api.Job {
+	g := taskGroup("g", 1, false)
+	canary := 1
+	g.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &autoPromote}
+	return managed("web", "auto", extra, g)
+}
+
+// canaryDeployment is the running Nomad deployment of the applied index 9.
+func canaryDeployment(state api.DeploymentState) *api.Deployment {
+	return &api.Deployment{
+		ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusRunning,
+		StatusDescription: "Deployment is running but requires manual promotion",
+		TaskGroups:        map[string]*api.DeploymentState{"g": &state},
+	}
+}
+
+// healthyCanary is a group whose canary is placed and healthy, not promoted.
+func healthyCanary() api.DeploymentState {
+	return api.DeploymentState{DesiredCanaries: 1, DesiredTotal: 1, PlacedCanaries: []string{"a1"}, HealthyAllocs: 1}
+}
+
+func promotedCanary() api.DeploymentState {
+	s := healthyCanary()
+	s.Promoted = true
+	return s
+}
+
+func (h *harness) waitingForPromotion(job *api.Job) *store.Deployment {
+	h.t.Helper()
+	h.engine.applyTimeout = time.Minute
+	d := h.applyingWithIndex("web", job, 9)
+	h.nomad.setDeployment("web", canaryDeployment(healthyCanary()))
+	return d
+}
+
+func TestCanaryWaitingForPromotionDoesNotFailAtTheApplyTimeout(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+
+	h.step(d)
+	if got := h.get(d.ID); got.State != store.StateApplying || got.PromotionWaitSince.IsZero() || !got.PromotedAt.IsZero() {
+		t.Fatalf("after the first step: %+v, want applying and waiting for a promotion", got)
+	}
+
+	// Days later, still nobody promoted: nothing is failing.
+	h.clock.Advance(72 * time.Hour)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying || got.Error != "" {
+		t.Fatalf("after the apply timeout: state %s (%q), want still applying", got.State, got.Error)
+	}
+}
+
+func TestCanaryWaitIsNotifiedOnceAndLogged(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+
+	for i := 0; i < 3; i++ {
+		h.step(h.get(d.ID))
+	}
+	h.notifier.waitFor(t, 1)
+	time.Sleep(50 * time.Millisecond) // a second one would be on its way
+	calls := h.notifier.waitFor(t, 1)
+	if len(calls) != 1 || calls[0].ID != d.ID || calls[0].State != store.StateApplying || calls[0].PromotionWaitSince.IsZero() {
+		t.Fatalf("notifications = %+v, want exactly one, of the applying deployment already waiting", calls)
+	}
+
+	// A restart does not tell them again.
+	h.restart(&fakeHooks{})
+	h.step(h.get(d.ID))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(h.notifier.waitFor(t, 1)); n != 1 {
+		t.Errorf("%d notifications after a restart, want still 1", n)
+	}
+
+	evs, err := h.store.Events(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := evs[len(evs)-1]
+	if last.From != store.StateApplying || last.To != store.StateApplying || last.Message != "waiting for canary promotion in Nomad" {
+		t.Errorf("last event = %+v, want the applying -> applying wait", last)
+	}
+}
+
+func TestCanaryPromotionRestartsTheApplyTimeout(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+	h.step(d)
+	h.clock.Advance(time.Hour) // the wait, way past the timeout
+
+	// Promoted: the rest of the rollout is still running, the timeout counts from now.
+	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+	h.step(h.get(d.ID))
+	got := h.get(d.ID)
+	if got.State != store.StateApplying || got.PromotedAt.IsZero() {
+		t.Fatalf("after the promotion: %+v, want applying with promoted_at set", got)
+	}
+
+	h.clock.Advance(59 * time.Second)
+	h.step(got)
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("state = %s (%s) 59s after the promotion, want applying", got.State, got.Error)
+	}
+
+	h.clock.Advance(2 * time.Second)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateFailed {
+		t.Fatalf("state = %s a minute after the promotion, want failed: the rollout that follows has the apply timeout", got.State)
+	}
+}
+
+func TestCanaryPromotedThenSuccessfulCompletes(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, map[string]string{"nops_post_hook": "web-smoke"}))
+	h.step(d)
+	h.clock.Advance(time.Hour)
+
+	h.nomad.setDeployment("web", &api.Deployment{
+		ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusSuccessful,
+		TaskGroups: map[string]*api.DeploymentState{"g": func() *api.DeploymentState { s := promotedCanary(); return &s }()},
+	})
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StatePostHook {
+		t.Fatalf("state = %s, want post_hook: the post-hooks run once the canaries are promoted and healthy", got.State)
+	}
+}
+
+func TestCanaryWaitEndsWhenNomadFailsTheDeployment(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+	h.step(d)
+
+	h.nomad.setDeployment("web", &api.Deployment{
+		ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusFailed, StatusDescription: "Failed due to progress deadline",
+	})
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateFailed {
+		t.Fatalf("state = %s, want failed: someone failed the Nomad deployment", got.State)
+	}
+}
+
+func TestCanaryWaitSurvivesANomadError(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+	h.step(d)
+	h.clock.Advance(time.Hour)
+
+	h.nomad.deployErr[nsKey(testNamespace, "web")] = errors.New("nomad is down")
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("state = %s (%s), want applying: an error while waiting for a person is retried, not a failure", got.State, got.Error)
+	}
+}
+
+// What is not a wait for a person keeps the apply timeout.
+func TestCanaryThatIsNotWaitingForAPersonStillTimesOut(t *testing.T) {
+	starting := healthyCanary()
+	starting.HealthyAllocs = 0
+	for name, tt := range map[string]struct {
+		job *api.Job
+		dep *api.Deployment
+	}{
+		"canary still starting": {canaryJob(false, nil), canaryDeployment(starting)},
+		"auto_promote":          {canaryJob(true, nil), canaryDeployment(healthyCanary())},
+		"no canary":             {canaryJob(false, nil), canaryDeployment(api.DeploymentState{DesiredTotal: 1})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.engine.applyTimeout = time.Minute
+			d := h.applyingWithIndex("web", tt.job, 9)
+			h.nomad.setDeployment("web", tt.dep)
+
+			h.step(d)
+			if got := h.get(d.ID); got.State != store.StateApplying || !got.PromotionWaitSince.IsZero() {
+				t.Fatalf("after the first step: %+v, want applying and not waiting for a person", got)
+			}
+			if n := len(h.notifier.calls); n != 0 {
+				t.Errorf("%d notifications, want none", n)
+			}
+
+			h.clock.Advance(2 * time.Minute)
+			h.step(h.get(d.ID))
+			if got := h.get(d.ID); got.State != store.StateFailed {
+				t.Fatalf("state = %s, want failed at the apply timeout", got.State)
+			}
+		})
+	}
+}
+
+// A restart in the middle of the wait, or after the promotion, picks up where
+// it was: the first apply cycle neither fails the wait nor forgets the promotion.
+func TestCanaryWaitAcrossARestart(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, nil))
+	h.step(d)
+	h.clock.Advance(time.Hour)
+
+	e := h.restart(&fakeHooks{})
+	e.applyTimeout = time.Minute
+	e.applyStep(context.Background(), h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("state = %s after a restart in the wait, want applying", got.State)
+	}
+
+	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+	e.applyStep(context.Background(), h.get(d.ID))
+	h.restart(&fakeHooks{}).applyTimeout = time.Minute
+	h.clock.Advance(30 * time.Second)
+	h.engine.applyStep(context.Background(), h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying || got.PromotedAt.IsZero() {
+		t.Fatalf("state = %s, promoted_at %v after a restart after the promotion, want applying, counting from the promotion", got.State, got.PromotedAt)
+	}
+}
+
+func TestCanaryHealth(t *testing.T) {
+	two := func() *api.Job {
+		a, b := taskGroup("a", 1, false), taskGroup("b", 1, false)
+		canary := 1
+		yes, no := true, false
+		a.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &no}
+		b.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &yes}
+		return managed("web", "auto", nil, a, b)
+	}
+	healthy, promoted := healthyCanary(), promotedCanary()
+	starting := healthyCanary()
+	starting.PlacedCanaries = nil
+
+	for name, tt := range map[string]struct {
+		job    *api.Job
+		groups map[string]api.DeploymentState
+		want   health
+	}{
+		"healthy, not promoted":        {canaryJob(false, nil), map[string]api.DeploymentState{"g": healthy}, healthAwaitingPromotion},
+		"promoted":                     {canaryJob(false, nil), map[string]api.DeploymentState{"g": promoted}, healthPromoted},
+		"not placed yet":               {canaryJob(false, nil), map[string]api.DeploymentState{"g": starting}, healthWaiting},
+		"group unknown to the deploy":  {canaryJob(false, nil), map[string]api.DeploymentState{}, healthWaiting},
+		"the job's own update block":   {jobWithJobLevelCanary(), map[string]api.DeploymentState{"g": healthy}, healthAwaitingPromotion},
+		"only the manual group counts": {two(), map[string]api.DeploymentState{"a": healthy, "b": {DesiredCanaries: 1}}, healthAwaitingPromotion},
+		"one group promoted, one not":  {twoManual(), map[string]api.DeploymentState{"a": promoted, "b": healthy}, healthAwaitingPromotion},
+		"one group still starting":     {twoManual(), map[string]api.DeploymentState{"a": healthy, "b": starting}, healthWaiting},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dep := &api.Deployment{Status: api.DeploymentStatusRunning, TaskGroups: map[string]*api.DeploymentState{}}
+			for g, s := range tt.groups {
+				s := s
+				dep.TaskGroups[g] = &s
+			}
+			if got := canaryHealth(dep, tt.job); got != tt.want {
+				t.Errorf("canaryHealth = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// jobWithJobLevelCanary has its update block on the job and none on its group,
+// as a spec that was not canonicalized would.
+func jobWithJobLevelCanary() *api.Job {
+	canary, no := 1, false
+	j := managed("web", "auto", nil, taskGroup("g", 1, false))
+	j.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &no}
+	return j
+}
+
+func twoManual() *api.Job {
+	a, b := taskGroup("a", 1, false), taskGroup("b", 1, false)
+	canary, no := 1, false
+	a.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &no}
+	b.Update = &api.UpdateStrategy{Canary: &canary, AutoPromote: &no}
+	return managed("web", "auto", nil, a, b)
+}

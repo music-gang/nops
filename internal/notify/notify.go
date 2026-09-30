@@ -43,15 +43,22 @@ type Endpoint struct {
 // Event is what a notification says. It is also the body of the generic
 // webhook.
 type Event struct {
-	DeploymentID string    `json:"deployment_id"`
-	Job          string    `json:"job"`
-	Namespace    string    `json:"namespace"`
-	State        string    `json:"state"`
-	Error        string    `json:"error"`
-	Commit       string    `json:"commit"`
-	URL          string    `json:"url"` // link to the deployment; empty without a public URL
-	Time         time.Time `json:"time"`
+	DeploymentID string `json:"deployment_id"`
+	Job          string `json:"job"`
+	Namespace    string `json:"namespace"`
+	State        string `json:"state"`
+	// Waiting says what an applying deployment waits for a person to do:
+	// WaitingCanaryPromotion. Empty for every other notification.
+	Waiting string    `json:"waiting,omitempty"`
+	Error   string    `json:"error"`
+	Commit  string    `json:"commit"`
+	URL     string    `json:"url"` // link to the deployment; empty without a public URL
+	Time    time.Time `json:"time"`
 }
+
+// WaitingCanaryPromotion is the Waiting of a deployment whose Nomad deployment
+// waits for a person to promote its canaries.
+const WaitingCanaryPromotion = "canary_promotion"
 
 // request is what an adapter sends.
 type request struct {
@@ -113,6 +120,9 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment) {
 		Commit:       d.CommitSHA,
 		Time:         d.UpdatedAt.UTC(),
 	}
+	if d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero() {
+		e.Waiting = WaitingCanaryPromotion
+	}
 	if n.publicURL != "" {
 		e.URL = n.publicURL + "/deployments/" + url.PathEscape(d.ID)
 	}
@@ -158,6 +168,9 @@ func (n *Notifier) send(ctx context.Context, s sender, e Event) error {
 
 // title is the one-line summary used by the readable adapters.
 func title(e Event) string {
+	if e.Waiting == WaitingCanaryPromotion {
+		return e.Job + " waiting for canary promotion"
+	}
 	switch store.State(e.State) {
 	case store.StatePendingApproval:
 		return e.Job + " waiting for approval"
