@@ -8,7 +8,7 @@ cluster, personal use: **no overengineering**.
 
 This file holds **only what an agent needs on top of the docs**. How Nops
 works is in [`docs/`](docs/README.md); how anyone contributes (the flow of a
-change, commits, PRs, the changelog, tests, releases, Go conventions) is in
+change, commits, PRs, tests, releases, Go conventions) is in
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 [`docs/development.md`](docs/development.md). Follow them: this file does not
 repeat them, and read the relevant page before extending a part.
@@ -23,7 +23,7 @@ repeat them, and read the relevant page before extending a part.
   [`docs/development.md`](docs/development.md): tests
   ([what needs which](docs/development.md#what-needs-which-tests)), docs in
   the same commit ([which page](docs/development.md#if-you-change-x-update-y)),
-  the [changelog](docs/development.md#changelog) line, the terms of
+  the terms of
   [`docs/glossary.md`](docs/glossary.md) and of
   [the code](docs/development.md#terms-used-in-the-code), the
   [Go conventions](docs/development.md#go-conventions), fail loud
@@ -126,6 +126,6 @@ internal/redact/       removal of secret values from the plan diff
 internal/version/      the build's version (release tag via -ldflags -X)
 tests/integration/     tests against nomad agent -dev (build tag `integration`)
 examples/              example HCL jobs and hooks
-scripts/               maintainer tooling (release.sh, changelog.sh) and their bash tests
+scripts/               maintainer tooling (release.sh) and its bash tests
 docs/                  documentation (index in docs/README.md)
 ```

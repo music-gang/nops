@@ -1,8 +1,7 @@
 name: PR title
 
 # main is squash-merge only, so the PR title becomes the commit subject on main.
-# Keep it in Angular style: type(scope): subject. The title also says whether
-# the PR needs a line in CHANGELOG.md (the changelog job below).
+# Keep it in Angular style: type(scope): subject.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
@@ -39,28 +38,3 @@ jobs:
             The subject "{subject}" in the PR title must start with a lowercase
             letter or digit, must not end with a period, and must be at most 72
             characters long.
-
-  # A feat, a fix or a breaking change adds its line to CHANGELOG.md
-  # (docs/development.md#changelog). pull_request_target checks out the base
-  # branch, never the PR's code: the script that runs is main's, and the PR's
-  # patch is only read as text.
-  changelog:
-    name: changelog
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: CHANGELOG.md has the PR's line
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TITLE: ${{ github.event.pull_request.title }}
-          NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/files" \
-            --jq '.[] | select(.filename == "CHANGELOG.md") | .patch // ""' >"$RUNNER_TEMP/patch"
-          scripts/changelog.sh check-pr "$TITLE" <"$RUNNER_TEMP/patch"

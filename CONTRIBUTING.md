@@ -11,9 +11,6 @@ Thanks for your interest. The full guide is in
 3. Branch from `main` (`type/short-description`, e.g. `feat/pause-job`).
    `main` is protected: all changes go through a pull request.
 4. Add tests for every behaviour change and update the docs in the same PR.
-   A `feat`, a `fix` or a breaking change also adds its line under
-   `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone
-   running Nops ([how](docs/development.md#changelog)).
 5. Make sure the checks pass
    ([commands](docs/development.md#commands) and
    [what "done" means](docs/development.md#when-a-piece-of-work-is-done)).
