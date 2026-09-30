@@ -12,7 +12,7 @@ import (
 
 // TestJobPathWithBasePath is the simplest check that a base path is baked
 // into every computed link: the templates only prepend {{.Base}} to their
-// own hard-coded ones (docs/dashboard.md#base-path).
+// own hard-coded ones (docs/running-nops.md#under-a-sub-path).
 func TestJobPathWithBasePath(t *testing.T) {
 	s := &server{basePath: "/nops"}
 	if got := s.jobPath("default", "web"); got != "/nops/jobs/default/web" {
@@ -50,7 +50,7 @@ func newBasePathTestServer(t *testing.T) (http.Handler, *Auth) {
 }
 
 // TestBasePathStripsPrefixFromIncomingRequests covers the whole mechanism a
-// sub path deployment needs (docs/dashboard.md#base-path): the prefix is
+// sub path deployment needs (docs/running-nops.md#under-a-sub-path): the prefix is
 // stripped from incoming requests, /healthz stays reachable with or without
 // it, and every generated link, form action and static asset address in the
 // page carries it.

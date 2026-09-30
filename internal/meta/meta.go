@@ -87,7 +87,7 @@ type Config struct {
 	// IsHook marks a job with nops_role = "hook".
 	IsHook bool
 	// NotifyCompleted opts the job into a notification when a deployment of it
-	// becomes completed (nops_notify_completed = "true"; docs/error-handling.md#notifications).
+	// becomes completed (nops_notify_completed = "true"; docs/logs-and-notifications.md#notifications).
 	NotifyCompleted bool
 	// SyncWindow is when Nops may deploy the job on its own
 	// (nops_sync_window + nops_sync_window_duration); nil when not declared or

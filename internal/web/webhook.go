@@ -17,7 +17,7 @@ const webhookMaxBody = 1 << 20 // 1 MiB
 // webhook authenticates a git forge's push notification and asks the
 // watcher for an out-of-turn poll. It never inspects the payload otherwise:
 // a valid signature is enough to mean "something changed, go look"
-// (docs/dashboard.md#git-webhook). Each forge signs differently:
+// (docs/running-nops.md#the-git-webhook). Each forge signs differently:
 //   - GitHub:  X-Hub-Signature-256: sha256=<hex hmac>
 //   - Gitea:   X-Gitea-Signature:   <hex hmac>            (same construction)
 //   - GitLab:  X-Gitlab-Token:      <the secret itself>

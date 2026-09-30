@@ -1,5 +1,9 @@
 # Configuration
 
+Every option of Nops, for reference. How to run it on a cluster (the Nomad
+job, the token, a reverse proxy, the login, the webhook) is in
+[running Nops](running-nops.md).
+
 Nops is configured with command-line flags or environment variables. The
 source of truth is [`internal/config`](../internal/config/config.go): this
 page and that package must be updated together (tests check that every
@@ -75,77 +79,12 @@ variable and default are the option's; and the same for the secrets table).
 |---|---|---|---|
 | `-nomad-addr` | `NOPS_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad HTTP API address (`http://` or `https://`). |
 | `-nomad-ui-url` | `NOPS_NOMAD_UI_URL` | none | The address a person opens the Nomad UI at in a browser, e.g. `https://nomad.example.com`, or with a sub path when Nomad sits behind a proxy under one (`https://infra.example.com/nomad`). The dashboard builds its "Open in Nomad" links on it ([dashboard](dashboard.md#links-into-the-nomad-ui)). Unset: **no link**. It is never taken from `-nomad-addr`: that is the address Nops itself uses (`http://127.0.0.1:4646`, `http://nomad.service.consul:4646`), often not one a browser can reach, so where the two differ, which is when this option is needed, a link built from it would be a broken one, and a missing link is better than a wrong one. An absolute `http://` or `https://` URL, checked like `-public-url`. |
-| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces Nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
-| `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the Nomad ACL token. Unset: no token (ACLs disabled). |
+| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated namespaces Nops manages: jobs and hook jobs, each in the namespace its HCL declares (see [Namespaces](running-nops.md#namespaces)). Names are trimmed, a repeated one counts once, the list cannot be empty. |
+| `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the Nomad ACL token. Unset: no token (ACLs disabled). What the token needs: [the Nomad token](running-nops.md#the-nomad-token). |
 | `-nomad-ca-cert` | `NOPS_NOMAD_CA_CERT` | none | PEM file of the CA that signed the Nomad server certificate. |
 | `-nomad-client-cert` | `NOPS_NOMAD_CLIENT_CERT` | none | PEM client certificate for mTLS. Set together with the key. |
 | `-nomad-client-key` | `NOPS_NOMAD_CLIENT_KEY` | none | PEM client key for mTLS. Set together with the certificate. |
 | `-nomad-tls-skip-verify` | `NOPS_NOMAD_TLS_SKIP_VERIFY` | `false` | Do not verify the server certificate. Insecure: for testing only. |
-
-### Namespaces
-
-One Nops instance manages every namespace of `-nomad-namespaces`, with one
-token. A job belongs to the namespace its HCL declares (`namespace = "apps"`;
-Nomad makes it `default` when there is none), and a hook is looked up in the
-namespace of the job that declares it ([hooks](hooks.md#namespace)). A job in a
-namespace that is not on the list is an ERROR in the log and is not managed;
-so a job with no `namespace` is refused unless `default` is listed.
-
-The list is explicit on purpose: the token's ACL says what Nops *can* do, the
-list says what it *may* do, and pushing to git must not be enough to reach a
-namespace nobody named. Taking a namespace off the list leaves its deployments
-and its jobs in Nomad as they are: Nops stops looking at them, it does not
-clean up.
-
-The old `-nomad-namespace` / `NOPS_NOMAD_NAMESPACE` no longer exists: setting
-it is an error, not a silent default.
-
-### Token ACL
-
-The token needs, in each listed namespace, `read-job`, `list-jobs`,
-`submit-job` (plan, register and the deregister of hook revisions) and
-`dispatch-job` (hooks). On top of that, every **volume** a job or a hook mounts
-needs a rule of its own, because Nomad checks volumes when a job is registered:
-
-| The job declares | The token needs |
-|---|---|
-| a host volume, read-write (no `read_only`) | `host_volume "<source>"` with `policy = "write"` |
-| a host volume with `read_only = true` | `host_volume "<source>"` with `policy = "read"` (`write` also works) |
-| a CSI volume | `csi-mount-volume` in the namespace **and** `plugin { policy = "read" }`: either alone is refused |
-| a task with `csi_plugin` | `csi-register-plugin` in the namespace |
-
-`policy = "read"` grants `mount-readonly` only, `write` grants both mounts, so a
-hook that mounts read-only a volume the token can already write needs no rule of
-its own. The rule is per volume: a token without it is refused at register with
-`register job <id>: Unexpected response code: 403 (Permission denied)`, while
-`Plan` passes, since it checks no volume. The deployment stays `applying` until
-`-apply-timeout`, then fails ([engine-apply](design/engine-apply.md)).
-`TestTokenACLForVolumes` checks every row of the table, and that `Plan` passes
-without them.
-
-```hcl
-namespace "default" {
-  capabilities = ["list-jobs", "read-job", "submit-job", "dispatch-job"]
-}
-
-host_volume "db-data" {
-  policy = "write"
-}
-```
-
-A name in a policy may hold only letters, digits, `-` and `*`, so a volume
-declared as `nomad_backup_data` cannot be written as it is. Match it with a
-glob (`host_volume "nomad*backup*data"`: `*` stands for `_` too) or name the
-volume with `-` in the client configuration, the jobs and the policy
-(`TestACLPolicyVolumeNames`).
-The dashboard's [Nomad panel](dashboard.md#the-nomad-panel) reads with
-`list-jobs` and `read-job` (`TestNomadPanelReadsWithReadJob`), and its *Promote*
-button, which promotes the canaries of a Nomad deployment, needs `submit-job`:
-a token with `list-jobs`, `read-job` and `submit-job` (and no `dispatch-job`)
-promotes, and one with `list-jobs` and `read-job` only is refused with `403
-(Permission denied)` (`TestPromoteNeedsSubmitJob`). Without it the button fails, the request stays on the
-deployment's timeline, and the canaries stay unpromoted.
-See Nomad's [ACL policy reference](https://developer.hashicorp.com/nomad/docs/secure/acl/policies).
 
 ## Git
 
@@ -167,8 +106,8 @@ supported. A `file://` URL works only where a `git` executable is installed
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
-| `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](dashboard.md#git-webhook). |
-| `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (Nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. A path in it, e.g. `https://domain.example.org/nops`, becomes the dashboard's **base path** (see [dashboard](dashboard.md#base-path)): there is no separate flag for it. Left unset, it becomes `http://<host>:<port>` from `-listen-addr`, `localhost` in place of an empty or wildcard host (`0.0.0.0`, `::`) — meant for `-auth-mode=basic` with no reverse proxy; with `-auth-mode=oidc` set it explicitly to what the browser and the provider's registered redirect URI actually need, since `localhost` is essentially never that. |
+| `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](running-nops.md#the-git-webhook). |
+| `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (Nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. A path in it, e.g. `https://domain.example.org/nops`, becomes the dashboard's **base path** (see [dashboard](running-nops.md#under-a-sub-path)): there is no separate flag for it. Left unset, it becomes `http://<host>:<port>` from `-listen-addr`, `localhost` in place of an empty or wildcard host (`0.0.0.0`, `::`) — meant for `-auth-mode=basic` with no reverse proxy; with `-auth-mode=oidc` set it explicitly to what the browser and the provider's registered redirect URI actually need, since `localhost` is essentially never that. |
 | `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | How the dashboard logs people in: `oidc` or `basic`. The two are mutually exclusive — only the options of the chosen one may be set, Nops refuses to start otherwise (a leftover flag from switching modes is caught, not silently ignored). See [authentication](dashboard.md#authentication). |
 
 ### OIDC (`-auth-mode=oidc`)
@@ -200,7 +139,7 @@ personal-use tool, see [dashboard](dashboard.md#local-users--auth-modebasic).
 
 ## Notifications
 
-Each [notification adapter](error-handling.md#notifications) has its own
+Each [notification adapter](logs-and-notifications.md#notifications) has its own
 options and is on when its URL is set. Several can be on at once: each
 receives every notification. None set: notifications are off.
 
@@ -237,88 +176,3 @@ it, so use a topic nobody can guess, or your own server with a token.
 The timeout of a hook is not here: it is set on the hook job, with
 `nops_timeout` (see [meta keys](meta-keys.md)).
 
-## Running Nops as a Nomad job
-
-The release image is `ghcr.io/music-gang/nops` (see
-[development](development.md#releasing) for its tags). It runs as the
-`nonroot` user (uid 65532), so the volume holding the database must be
-writable by that uid. Pin a minor (`0.3`) or an exact version (`0.3.1`), not
-`latest`: while the major is 0 a new minor may break the configuration or the
-database, and `latest` would take it on the next restart.
-
-A group running it. The tokens come from Nomad Variables through a
-`template`, and the variables point at the rendered files:
-
-```hcl
-group "nops" {
-  network {
-    port "http" { to = 8080 }
-  }
-
-  # A host volume (or a CSI one) for the SQLite database and its -wal/-shm
-  # files, writable by uid 65532.
-  volume "nops-data" {
-    type   = "host"
-    source = "nops-data"
-  }
-
-  service {
-    name = "nops"
-    port = "http"
-    check {
-      type     = "http"
-      path     = "/healthz"
-      interval = "10s"
-      timeout  = "2s"
-    }
-  }
-
-  task "nops" {
-    driver = "docker"
-
-    config {
-      image = "ghcr.io/music-gang/nops:0.1"
-      ports = ["http"]
-    }
-
-    volume_mount {
-      volume      = "nops-data"
-      destination = "/data"
-    }
-
-    template {
-      destination = "secrets/git-token"
-      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .git_token }}{{ end }}"
-      change_mode = "restart"
-    }
-
-    template {
-      destination = "secrets/discord-url"
-      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .discord_url }}{{ end }}"
-      change_mode = "restart"
-    }
-
-    template {
-      destination = "secrets/oidc-secret"
-      data        = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .oidc_client_secret }}{{ end }}"
-      change_mode = "restart"
-    }
-
-    env {
-      NOPS_GIT_URL                 = "https://git.example.com/ops/jobs.git"
-      NOPS_GIT_TOKEN_FILE          = "${NOMAD_SECRETS_DIR}/git-token"
-      NOPS_NOTIFY_DISCORD_URL_FILE = "${NOMAD_SECRETS_DIR}/discord-url"
-      NOPS_PUBLIC_URL              = "https://nops.example.com"
-      NOPS_OIDC_ISSUER_URL         = "https://auth.example.com/application/o/nops/"
-      NOPS_OIDC_CLIENT_ID          = "nops"
-      NOPS_OIDC_CLIENT_SECRET_FILE = "${NOMAD_SECRETS_DIR}/oidc-secret"
-      NOPS_OIDC_ALLOWED_GROUPS     = "nops-approvers"
-      NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
-      NOPS_DB_PATH                 = "/data/nops.db"
-    }
-  }
-}
-```
-
-`change_mode = "restart"` restarts Nops when a secret changes, since secrets
-are read only at startup.

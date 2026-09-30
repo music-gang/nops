@@ -132,7 +132,7 @@ type Options struct {
 	// mounts it under) and prepended to every generated URL: redirects,
 	// cookie paths, template links and static asset addresses. There is no
 	// separate flag for it: config.Config reads it from -public-url's own
-	// path. See docs/dashboard.md#base-path.
+	// path. See docs/running-nops.md#under-a-sub-path.
 	BasePath string
 
 	Log *slog.Logger
@@ -204,7 +204,7 @@ func New(o Options) (http.Handler, error) {
 // handler wraps the routes with the security headers and, if the dashboard
 // is served under a base path, strips it from every incoming request before
 // they reach the routes below, which are registered at their bare paths:
-// docs/dashboard.md#base-path has the reasoning. /healthz stays reachable at
+// docs/running-nops.md#under-a-sub-path has the reasoning. /healthz stays reachable at
 // the bare path too, without the prefix, since an orchestrator's health
 // check hits the task's own port directly.
 func (s *server) handler() http.Handler {

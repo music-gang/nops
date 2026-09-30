@@ -24,7 +24,7 @@
   `nomad agent -dev`. If `NOPS_TEST_NOMAD_ADDR` is not set they are skipped
   (skip, not fail).
 - What the Nomad token needs (`acl_test.go`, the tables of
-  [token ACL](configuration.md#token-acl)) runs against a second dev agent with
+  [token ACL](running-nops.md#the-nomad-token)) runs against a second dev agent with
   ACLs enabled: `NOPS_TEST_NOMAD_ACL_ADDR` is its address and
   `NOPS_TEST_NOMAD_ACL_TOKEN` a management token (the bootstrap one). The tests
   create their own policies and tokens and delete them; without the two
@@ -171,9 +171,11 @@ which place.
 | Apply loop (approve, reject, register, health, timeouts, retry) | `internal/engine` **and** `design/engine-apply.md` |
 | Which files are read from git, the git watcher | `internal/gitwatch` **and** `design/gitwatch.md` |
 | A dashboard page, route, sync state or login | `internal/web` **and** `dashboard.md` |
-| What is logged, or which transition notifies | `error-handling.md` (the one place that says it: other pages link to it) |
+| What is logged, or which transition notifies | `logs-and-notifications.md` (the one place that says it: other pages link to it) |
+| What running Nops on a cluster needs (the Nomad job, the token's ACL, a proxy, the OIDC client, the git webhook) | `running-nops.md` (its token table is checked by `TestTokenACLForVolumes`) |
+| The first steps on one machine | `getting-started.md`, run again by hand when a step it shows changes |
 | Flag or env var | `internal/config` **and** `configuration.md` (its tables are tested against the options: name, variable, default) |
-| Notification adapter or payload | `internal/notify` **and** `error-handling.md#notifications` |
+| Notification adapter or payload | `internal/notify` **and** `logs-and-notifications.md#notifications` |
 | A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
 | A page or a heading is renamed or moved | every link to it (`TestRelativeLinksResolve` fails otherwise) |
 | The Nomad version CI tests against | `ci.yml` (`NOMAD_VERSION`, `NOMAD_SHA256`) **and** the README's *Nomad compatibility* (`docs/docs_test.go` fails otherwise); steps in [Nomad version](#nomad-version) |
@@ -519,6 +521,91 @@ public.
 - One logical change per PR. Code and the docs describing it go in the
   **same** PR.
 
+## The dashboard's code
+
+How the pages are built; what they show is in [dashboard](dashboard.md).
+
+### Look and technology
+
+No JS framework, no build step: `html/template` renders every page (all
+templates parsed once at startup, so a broken one fails loud rather than on
+the first request), plain CSS carries the design, and
+[htmx](https://htmx.org) is the only script, vendored under `/static` rather
+than loaded from a CDN. Every action works as a plain form post without it;
+htmx adds `hx-boost` (page navigation without a full reload) and the polling
+below. The CSP is `script-src 'self'; style-src 'self'` — there is no inline
+script or style to allow.
+
+The logo is the ship of the logo of the [README](../README.md) (a planet with
+the ship, `docs/assets/logo.webp`, which the dashboard does not embed). The
+ship alone is exported as PNGs under `internal/web/static`: the header mark
+(`logo-96x96.png`, shown at 40px, the only thing in the header's corner: no name
+beside it), the mark above the login form (`logo-192x192.png`, shown at 96px), the favicons (`favicon-16x16.png`,
+`favicon-32x32.png`) and the touch icon (`apple-touch-icon.png`, 180px). Every
+page links the favicons and the touch icon, the login page too, through the same
+`asset` function as the stylesheet. The login page is flat, in the manner of GitHub's:
+no card, the mark, the title "Sign in to Nops" and the form on the page's own
+background.
+
+Overview, Jobs, Job and Activity poll their own address every 5s and swap in
+only the region a full re-render of the same page would show
+(`hx-select="#live"`, `hx-swap="outerHTML"`; the request keeps a page's own
+`?state=` filter, since it is part of `.Self`), so a new deployment, a changed
+sync state or the result of *Fetch now* shows up without a reload. Rendering
+the whole page again costs nothing here (local SQLite and the engine's
+in-memory state), so there is no dedicated fragment endpoint for them, unlike
+the Deployment page's `/status` above. The Job page uses three such regions
+(`#live-head`, `#live-deployments` and `#live-details`) so the drift diff
+between them, whose `<details>` nodes a person may have opened or closed,
+is never re-rendered by the poll.
+
+Each of these regions carries `hx-disinherit="hx-select hx-swap"`: `hx-boost`
+turns every link and form inside it (a job's link, *Retry*, *Fetch now*) into
+its own boosted request, and htmx attributes are inherited by children unless
+told otherwise, so without it a boosted link would pick up the region's own
+`hx-select`/`hx-swap` and apply them to *its own* navigation — selecting
+`#live` out of whatever page it lands on (blank, if that page has no such
+element) and swapping it in with `outerHTML` over the whole body (dropping the
+header and the page's width). See the [decision log](design/decisions.md),
+2026-09-25.
+
+Static files are cached for a day, so the templates link them through the
+`asset` function, which adds a version taken from the file's own bytes
+(`/static/app.css?v=<10 hex digits of its SHA-256>`): a changed file has a new
+address and a browser never shows the new pages with the old stylesheet, while
+an unchanged one stays cached. The version is computed once per file from the
+embedded copy; a file that does not exist makes the page fail loud (a logged
+500) instead of linking a 404. The login page uses it too.
+
+The look reads [GitHub's Primer](https://primer.style): its color tokens for
+light and dark (the theme follows the system), a 14px base, 6px corners and
+system font stacks, so nothing is downloaded. It is built for scanning, not
+reading: **one thing per line**, cut with an ellipsis rather than wrapped, with
+the full value on hover. On a narrow screen (768px or less) a row becomes two
+lines on purpose (the state and name, then the detail), secondary columns are
+hidden, and a wide diff scrolls inside its own box, never the page.
+Deployment states map to one of five colors used consistently across every
+page: pending (amber), running — `pre_hook`/`applying`/`post_hook` — (blue),
+completed (green), failed (red), rejected/superseded (muted grey).
+
+The plan diff renders Nomad's `JobDiff` recursively (job → task groups →
+tasks → objects/fields) as nested `<details>`, open only where something
+changed; a redacted value (`<redacted>`) renders as a pill rather than plain
+text, so it reads as "a secret changed here" at a glance. Above it, a summary
+counts the field changes (added, edited, removed) and says in which job, task
+group or task they are; a redacted field counts like any other.
+
+### Writes and CSRF
+
+A request that changes state (`POST`) is refused with 403 when the browser says
+it comes from another origin (`Sec-Fetch-Site`, or `Origin` against `Host`:
+Go's `http.CrossOriginProtection`), on top of the `SameSite=Lax` cookie, for
+both login backends alike — this includes `POST /auth/login` itself,
+against session-fixation-style login CSRF, not only the dashboard's own
+writes. There is no CSRF token to carry through the pages. Requests with
+neither header (a `curl`) are allowed, and still need the session cookie
+where one is required.
+
 ## Go conventions
 
 - Language: code, comments, docs, examples and commit messages are in English.
@@ -526,6 +613,9 @@ public.
 - Package names are short, singular, without underscores. No `util`/`common`
   packages. Identifiers use the terms in [vocabulary](vocabulary.md).
 - `context.Context` is always the first argument of any function that does I/O.
+- Every state transition goes through a single store function
+  (`Store.Transition`), which updates `deployments` and writes `events` in the
+  same transaction; there are no "manual" transitions.
 - Errors: wrap with `fmt.Errorf("dispatch hook %s: %w", id, err)`. Sentinels or
   types only when the caller needs to tell them apart (e.g. `ErrCASConflict`,
   `ErrHookTimeout`).
@@ -533,7 +623,7 @@ public.
   what it needs from Nomad and from the store.
 - No `init()` with side effects and no global state. Time is injected
   (`func() time.Time`) so timeouts are testable.
-- Logging: structured `log/slog` (keys in [error-handling](error-handling.md)).
+- Logging: structured `log/slog` (keys in [logs and notifications](logs-and-notifications.md)).
 - Every flag has its `NOPS_<NAME>` env var. All intervals and timeouts are
   configurable, nothing hardcoded.
 - Dependencies: before writing a library, look for an established package

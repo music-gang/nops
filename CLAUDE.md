@@ -26,7 +26,7 @@ repeat them, and read the relevant page before extending a part.
   the [changelog](docs/development.md#changelog) line, the terms of
   [`docs/vocabulary.md`](docs/vocabulary.md), the
   [Go conventions](docs/development.md#go-conventions), fail loud
-  ([`docs/error-handling.md`](docs/error-handling.md)), established packages
+  ([`docs/philosophy.md#fail-loud`](docs/philosophy.md#fail-loud)), established packages
   before a new library, English everywhere.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it
   aligned with `docs/meta-keys.md`.

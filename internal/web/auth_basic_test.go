@@ -251,7 +251,7 @@ func TestBasicAuthLogout(t *testing.T) {
 	}
 }
 
-// TestBasicAuthLoginFlowWithBasePath covers docs/dashboard.md#base-path on
+// TestBasicAuthLoginFlowWithBasePath covers docs/running-nops.md#under-a-sub-path on
 // the local-users backend: the session cookie's Path and the redirects after
 // login and after Require carry the base path, while the routes themselves
 // stay at their bare address (the base path is stripped before the request

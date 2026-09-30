@@ -16,12 +16,14 @@ New here? Start with the [project README](../README.md).
 - [state-machine.md](state-machine.md): states, transitions, schema, recovery.
 
 **Using it**
+- [getting-started.md](getting-started.md): a first deployment on one machine, step by step.
+- [running-nops.md](running-nops.md): Nops on a cluster: the Nomad job, the token, a proxy, the login, upgrading.
 - [meta-keys.md](meta-keys.md): reference for the `nops_*` meta keys.
 - [policies.md](policies.md): `auto`, `approval`, `none`.
 - [hooks.md](hooks.md): the hook contract and examples (in [`../examples/`](../examples/)).
 - [configuration.md](configuration.md): flags and environment variables.
 - [dashboard.md](dashboard.md): the pages, approval, authentication.
-- [error-handling.md](error-handling.md): fail loud, logs, notifications.
+- [logs-and-notifications.md](logs-and-notifications.md): what is logged, notifications and their payload.
 
 **Contributing**
 - [development.md](development.md): tests, coverage, commands, the changelog,

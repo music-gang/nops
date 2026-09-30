@@ -104,6 +104,25 @@ scale", we don't build it.
    collection of hook revisions derives what to stop from the non-terminal
    deployments in the store.
 
+## Fail loud
+
+Nops prefers to stop and say so rather than carry on with uncertain state.
+
+- **Never swallow an error** from Nomad or SQLite. The only "soft" exception is
+  the notification: if it fails, it is logged at WARN and does not block the
+  state machine.
+- **If a SQLite write fails, the reconciler stops** for that cycle: Nops does
+  not act on Nomad with state that has not been persisted (invariant 7).
+- **When in doubt, take the conservative path:**
+  - invalid meta key → policy `none` for the whole job;
+  - hook declared but not found → `failed` (never "proceed without the hook");
+  - CAS conflict → `failed` + re-detection.
+- Messages in `error` and `events` must be useful to whoever looks at the
+  dashboard: what failed, where, and what to do next.
+
+What is logged and notified is in
+[logs and notifications](logs-and-notifications.md).
+
 ## Patterns reused from nomad-gitops
 
 The reference is [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops)

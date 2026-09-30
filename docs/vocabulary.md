@@ -29,7 +29,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **spec** | The HCL of a job as parsed by Nomad. The **target spec** is the one in the repo that a deployment wants to reach. |
 | **spec hash** | Hash that identifies what a deployment will do (`spec_hash`): the target spec combined with the frozen hooks, in order (the target's own when it has none). An approval is valid for one `(deployment_id, spec_hash)`. |
 | **target job** | The job a deployment is about (the hook receives it as `nops_job_id`). |
-| **managed namespace** | A namespace listed in `-nomad-namespaces`: the only ones Nops reads jobs for, deploys to and looks for orphans in. A job is identified by `(namespace, ID)`; a hook lives in its job's namespace ([configuration](configuration.md#namespaces)). |
+| **managed namespace** | A namespace listed in `-nomad-namespaces`: the only ones Nops reads jobs for, deploys to and looks for orphans in. A job is identified by `(namespace, ID)`; a hook lives in its job's namespace ([configuration](running-nops.md#namespaces)). |
 | **managed job** | A target job with `nops_managed = "true"`, eligible for deployment detection. A target job without it is ignored by detection; hook jobs are separate and use `nops_role = "hook"`. |
 | **meta key** | A `nops_*` key in a job's `meta` block: the [only syntax](meta-keys.md) Nops reads. |
 | **policy** | `auto`, `approval` or `none`: who gives the go-ahead. It says nothing about *how* the apply is done. |
@@ -73,7 +73,7 @@ Some words exist in both worlds and mean different things. Say which one.
 | **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
 | **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
 | **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
-| **notification** | The message Nops sends when a deployment needs a person. Which transitions send one is defined in [notifications](error-handling.md#notifications). Not delivered is a WARN, never an error. |
+| **notification** | The message Nops sends when a deployment needs a person. Which transitions send one is defined in [notifications](logs-and-notifications.md#notifications). Not delivered is a WARN, never an error. |
 | **notification adapter** | One way to deliver a notification: `webhook` (generic JSON), `discord`, `slack`, `ntfy`, `gotify`. Each has its own options and is on when its URL is set. |
 
 ## Hooks

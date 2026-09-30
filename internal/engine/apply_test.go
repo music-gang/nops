@@ -1045,7 +1045,7 @@ func TestStepDetectedNeverAdvancesADeploymentUnderApproval(t *testing.T) {
 	}
 }
 
-// docs/error-handling.md: every failed deployment is logged at ERROR with the
+// docs/logs-and-notifications.md: every failed deployment is logged at ERROR with the
 // deployment, the job, the phase it failed in and the cause; the other
 // transitions stay at INFO.
 func TestAFailedDeploymentIsLoggedAtError(t *testing.T) {
