@@ -111,7 +111,7 @@ needs a rule of its own, because Nomad checks volumes when a job is registered:
 |---|---|
 | a host volume, read-write (no `read_only`) | `host_volume "<source>"` with `policy = "write"` |
 | a host volume with `read_only = true` | `host_volume "<source>"` with `policy = "read"` (`write` also works) |
-| a CSI volume | `csi-mount-volume` in the namespace |
+| a CSI volume | `csi-mount-volume` in the namespace **and** `plugin { policy = "read" }`: either alone is refused |
 | a task with `csi_plugin` | `csi-register-plugin` in the namespace |
 
 `policy = "read"` grants `mount-readonly` only, `write` grants both mounts, so a
@@ -120,6 +120,8 @@ its own. The rule is per volume: a token without it is refused at register with
 `register job <id>: Unexpected response code: 403 (Permission denied)`, while
 `Plan` passes, since it checks no volume. The deployment stays `applying` until
 `-apply-timeout`, then fails ([engine-apply](design/engine-apply.md)).
+`TestTokenACLForVolumes` checks every row of the table, and that `Plan` passes
+without them.
 
 ```hcl
 namespace "default" {
@@ -134,13 +136,14 @@ host_volume "db-data" {
 A name in a policy may hold only letters, digits, `-` and `*`, so a volume
 declared as `nomad_backup_data` cannot be written as it is. Match it with a
 glob (`host_volume "nomad*backup*data"`: `*` stands for `_` too) or name the
-volume with `-` in the client configuration, the jobs and the policy.
+volume with `-` in the client configuration, the jobs and the policy
+(`TestACLPolicyVolumeNames`).
 The dashboard's [Nomad panel](dashboard.md#the-nomad-panel) reads with
-`read-job`, and its *Promote* button, which promotes the canaries of a Nomad
-deployment, needs `submit-job`: checked against a Nomad 2.0.7 agent with ACLs
-on, a token with `list-jobs`, `read-job` and `submit-job` (and no `dispatch-job`)
+`list-jobs` and `read-job` (`TestNomadPanelReadsWithReadJob`), and its *Promote*
+button, which promotes the canaries of a Nomad deployment, needs `submit-job`:
+a token with `list-jobs`, `read-job` and `submit-job` (and no `dispatch-job`)
 promotes, and one with `list-jobs` and `read-job` only is refused with `403
-(Permission denied)`. Without it the button fails, the request stays on the
+(Permission denied)` (`TestPromoteNeedsSubmitJob`). Without it the button fails, the request stays on the
 deployment's timeline, and the canaries stay unpromoted.
 See Nomad's [ACL policy reference](https://developer.hashicorp.com/nomad/docs/secure/acl/policies).
 

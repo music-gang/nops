@@ -9,9 +9,10 @@
 #     }
 #   }
 #
-# The Nops token needs `host_volume "myapp_data" { policy = "write" }` in its
-# ACL policy (docs/configuration.md#token-acl); without it the register is
-# refused with 403 although the plan passes.
+# The Nops token needs `host_volume "myapp*data" { policy = "write" }` in its
+# ACL policy (a policy cannot name a volume with `_`, and `*` matches it;
+# docs/configuration.md#token-acl); without it the register is refused with 403
+# although the plan passes.
 #
 # Bump var.image (myapp.vars.hcl) to trigger a deployment.
 

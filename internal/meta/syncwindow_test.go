@@ -230,3 +230,14 @@ func TestSyncWindowNextClose(t *testing.T) {
 		t.Errorf("an always open window: NextClose = %s, want the zero time", got)
 	}
 }
+
+// The expression has the syntax of Nomad's periodic, the same library: not
+// only 5 fields (docs/policies.md#sync-windows).
+func TestSyncWindowAcceptsWhatPeriodicAccepts(t *testing.T) {
+	for _, spec := range []string{"0 9 * * 1-5", "0 9 * * MON-FRI", "0 9 * * * 2099", "0 0 9 * * * *", "@daily", "@hourly"} {
+		c := Parse(managedAuto(map[string]string{KeySyncWindow: spec, KeySyncWindowDuration: "1h"}))
+		if c.SyncWindow == nil || len(c.Issues) != 0 {
+			t.Errorf("%q: window %v, issues %v; want it accepted", spec, c.SyncWindow, c.Issues)
+		}
+	}
+}

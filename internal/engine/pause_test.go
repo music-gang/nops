@@ -391,3 +391,46 @@ func TestPauseIsPerNamespace(t *testing.T) {
 		t.Errorf("prod/web active deployment: err = %v, want ErrNotFound: it is paused", err)
 	}
 }
+
+// pauseReadFails is the store with a PauseOf that fails: what a person's pause
+// is cannot be known.
+type pauseReadFails struct{ Store }
+
+func (pauseReadFails) PauseOf(context.Context, string, string) (store.Pause, error) {
+	return store.Pause{}, errors.New("disk I/O error")
+}
+
+// Invariant 7: a pause that cannot be read is not "not paused". The apply loop
+// leaves a detected deployment as it is, and Approve refuses, rather than start
+// a deployment of a job someone may have paused.
+func TestAPauseThatCannotBeReadStartsNothing(t *testing.T) {
+	t.Run("apply", func(t *testing.T) {
+		h := newHarness(t)
+		observedWeb(t, h, "auto")
+		h.drift()
+		h.detect()
+		d := h.active("web")
+		h.engine.store = pauseReadFails{h.store}
+
+		h.step(d)
+
+		if got := h.get(d.ID); got.State != store.StateDetected {
+			t.Errorf("state = %s, want detected: nothing starts on a guess", got.State)
+		}
+	})
+	t.Run("approve", func(t *testing.T) {
+		h := newHarness(t)
+		observedWeb(t, h, "approval")
+		h.drift()
+		h.detect()
+		pending := h.active("web")
+		h.engine.store = pauseReadFails{h.store}
+
+		if err := h.engine.Approve(context.Background(), pending.ID, pending.SpecHash, "bob"); err == nil {
+			t.Fatal("Approve succeeded, want the failed read returned")
+		}
+		if got := h.get(pending.ID); got.State != store.StatePendingApproval || got.DecidedBy != "" {
+			t.Errorf("deployment = %+v, want pending and undecided", got)
+		}
+	})
+}

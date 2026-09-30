@@ -39,9 +39,13 @@ nops_sync_window          = "0 9 * * 1-5"  # opens Mondays to Fridays at 09:00 .
 nops_sync_window_duration = "9h"           # ... and stays open until 18:00
 ```
 
-- The expression is a 5-field cron (the syntax of Nomad's `periodic`) for when
-  the window **opens**; the duration says how long it stays open, the end
-  exclusive. It is read in the instance's time zone,
+- The expression is a cron for when the window **opens**, with the syntax of
+  Nomad's `periodic` (the same library, `cronexpr`): 5 fields (minute, hour,
+  day of month, month, day of week, with names such as `MON-FRI`), a sixth
+  for the year, a seventh in front for the seconds, or a shorthand such as
+  `@daily` (`TestSyncWindowAcceptsWhatPeriodicAccepts`). The detection cycle
+  looks at it every `-drift-interval`, so seconds buy nothing. The duration
+  says how long it stays open, the end exclusive. It is read in the instance's time zone,
   [`-sync-window-time-zone`](configuration.md#storage-intervals-and-timeouts)
   (UTC by default). There is one window per job, and only an *allow* one: "never
   between 00:00 and 07:00" is a window that opens at 07:00 for 17 hours.

@@ -13,9 +13,9 @@
 #     }
 #   }
 #
-# The Nops token needs `host_volume "db_data" { policy = "write" }` in its ACL
-# policy, and the same for "db_backup" because of the hook
-# (docs/configuration.md#token-acl).
+# The Nops token needs `host_volume "db*data" { policy = "write" }` in its ACL
+# policy, and the same for "db*backup" because of the hook: a policy cannot
+# name a volume with `_`, and `*` matches it (docs/configuration.md#token-acl).
 #
 # The password below is fine for a throwaway run, never for a real database.
 # Bump var.image (db.vars.hcl) to trigger a deployment.
