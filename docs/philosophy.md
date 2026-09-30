@@ -1,7 +1,7 @@
 # Philosophy and invariants
 
-Why Nops behaves the way it does. The invariants below are **non-negotiable**:
-CLAUDE.md carries the short list, this page explains the reasoning behind each.
+Why Nops behaves the way it does. The invariants below are **non-negotiable**,
+and this page explains the reasoning behind each.
 
 Nops is a semi-automatic GitOps controller for Nomad, aimed at a self-hosted
 cluster for personal use. **No overengineering**: if a feature only exists "to

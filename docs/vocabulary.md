@@ -113,8 +113,8 @@ Some words exist in both worlds and mean different things. Say which one.
 ## Work on the repo
 
 The mechanics behind these terms (branching, PRs, how an issue becomes a PR)
-are in [CLAUDE.md](../CLAUDE.md#picking-up-work); this is just what to call
-them.
+are in [development](development.md#workflow-and-ci); this is just what to
+call them.
 
 | Term | Meaning |
 |---|---|

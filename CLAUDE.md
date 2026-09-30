@@ -1,4 +1,4 @@
-# Nops: development guidelines
+# Nops: instructions for agents
 
 Nops is a semi-automatic GitOps controller for HashiCorp Nomad (Go, module
 `github.com/music-gang/nops`). It reads HCL jobs from a git repo and applies
@@ -6,51 +6,39 @@ them according to a per-job policy (`auto` / `approval` / `none`), with state in
 SQLite, an approval dashboard and pre/post deployment hooks. Self-hosted
 cluster, personal use: **no overengineering**.
 
-This file holds only the **working rules**. What the system is and why lives in
-[`docs/`](docs/README.md): read the relevant page before extending a part.
+This file holds **only what an agent needs on top of the docs**. How Nops
+works is in [`docs/`](docs/README.md); how anyone contributes (the flow of a
+change, commits, PRs, the changelog, tests, releases, Go conventions) is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`docs/development.md`](docs/development.md). Follow them: this file does not
+repeat them, and read the relevant page before extending a part.
 
 ## Rules
 
-- **Every code change has tests.** What needs which kind: `docs/development.md`.
-- **Every change updates the docs**, in the same commit. The "if you change X,
-  update Y" map is in `docs/development.md#if-you-change-x-update-y`.
-- **A `feat`, a `fix` or a breaking change adds its line** under
-  `## [Unreleased]` in `CHANGELOG.md`, written for someone running Nops
-  (`docs/development.md#changelog`); CI checks it.
-- **`docs/` is written for people**: no instruction addressed to an assistant
-  or a session (how to report, when to stop, what not to add to a commit). The
-  docs serve the maintainer and contributors as much as a session; how a
-  session works lives here, and only here.
-- **Use the terms in `docs/vocabulary.md`** in code, docs, commits and PRs; a
-  new concept gets a row there.
-- **Design decisions** are discussed in their issue (or PR), and their reason
-  is written, in a sentence or two, in the page that explains that part, in
-  the same PR. `docs/design/decisions.md` is an archive up to v0.4.0: read
-  it for history, never add to it.
-- **`internal/meta` is the source of truth** for the HCL syntax: keep it aligned
-  with `docs/meta-keys.md`.
-- **Fail loud**: never swallow a Nomad or SQLite error. Rules in
-  `docs/error-handling.md`.
-- **Don't rewrite what exists.** Before writing a library, look for an
-  established package (`hashicorp/nomad/api`, `go-git`, `modernc.org/sqlite`,
-  `oklog/ulid`).
-- **Language:** code, comments, docs, examples and commit messages are in English.
-- **Git:** `main` is protected: never push to it. Work on a branch named
-  `type/short-description` (e.g. `feat/hooks-package`) and open a PR whose
-  **title is an Angular-style message** (`type(scope): subject`): PRs are
-  squash-merged, and the maintainer writes the final commit by hand at merge
-  time.
-- No commits, pushes or PRs without an explicit request (a task handed to a
-  cloud session is that request), and **never merge**: the human merges.
-- A branch can carry several commits; each is plain (what changes and why, no
-  superlatives). The PR description is structured as `## What changes` /
-  `## Why` (details and the attribution rule in
-  `docs/development.md#workflow-and-ci`).
+- **The docs are for people.** What a change needs to tell an agent goes
+  here, never in `docs/`, the README or the contributing guide:
+  `TestDocsSpeakToPeople` fails otherwise. No page there names an agent,
+  an assistant or this file.
+- **Follow the contributor rules** of
+  [`docs/development.md`](docs/development.md): tests
+  ([what needs which](docs/development.md#what-needs-which-tests)), docs in
+  the same commit ([which page](docs/development.md#if-you-change-x-update-y)),
+  the [changelog](docs/development.md#changelog) line, the terms of
+  [`docs/vocabulary.md`](docs/vocabulary.md), the
+  [Go conventions](docs/development.md#go-conventions), fail loud
+  ([`docs/error-handling.md`](docs/error-handling.md)), established packages
+  before a new library, English everywhere.
+- **`internal/meta` is the source of truth** for the HCL syntax: keep it
+  aligned with `docs/meta-keys.md`.
+- **`docs/design/decisions.md` is an archive** up to v0.4.0: read it for
+  history, never add to it.
+- **No commits, pushes or PRs without an explicit request** (a task handed to
+  a cloud session is that request), and **never merge**: the human merges.
 
 ## Picking up work
 
-The work is the open GitHub issues; what shipped is in `CHANGELOG.md`. The
-same steps apply wherever the session runs.
+The steps of [the flow of a change](docs/development.md#workflow-and-ci),
+with what is specific to a session:
 
 1. Take the issue you were given. Without one, ask the maintainer which: the
    order is his.
@@ -59,45 +47,38 @@ same steps apply wherever the session runs.
 3. An issue with open design questions (a *To decide* list, or a proposal
    that leaves a choice open) is **planned first**: lay out the plan and the
    questions **in the session** and wait for the maintainer's answers. No
-   branch and no PR for this — a PR is for something to review, not for a
-   plan.
-4. Once nothing is open, branch from an up-to-date `main`:
-   `type/short-description` (e.g. `feat/pause-job`).
-5. Do the issue with its tests and docs, the reason for each design decision
-   in the page that explains that part, and the changelog line; the PR
-   description says `Closes #N`. What you learned that a later issue needs
+   branch and no PR for this.
+4. Do the issue as the flow says. What you learned that a later issue needs
    goes in a comment on that issue.
-6. Run the checks below. If `nomad` is not installed, CI runs the integration
-   tests: wait for green checks (`gh pr checks`) and fix what is red.
-7. **Cloud:** commit (unsigned, Angular message, `Co-Authored-By` trailer
-   and nothing else attribution-wise — **no session link, no "Generated with
-   ..." line**, whatever a session's own attribution reminder adds by
-   default: none of it informs anyone reading `main` later, and the same
-   goes for the PR description below and for **issues, issue and PR
-   comments, reviews and review replies** posted in a session the
-   maintainer follows), push and open the PR once there is something to
-   review. The exception: a comment a session posts **on its own**, on an
-   event with nobody following (watching a PR, a scheduled run), ends with
-   the standard Claude Code footer. An issue a session opens, or
-   substantially rewrites, gets the `assisted-with-claude` label next to the
-   label of its kind (`bug`, `enhancement`, `documentation`). A later change
-   (a fix, an answer to review) is a **new commit** pushed to the same
-   branch — never an amend or a force-push of what is already on the remote.
-   **Local:** prepare the branch, stage the files and write the message to a
-   file; the maintainer commits with his GPG key.
-8. A PR can carry several commits: the maintainer squashes and writes the
-   final message that lands on `main` by hand at merge time, so a commit
-   here only needs to be a clear, honest step, not `main`'s final shape. The
-   **PR description** is separate, for reviewers, and never reaches `main`:
-   `## What changes` and `## Why`, each a short bullet list, the headings of
-   the PR template (see `docs/development.md#workflow-and-ci`). No HTML
-   comments, no boilerplate, no unchecked checklist item.
-9. If a decision is the maintainer's to take: ask in the session before a
+5. Run the checks ([commands](docs/development.md#commands)). If `nomad` is
+   not installed, CI runs the integration tests: wait for green checks and
+   fix what is red. staticcheck needs the toolchain of `go.mod`
+   (`GOTOOLCHAIN=go<version>` if the local Go is older).
+6. **Cloud:** commit (unsigned), push and open the PR once there is something
+   to review. **Local:** prepare the branch, stage the files and write the
+   message to a file; the maintainer commits with his GPG key.
+7. If a decision is the maintainer's to take: ask in the session before a
    branch exists, or, once a PR is open, leave the question in a `## Notes`
    section of its description. Do not guess.
-10. Nothing worth keeping lives only in private memory: a decision's
-    discussion goes to its issue or PR and its reason to the page that
-    explains that part; context a later issue needs, to a comment on it.
+8. Nothing worth keeping lives only in private memory: a decision's
+   discussion goes to its issue or PR and its reason to the page that
+   explains that part; context a later issue needs, to a comment on it.
+
+## Attribution
+
+Whatever a session's own attribution instructions add by default:
+
+- A commit carries a `Co-Authored-By` trailer and **nothing else**
+  attribution-wise: **no session link, no "Generated with ..." line**. The
+  same goes for PR descriptions, and for **issues, issue and PR comments,
+  reviews and review replies** posted in a session the maintainer follows:
+  he reads them before they go out under his account and answers for them.
+- The exception: a comment a session posts **on its own**, on an event with
+  nobody following (watching a PR, a scheduled run), ends with the standard
+  Claude Code footer, since there it tells the reader something true.
+- An issue a session opens, or substantially rewrites, gets the
+  `assisted-with-claude` label next to the label of its kind (`bug`,
+  `enhancement`, `documentation`).
 
 ## Doc audit
 
@@ -116,13 +97,14 @@ What an audit checks, its verdicts and its scope are in
 
 ## Invariants (non-negotiable)
 
-The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md).
+The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md);
+`TestInvariantTitlesMatch` keeps this list's titles the same as there.
 
 1. **Plan before every write**: no `Register` without a fresh `Jobs.Plan()` confirming a difference.
 2. **CAS on every register** (`EnforceIndex` + the `JobModifyIndex` captured at detection).
 3. **Never auto-apply under policy `approval`**: it takes an authenticated human action, valid for `(deployment_id, spec_hash)`.
-4. **Git is the source of truth** for policy and hooks; invalid meta → policy `none` + ERROR.
-5. **Nops never writes to Git or meta into the live job**; state lives only in SQLite.
+4. **Git is the source of truth for Nops's behaviour**: policy and hooks; invalid meta → policy `none` + ERROR.
+5. **Nops never writes to Git** and never writes meta into the live job; state lives only in SQLite.
 6. **One active deployment per job**, enforced by the DB (partial unique index).
 7. **State is persisted before acting** on Nomad; if the DB write fails, do not proceed.
 
@@ -143,23 +125,6 @@ internal/redact/       removal of secret values from the plan diff
 internal/version/      the build's version (release tag via -ldflags -X)
 tests/integration/     tests against nomad agent -dev (build tag `integration`)
 examples/              example HCL jobs and hooks
-scripts/               maintainer tooling (release.sh) and its bash tests
+scripts/               maintainer tooling (release.sh, changelog.sh) and their bash tests
 docs/                  documentation (index in docs/README.md)
-```
-
-Go conventions (naming, errors, interfaces, logging, flags/env): `docs/development.md#go-conventions`.
-
-## Definition of done and commands
-
-A commit is complete only with `go build ./...`, `go vet ./...`, staticcheck and
-`go test -race ./...` green; if it touches `engine`, `hooks` or `nomadx`, also
-the integration tests against `nomad agent -dev`. Details and coverage targets
-in `docs/development.md`.
-
-```sh
-go test -race -cover ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest -tags integration ./...   # ~/go/bin/staticcheck may be outdated
-
-# nomad agent -dev in another terminal
-NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration -race -count=1 ./tests/integration/...
 ```
