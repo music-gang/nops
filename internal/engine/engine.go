@@ -1,7 +1,7 @@
 // Package engine detects drift between the git repository and the Nomad
 // cluster, creates deployments accordingly (see
-// docs/design/engine-detection.md), and drives them from approval to
-// completed (see docs/design/engine-apply.md). Recovery after a restart is the
+// docs/archive/engine-detection.md), and drives them from approval to
+// completed (see docs/archive/engine-apply.md). Recovery after a restart is the
 // first RunApply cycle: every step resumes from persisted state alone, so it
 // picks up whatever a crash left in flight.
 package engine
@@ -32,14 +32,14 @@ type Nomad interface {
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
 	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)
 	// ListJobs and StopJob are used to deregister hook revisions nothing needs
-	// any more (see docs/design/engine-detection.md#hook-revisions).
+	// any more (see docs/archive/engine-detection.md#hook-revisions).
 	ListJobs(ctx context.Context, ns string) ([]nomadx.JobStub, error)
 	StopJob(ctx context.Context, ns, id string) error
 	// Allocations and LatestDeployment are used by apply to decide whether the
-	// applied job version is healthy (see docs/design/engine-apply.md).
+	// applied job version is healthy (see docs/archive/engine-apply.md).
 	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
 	LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error)
-	// PromoteDeployment is used by Promote (see docs/design/engine-apply.md,
+	// PromoteDeployment is used by Promote (see docs/archive/engine-apply.md,
 	// decision 11).
 	PromoteDeployment(ctx context.Context, ns, deploymentID string) error
 }
@@ -53,18 +53,18 @@ type Store interface {
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	LatestDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	// LatestCompletedPerJob is used by the orphan check (see
-	// docs/design/engine-detection.md#orphan-jobs).
+	// docs/archive/engine-detection.md#orphan-jobs).
 	LatestCompletedPerJob(ctx context.Context, namespace string) ([]*store.Deployment, error)
 	// DeploymentHooks and HookRevisionsInUse are used by the hook revisions
-	// (see docs/design/engine-detection.md#hook-revisions).
+	// (see docs/archive/engine-detection.md#hook-revisions).
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 	HookRevisionsInUse(ctx context.Context, namespace string) ([]string, error)
 	// GetHookRun is used by the hook step to time a registration that keeps
 	// failing from the end of the previous hook.
 	GetHookRun(ctx context.Context, deploymentID, phase string, position int) (*store.HookRun, error)
-	// MarkRetried is used by Retry (see docs/state-machine.md).
+	// MarkRetried is used by Retry (see docs/deployment-lifecycle.md).
 	MarkRetried(ctx context.Context, id, actor string) error
-	// SetApplied and AppliedSince are used by apply (see docs/design/engine-apply.md).
+	// SetApplied and AppliedSince are used by apply (see docs/archive/engine-apply.md).
 	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
 	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
 	// MarkAwaitingPromotion and MarkPromoted are used by apply for a Nomad
@@ -75,7 +75,7 @@ type Store interface {
 	// before Nomad is asked.
 	MarkPromotionRequested(ctx context.Context, id, actor string) error
 	// PauseJob, ResumeJob, ActivePauses and PauseOf are used by the hold on a
-	// paused job (see docs/state-machine.md).
+	// paused job (see docs/deployment-lifecycle.md).
 	PauseJob(ctx context.Context, namespace, jobID, actor, reason string) error
 	ResumeJob(ctx context.Context, namespace, jobID, actor string) error
 	ActivePauses(ctx context.Context) ([]store.Pause, error)
@@ -128,7 +128,7 @@ type Observation struct {
 	ObservedAt time.Time
 	// BlockedBy is the ID of the deployment whose retry rule currently
 	// suppresses a new deployment for this job's drift, or "" if none (see
-	// docs/design/engine-apply.md, decisions 6 and 7).
+	// docs/archive/engine-apply.md, decisions 6 and 7).
 	BlockedBy string
 	// BlockedReason explains BlockedBy and what unblocks it. Empty when
 	// BlockedBy is empty.
@@ -155,7 +155,7 @@ type HookRef struct {
 // Orphan is a job nops has deployed that is no longer in the repository but is
 // still there in Nomad and not stopped: something the operator has to decide
 // about. nops only reports it, it never stops it (see
-// docs/design/engine-detection.md#orphan-jobs). Like Observation it is kept
+// docs/archive/engine-detection.md#orphan-jobs). Like Observation it is kept
 // only in memory and rebuilt every cycle.
 type Orphan struct {
 	JobID     string

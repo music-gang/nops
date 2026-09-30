@@ -14,7 +14,7 @@ import (
 // A job with canary > 0 and auto_promote = false leaves its Nomad deployment
 // running until a person promotes the canaries. That wait is not a failure to
 // become healthy: the apply timeout does not run in it, and counts again from the
-// promotion (docs/design/engine-apply.md, decision 10).
+// promotion (docs/archive/engine-apply.md, decision 10).
 
 // canaryJob is a managed job whose one group "g" has a canary.
 func canaryJob(autoPromote bool, extra map[string]string) *api.Job {

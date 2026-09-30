@@ -1,6 +1,9 @@
-# State machine and store
+# Deployment lifecycle
 
-Every deployment goes through a state machine persisted in SQLite.
+Every deployment goes through a state machine persisted in SQLite: the states,
+the rules that move a deployment between them, what holds a job back, the
+tables behind it, and how a restart resumes. How the loops that apply these
+rules work is in [architecture](architecture.md).
 
 ```
 detected ──(policy=auto)──────────────┐
@@ -38,7 +41,7 @@ retries.
 ## Revalidating pending deployments
 
 On every detection cycle, for each `detected` or `pending_approval`
-deployment (in that order; see [engine-detection](design/engine-detection.md)
+deployment (in that order; see [architecture](architecture.md#per-job)
 for the full per-job procedure):
 
 - if the job's policy is now `none`, it moves to `superseded` (reason:
@@ -77,7 +80,7 @@ the rule above retry a spec Nomad has already rejected — apply, revert,
 re-detect, apply again, forever. Only a new commit (a different `spec_hash`)
 unblocks it. Either case is visible in the dashboard as `Observation.BlockedBy`/
 `BlockedReason` for a job whose policy would otherwise create a deployment
-(see [engine-apply](design/engine-apply.md), decisions 6 and 7): the job is
+(see [architecture](architecture.md#rules-detection-keeps)): the job is
 not silently stuck.
 
 A human can lift the block without a new commit: **retry** (`Engine.Retry`,
@@ -88,7 +91,7 @@ cycle creates a new deployment like any other, so the policy still decides
 what happens: under `approval` it is `pending_approval` and waits for a
 human, under `auto` it proceeds. A retry is one more attempt, not a promise:
 if the new deployment fails the same way, the job is blocked again. See
-[engine-apply](design/engine-apply.md), decision 9.
+[the retry](#not-retrying-an-unchanged-failure).
 
 ## Holding a job
 
@@ -140,60 +143,58 @@ person is sent back to already says so; it then asks detection for a cycle,
 which recomputes the observation and puts any `detected` deployment aside. A job can be paused only while it is among the
 managed jobs of the last detection cycle, and once at a time. There is no
 instance-wide pause: stopping Nops does that. See the
-[decision log](design/decisions.md), 2026-09-30.
+[decision log](archive/decisions.md), 2026-09-30.
 
 ## Schema
 
-The detail lives in `internal/store/migrations/`; this is the summary.
+The tables, and what each column that is not self-explanatory means. The
+columns themselves are in the migrations, `internal/store/migrations/`.
 
-- `deployments`: id (ULID), job_id, namespace, commit_sha, commit_subject,
-  commit_author, spec_hash, job_spec (JSON), plan_diff (redacted JSON),
-  policy, state, cas_index, applied_index, eval_id, error, decided_by,
-  decided_at, retried_by, retried_at, promotion_wait_since, promoted_at,
-  created_at, updated_at.
-  `commit_subject` (first line of the message) and `commit_author` (name, no
+| Table | What it holds |
+|---|---|
+| `deployments` | One row per deployment (ID: a ULID): the job (`namespace`, `job_id`), the commit it came from, `spec_hash`, the full spec (`job_spec`, JSON) and the redacted diff (`plan_diff`), the policy, the state, the live index at detection (`cas_index`) and after the register (`applied_index`, `eval_id`), the error, who decided and who retried, and when the Nomad deployment waited for a promotion. |
+| `deployment_hooks` | The hooks a deployment runs, frozen when it is created, in the same transaction (invariant 7): per phase and position, the hook ID, its hash, its spec and its revision ([hook revisions](architecture.md#hook-revisions)). |
+| `hook_runs` | One run of one hook of one deployment: the revision dispatched, the idempotency token, the dispatched job's ID, the state (`dispatching`, `running`, `succeeded`, `failed`, `timed_out`), the timeout in seconds, the error, and when it started and finished. |
+| `job_pauses` | One row per pause of a job: who paused it, when and why, and who resumed it and when. Kept after the resume as the record of it, since `events` belongs to a deployment and a pause has none. |
+| `events` | Append-only log of a deployment (`from_state`, `to_state`, `actor`, `message`, time). It feeds the dashboard's timelines and the Activity page. |
+
+What the columns mean:
+
+- `commit_subject` (first line of the message) and `commit_author` (name, no
   email) are copied from the commit when the deployment is created, because
   the git clone is shallow and only ever holds the head; they are empty for a
-  deployment created before they were recorded. `retried_by`/`retried_at` are
-  set by `Store.MarkRetried`, only on a `failed` or `rejected` deployment.
-  `promotion_wait_since`/`promoted_at` are set by `Store.MarkAwaitingPromotion`
+  deployment created before they were recorded.
+- `retried_by`/`retried_at` are set by `Store.MarkRetried`, only on a `failed`
+  or `rejected` deployment.
+- `promotion_wait_since`/`promoted_at` are set by `Store.MarkAwaitingPromotion`
   and `Store.MarkPromoted`, only on an `applying` deployment whose Nomad
   deployment waited for a person to promote its canaries: the first time Nops
   saw it wait and the first time it saw the canaries promoted. Each is written
   once, and both are empty for a deployment that never waited.
-  `UNIQUE INDEX (namespace, job_id) WHERE state IN (detected,
-  pending_approval, pre_hook, applying, post_hook)` is the per-job lock.
-- `deployment_hooks`: deployment_id, phase, position, hook_id, revision,
-  spec_hash, job_spec (JSON). The hooks a deployment runs, frozen when it is
-  created, in the same transaction (invariant 7): the hook as it was in git,
-  its hash and the ID of the Nomad job registered from it (a *hook revision*,
-  see [hooks](hooks.md#hook-revisions)). `position` orders the hooks of a
-  phase, from 0, as they are listed in the meta.
-  `PRIMARY KEY (deployment_id, phase, position)`. The `deployments.spec_hash`
-  covers the target and these hooks. A deployment made before this table
-  existed has none: if it reaches a hook step it fails, saying so.
-- `hook_runs`: id, deployment_id, phase, position, hook_job_id (the revision),
-  idempotency_token (`<deployment_id>:<phase>:<position>`; a row that predates
-  positions keeps `<deployment_id>:<phase>`, the token it was dispatched with),
-  dispatched_job_id, state (`dispatching|running|succeeded|failed|timed_out`),
-  timeout_s, error, started_at, finished_at.
-  `UNIQUE(deployment_id, phase, position)`.
-- `job_pauses`: id, namespace, job_id, paused_by, paused_at, reason (may be
-  empty), resumed_by, resumed_at. One row per pause, kept after the resume as
-  the record of who paused and resumed a job and when (the `events` table
-  belongs to a deployment, and a pause has none). `resumed_at` is empty while
-  the pause is in force. `UNIQUE INDEX (namespace, job_id) WHERE resumed_at IS
-  NULL` allows one pause in force per job, like the per-job lock.
-- `events`: append-only log (deployment_id, ts, from_state, to_state, actor,
-  message). It feeds the history view in the dashboard. `Store.MarkRetried`
-  appends one event whose `from_state` and `to_state` are both the
-  deployment's (terminal) state, message `retry requested`: nothing moves, it
-  is the audit trail of who asked. `MarkAwaitingPromotion` and `MarkPromoted`
-  append one whose two states are both `applying` (messages `waiting for canary
-  promotion in Nomad` and `canaries promoted in Nomad: the apply timeout counts
-  again`). `Store.MarkPromotionRequested` appends one, applying → applying,
-  with the person who pressed *Promote* as `actor` and the message `promotion
-  requested`, before Nomad is asked to promote.
+- In `deployment_hooks`, `position` orders the hooks of a phase, from 0, as
+  they are listed in the meta. A deployment made before this table existed has
+  none: if it reaches a hook step it fails, saying so.
+- In `hook_runs`, the idempotency token is `<deployment_id>:<phase>:<position>`;
+  a row that predates positions keeps `<deployment_id>:<phase>`, the token it
+  was dispatched with.
+- `events` also records what moves no state: `Store.MarkRetried` appends one
+  whose two states are the deployment's (terminal) one, message
+  `retry requested`; `MarkAwaitingPromotion` and `MarkPromoted` append one
+  `applying → applying` (`waiting for canary promotion in Nomad`, `canaries
+  promoted in Nomad: the apply timeout counts again`); and
+  `Store.MarkPromotionRequested` appends one `applying → applying` with the
+  person who pressed *Promote* as `actor`, message `promotion requested`,
+  before Nomad is asked.
+
+The keys and indexes that carry a rule:
+
+- `UNIQUE INDEX (namespace, job_id) WHERE state IN (detected,
+  pending_approval, pre_hook, applying, post_hook)` on `deployments` is the
+  per-job lock (invariant 6).
+- `PRIMARY KEY (deployment_id, phase, position)` on `deployment_hooks` and
+  `UNIQUE(deployment_id, phase, position)` on `hook_runs`.
+- `UNIQUE INDEX (namespace, job_id) WHERE resumed_at IS NULL` on `job_pauses`
+  allows one pause in force per job, like the per-job lock.
 
 Store rules:
 
@@ -242,7 +243,7 @@ usual, `pending_approval` still waits for a human. For the rest:
 - `applying` with `applied_index` set: wait for health as before, the timeout
   counted from the `→ applying` event, or from `promoted_at` if the Nomad
   deployment waited for a canary promotion; while it waits for one there is no
-  timeout at all ([engine-apply](design/engine-apply.md#decisions), 10). If the live job's index is no longer
+  timeout at all ([architecture](architecture.md#the-apply-timeout)). If the live job's index is no longer
   `applied_index` and no Nomad deployment tracks it, the job was modified
   outside Nops (for instance while it was down): the deployment is `failed`
   rather than judged on someone else's allocations.

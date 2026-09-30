@@ -103,7 +103,7 @@ job file `<name>.nomad.hcl` (or `<name>.nomad`), Nops passes it as
 `nomad job run -var-file=...` would do: a generic job keeps its changing
 values (image tag, count, domain) in that small file, which is in git and so
 never holds a secret. Which files are read is described in
-[gitwatch](design/gitwatch.md#which-files-are-read). A job that cannot be parsed creates no deployment and is logged at
+[architecture](architecture.md#reading-the-repository). A job that cannot be parsed creates no deployment and is logged at
 ERROR. Hooks do not need variables: they receive everything through dispatch
 meta.
 

@@ -30,7 +30,7 @@ type Pause struct {
 }
 
 // PauseJob records that actor paused the job: nops starts no new deployment for
-// it until ResumeJob (docs/state-machine.md). It does not touch Nomad, and a
+// it until ResumeJob (docs/deployment-lifecycle.md). It does not touch Nomad, and a
 // deployment already running is not its business. It returns ErrAlreadyPaused
 // if the job is already paused, the per-job one-pause rule being the database's
 // (a partial unique index).

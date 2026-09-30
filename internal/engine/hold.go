@@ -23,7 +23,7 @@ const (
 )
 
 // Hold is a condition that keeps nops from starting a deployment for a job
-// (docs/state-machine.md, "holding a job"): a person's pause, or a sync window
+// (docs/deployment-lifecycle.md, "holding a job"): a person's pause, or a sync window
 // that is closed. It only ever subtracts: it creates,
 // approves and advances nothing, so it cannot break invariant 3. It gates the
 // start only: a deployment already in pre_hook, applying or post_hook is never

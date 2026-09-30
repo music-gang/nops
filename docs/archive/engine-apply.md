@@ -1,5 +1,9 @@
 # engine-apply design
 
+> **Archive.** The plan this part of Nops was built from, kept as history and
+> not updated: some of it has changed since. How it works today is in
+> [architecture](../architecture.md).
+
 This is the second half of `internal/engine`: moving a deployment from
 `detected` (policy `auto`) or from an approved `pending_approval` through
 `pre_hook` → `applying` → `post_hook` to `completed`, and every failure path.
@@ -173,7 +177,7 @@ deployment, and, if there is one, leaves it `detected` and asks detection for a
 cycle now. A failed read is not "not paused": the deployment waits for the next
 tick rather than start on a guess (invariant 7). Only the start is gated: once
 a deployment is in `pre_hook` it finishes, and `Approve` refuses a paused job
-(`ErrPaused`) while `Reject` works ([state-machine](../state-machine.md#holding-a-job)).
+(`ErrPaused`) while `Reject` works ([state-machine](../deployment-lifecycle.md#holding-a-job)).
 
 ## Decisions
 

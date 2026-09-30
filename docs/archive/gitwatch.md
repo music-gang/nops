@@ -1,5 +1,9 @@
 # gitwatch design
 
+> **Archive.** The plan this part of Nops was built from, kept as history and
+> not updated: some of it has changed since. How it works today is in
+> [architecture](../architecture.md).
+
 The plan for `internal/gitwatch`, agreed before writing the code (the
 `gitwatch` task). gitwatch keeps the repository of
 job files in memory, read-only (invariant 5 in

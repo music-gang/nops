@@ -46,7 +46,7 @@ job "` + id + `" {
 }`
 }
 
-// TestScaleChangesTheLiveJobsIndex settles what docs/design/engine-detection.md
+// TestScaleChangesTheLiveJobsIndex settles what docs/archive/engine-detection.md
 // says an autoscaler never does to nops: does moving a count through Nomad's
 // scale API change the live job's JobModifyIndex (what nops keeps as cas_index)
 // and its Version? Detection supersedes a pending deployment when the index
@@ -142,7 +142,7 @@ func TestMetaBlockAndObjectFormsCannotBeMixed(t *testing.T) {
 }
 
 // TestStoppingAHookRevisionLeavesItsRunningRun checks what
-// docs/design/engine-detection.md relies on when it garbage collects a hook
+// docs/archive/engine-detection.md relies on when it garbage collects a hook
 // revision: deregistering the parameterized parent without purge does not take
 // a run it dispatched away, even one still running, so a revision can be
 // stopped while its run is being read.
@@ -203,7 +203,7 @@ job %q {
 	}
 }
 
-// TestLongJobIDIsAccepted checks the claim of docs/design/engine-detection.md
+// TestLongJobIDIsAccepted checks the claim of docs/archive/engine-detection.md
 // that the "-<8 hex>" suffix of a hook revision hits no limit on the length of
 // a job ID: an ID of several hundred characters registers and reads back.
 func TestLongJobIDIsAccepted(t *testing.T) {
@@ -259,7 +259,7 @@ job %q {
 }`, id, tag)
 }
 
-// TestCanaryWaitsForManualPromotion settles what docs/design/engine-apply.md
+// TestCanaryWaitsForManualPromotion settles what docs/archive/engine-apply.md
 // relies on for a job with canary > 0 and auto_promote = false: its Nomad
 // deployment stays running, with the canaries placed and healthy and not
 // promoted, and the progress deadline does not fail it while it waits for a

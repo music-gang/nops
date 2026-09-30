@@ -99,7 +99,7 @@ variable and default are the option's; and the same for the secrets table).
 A private repository is read over HTTPS with a token (basic auth). SSH is not
 supported. A `file://` URL works only where a `git` executable is installed
 (go-git runs it for that transport): not in the release image, which has none. Which files under `-git-path` are read as jobs is described in
-[gitwatch](design/gitwatch.md#which-files-are-read).
+[architecture](architecture.md#reading-the-repository).
 
 ## Dashboard
 
@@ -169,7 +169,7 @@ it, so use a topic nobody can guess, or your own server with a token.
 | `-drift-interval` | `NOPS_DRIFT_INTERVAL` | `5m` | How often Nomad is checked for drift when there is no new commit. |
 | `-engine-interval` | `NOPS_ENGINE_INTERVAL` | `5s` | How often the engine advances active deployments. |
 | `-hook-poll-interval` | `NOPS_HOOK_POLL_INTERVAL` | `5s` | How often a running hook is checked. |
-| `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may take, from the moment it starts: to register the job (a Nomad error is retried until then) and then to wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). It does not run while the Nomad deployment waits for a person to promote its canaries, and counts again from the promotion ([engine-apply](design/engine-apply.md#decisions), 10). |
+| `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an apply may take, from the moment it starts: to register the job (a Nomad error is retried until then) and then to wait for the Nomad deployment to be `successful` (see [architecture](architecture.md#apply-and-downtime)). It does not run while the Nomad deployment waits for a person to promote its canaries, and counts again from the promotion ([architecture](architecture.md#the-apply-timeout)). |
 | `-sync-window-time-zone` | `NOPS_SYNC_WINDOW_TIME_ZONE` | `UTC` | The IANA time zone (`Europe/Rome`, `America/New_York`, `UTC`) the [sync windows](policies.md#sync-windows) of the jobs (`nops_sync_window`) are read in. One zone for the whole instance; a value that is not a zone (including `Local`) stops the start. |
 | `-log-level` | `NOPS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 

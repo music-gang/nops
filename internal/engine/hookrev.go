@@ -20,7 +20,7 @@ import (
 // A hook revision is a hook job at one exact spec, registered in Nomad under
 // its own ID, `<hook-id>-<first 8 hex of the spec hash>`. A deployment freezes
 // the revisions of its hooks when it is created (see
-// docs/design/engine-detection.md#hook-revisions), so what runs is what was
+// docs/archive/engine-detection.md#hook-revisions), so what runs is what was
 // approved, and two deployments that share a hook never overwrite each other's.
 
 // revisionRe matches the ID of a hook revision, which GC uses to tell it from

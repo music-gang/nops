@@ -762,7 +762,7 @@ func TestApproveWithPreHookGoesToPreHook(t *testing.T) {
 }
 
 // A pending approval outlives its job's file while detection cannot tell a
-// removed file from a broken one (docs/design/engine-detection.md, "Not covered
+// removed file from a broken one (docs/archive/engine-detection.md, "Not covered
 // by a rule"): approving it then would register a job git no longer has.
 func TestApproveRefusesAJobThatIsNotInGitAsOfTheLastCycle(t *testing.T) {
 	for _, tc := range []struct {
