@@ -22,8 +22,15 @@ Keys are read **from the HCL in the repo** and Nops never writes them.
 | `nops_role` | `"hook"` | — | Set on hook jobs: marks them as inert and as something Nops registers itself, as a [revision](hooks.md#hook-revisions), when a deployment needs it. |
 | `nops_timeout` | Go duration (`90s`, `10m`), on a hook job | `5m` | How long the hook may run; on expiry the dispatch is stopped and the deployment is `failed`. Must be > 0. Only with `nops_role = "hook"`. |
 | `nops_notify_completed` | `"true"` / `"false"` | `"false"` | Opt-in for a [notification](error-handling.md#notifications) when a deployment of this job becomes `completed`. Read from the spec a deployment froze at detection, so a later edit only affects the *next* deployment. Meaningless under policy `none` (no deployment ever reaches `completed`). |
+| `nops_sync_window` | A cron expression (5 fields, as Nomad's `periodic`: `"0 9 * * 1-5"`), with `nops_sync_window_duration` | — | When Nops may deploy this job **on its own**: the time the window **opens**. Outside the window the job is **held**: drift is still detected and shown, but no deployment is created; when it opens, detection plans again as usual. Only with policy `auto` (see [policies](policies.md#sync-windows)). Read in the time zone of [`-sync-window-time-zone`](configuration.md#storage-intervals-and-timeouts) (UTC by default). |
+| `nops_sync_window_duration` | Go duration (`9h`, `90m`), with `nops_sync_window` | — | How long the window stays open from each time it opens, the end exclusive. May run past midnight (`"0 22 * * *"` with `8h` is 22:00 to 06:00). Must be > 0. Declared together with `nops_sync_window`: one without the other is an error. |
 
 Values are **case-sensitive** strings (`"True"` is not valid).
+
+**The sync window is read in UTC** unless the instance sets
+[`-sync-window-time-zone`](configuration.md#storage-intervals-and-timeouts): a
+window of `"0 9 * * *"` for `11h` is 11:00 to 22:00 in Rome in summer, not 09:00
+to 20:00. The Job page says where the window stands and in which zone.
 
 ```hcl
 job "api" {
@@ -33,6 +40,16 @@ job "api" {
     nops_pre_hook         = "api-backup, api-migrate"
     nops_post_hook        = "api-smoke"
     nops_notify_completed = "true"
+  }
+  # ...
+}
+
+job "web" {
+  meta {
+    nops_managed              = "true"
+    nops_policy               = "auto"
+    nops_sync_window          = "0 9 * * 1-5" # Mondays to Fridays, from 09:00
+    nops_sync_window_duration = "9h"          # until 18:00
   }
   # ...
 }
@@ -62,7 +79,11 @@ gone; they are reported as unknown keys (WARN) that say what replaces them.
   the job is not managed, so Nops **ignores it** like any job without the key:
   an ERROR in the log and nothing on the dashboard.
 - `nops_policy` without `nops_managed = "true"`, or `nops_timeout` on a job
-  that is not a hook: WARN, the key is ignored.
+  that is not a hook: WARN, the key is ignored. So is `nops_sync_window` on a
+  job that is not managed, or whose policy is not `auto`: WARN.
+- A `nops_sync_window` without `nops_sync_window_duration` (or the other way
+  round), a cron expression that does not parse or never matches, or a
+  duration that is not positive: ERROR, policy `none`.
 - A list of hooks with an **empty item** (`"backup,,migrate"`, a trailing
   comma) or the **same hook twice** in one phase: ERROR, policy `none`. Spaces
   around a name are ignored. The same hook may be in both phases.

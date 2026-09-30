@@ -263,7 +263,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		if o.BlockedBy == d.ID {
 			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry"}
 		}
-		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil {
+		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil && o.Hold.Kind == engine.HoldPaused {
 			data.Paused = &heldView{Reason: o.Hold.Reason, ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume"}
 		}
 	}

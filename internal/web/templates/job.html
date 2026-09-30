@@ -39,6 +39,12 @@
 </section>
 {{end}}
 
+{{if .Held}}
+<section class="flash flash--warn">
+  <p><strong>Held:</strong> {{.Held}}. Drift is shown, but nops deploys this job on its own only inside its sync window. When it opens, nops plans again and deploys what git says then.</p>
+</section>
+{{end}}
+
 {{if .Blocked}}
 <section class="flash flash--error flash--action">
   <div>
@@ -111,6 +117,10 @@
         <dt>Policy</dt><dd>{{.Policy}}</dd>
         <dt>Pre-hooks</dt><dd>{{template "hook_list" .PreHooks}}</dd>
         <dt>Post-hooks</dt><dd>{{template "hook_list" .PostHooks}}</dd>
+        {{with .Window}}
+        <dt>Window</dt><dd class="dd--wrap" title="{{.Status}}">{{.Status}}</dd>
+        <dt>Schedule</dt><dd class="dd--wrap mono" title="{{.Schedule}}">{{.Schedule}}</dd>
+        {{end}}
         <dt>File</dt><dd class="mono" title="{{.File}}">{{.File}}</dd>
         <dt>Observed</dt><dd>{{template "time" .Observed}}</dd>
       </dl>

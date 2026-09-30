@@ -21,6 +21,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// The zone database is embedded: a sync window is read in a named time zone
+	// and the image has no /usr/share/zoneinfo to look it up in.
+	_ "time/tzdata"
 
 	"github.com/hashicorp/nomad/api"
 )
@@ -106,6 +109,11 @@ type Config struct {
 	EngineInterval   time.Duration
 	HookPollInterval time.Duration
 	ApplyTimeout     time.Duration
+
+	// SyncWindowLocation is the time zone the sync windows of the jobs
+	// (nops_sync_window) are read in; UTC unless -sync-window-time-zone says
+	// otherwise. See docs/meta-keys.md.
+	SyncWindowLocation *time.Location
 
 	LogLevel slog.Level
 }
@@ -271,6 +279,8 @@ var options = []option{
 		set: func(c *Config, v string) (err error) { c.HookPollInterval, err = positiveDuration(v); return }},
 	{name: "apply-timeout", def: "10m", usage: "how long an apply may take, from its start: to register the job and to wait until it is healthy",
 		set: func(c *Config, v string) (err error) { c.ApplyTimeout, err = positiveDuration(v); return }},
+	{name: "sync-window-time-zone", def: "UTC", usage: "IANA time zone (Europe/Rome, America/New_York, UTC) the sync windows of the jobs (nops_sync_window) are read in",
+		set: func(c *Config, v string) (err error) { c.SyncWindowLocation, err = timeZone(v); return }},
 
 	{name: "log-level", def: "info", usage: "log level: debug, info, warn or error",
 		set: func(c *Config, v string) error { return c.LogLevel.UnmarshalText([]byte(v)) }},
@@ -574,6 +584,20 @@ func httpURL(v string) (string, error) {
 		return "", fmt.Errorf("%q is not an http:// or https:// URL with a host", v)
 	}
 	return v, nil
+}
+
+// timeZone loads an IANA time zone by name. "Local" is refused: what the
+// machine is set to is not something a config file should depend on, and a
+// container usually has none.
+func timeZone(v string) (*time.Location, error) {
+	if v == "" || v == "Local" {
+		return nil, fmt.Errorf("%q is not an IANA time zone name (Europe/Rome, America/New_York, UTC)", v)
+	}
+	loc, err := time.LoadLocation(v)
+	if err != nil {
+		return nil, fmt.Errorf("unknown time zone %q (want an IANA name such as Europe/Rome or UTC): %w", v, err)
+	}
+	return loc, nil
 }
 
 // optionalURL accepts an empty value or an http(s) URL with a host, and drops

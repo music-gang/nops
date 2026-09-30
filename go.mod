@@ -7,6 +7,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/gorilla/securecookie v1.1.2
+	github.com/hashicorp/cronexpr v1.1.3
 	github.com/hashicorp/nomad/api v0.0.0-20260923095306-73804ff45659
 	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/crypto v0.57.0
@@ -28,7 +29,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/hashicorp/cronexpr v1.1.3 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect

@@ -93,17 +93,21 @@ if the new deployment fails the same way, the job is blocked again. See
 ## Holding a job
 
 A **hold** is a condition that keeps Nops from *starting* a deployment for a
-job. It is one gate in the engine, asked one question (`Observation.Hold`), and
-a person's **pause** is the only source today. It only ever subtracts: it
-creates, approves and advances nothing, so it cannot apply anything invariant 3
-would not allow, and what it reads is a row in SQLite that a person wrote, not
-something that changes what git says ([philosophy](philosophy.md), invariant 4).
+job. It is one gate in the engine, asked one question (`Observation.Hold`), with
+two sources: a person's **pause**, and a **sync window** that is closed
+([policies](policies.md#sync-windows)). It only ever subtracts: it creates,
+approves and advances nothing, so it cannot apply anything invariant 3 would not
+allow. The window is read from git, and what a pause reads is a row in SQLite
+that a person wrote, which changes neither the policy nor the hooks git gives
+([philosophy](philosophy.md), invariant 4).
 
 While a job is held:
 
 - detection still plans it and shows the drift, and the job shows as **Paused**
-  (whether or not it drifts: a forgotten pause must show), but **no deployment
-  is created**, under `auto` and under `approval` alike;
+  (whether or not it drifts: a forgotten pause must show), or **Held** for a
+  closed window (only while it drifts), but **no deployment is created**. A
+  pause holds under `auto` and under `approval` alike; a window only under
+  `auto`, since under `approval` a person's OK is the gate;
 - a deployment still `detected` (an `auto` one, created before the hold) is
   moved to `superseded` with the hold as the reason, and the apply loop does
   not start one it finds `detected` in the meantime (it asks detection for a
@@ -111,9 +115,16 @@ While a job is held:
   applied is never a plan from before it: the state machine gains no state;
 - a `pending_approval` deployment stays as it is, and **Approve is refused**
   (`ErrPaused`) until the job is resumed. *Reject* still works: it starts
-  nothing;
+  nothing. A window never holds an approval;
 - a deployment already in `pre_hook`, `applying` or `post_hook` finishes: the
-  hold gates the start, never what is running.
+  hold gates the start, never what is running (a pre-hook is the start).
+
+A window has no actor and no row: it is computed from the job's meta and the
+clock every cycle (in `-sync-window-time-zone`), and the apply loop asks it again
+of the meta the deployment froze, so a deployment created inside the window is
+not started once it has closed. It is noticed at the next detection cycle
+(`-drift-interval`) after it opens or closes, and a cycle is also run at each
+commit.
 
 **Pause** and **resume** (`Engine.Pause`, `Engine.Resume`,
 `POST /jobs/{namespace}/{job}/pause` and `/resume`) are any logged-in user's

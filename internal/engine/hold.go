@@ -7,17 +7,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/store"
 )
 
 // HoldKind says what holds a job.
 type HoldKind string
 
-// HoldPaused is a person's pause (Engine.Pause).
-const HoldPaused HoldKind = "paused"
+const (
+	// HoldPaused is a person's pause (Engine.Pause).
+	HoldPaused HoldKind = "paused"
+	// HoldWindow is the time being outside the job's sync window
+	// (nops_sync_window): a scheduled pause, which nobody set and nobody lifts.
+	HoldWindow HoldKind = "window"
+)
 
 // Hold is a condition that keeps nops from starting a deployment for a job
-// (docs/state-machine.md, "holding a job"). It only ever subtracts: it creates,
+// (docs/state-machine.md, "holding a job"): a person's pause, or a sync window
+// that is closed. It only ever subtracts: it creates,
 // approves and advances nothing, so it cannot break invariant 3. It gates the
 // start only: a deployment already in pre_hook, applying or post_hook is never
 // touched. Drift is still detected and shown while the job is held.
@@ -58,9 +65,73 @@ func pauseHold(p store.Pause) *Hold {
 	return &Hold{Kind: HoldPaused, Reason: reason, By: p.PausedBy, Since: p.PausedAt, Note: p.Reason}
 }
 
-// holds indexes what holds each job this cycle. A job absent from it is free to
-// deploy. Later sources of a hold (a sync window) join here, so the rest of the
-// engine asks one question.
+// WindowStatus is where a job's sync window stands right now, for the page and
+// for the hold. It is computed from the job's meta, the clock and the
+// instance's time zone, never stored.
+type WindowStatus struct {
+	// Spec and Duration are the window as the job declares it.
+	Spec     string
+	Duration time.Duration
+	// Zone is the IANA name of the time zone Spec is read in, and Until is in it.
+	Zone string
+	// Open says whether the window is open now. Until is when it closes if it
+	// is, when it opens next if it is not; zero when it never does (a window
+	// that reopens before each has ended never closes).
+	Open  bool
+	Until time.Time
+}
+
+// windowStatus is the status of a job's sync window now, or nil when it has
+// none or it does not apply: a window gates only what Nops starts on its own, so
+// only a job under policy auto. The window is read in the instance's time zone
+// (Options.SyncWindowLocation).
+func (e *Engine) windowStatus(cfg meta.Config) *WindowStatus {
+	if cfg.Policy != meta.PolicyAuto || cfg.SyncWindow == nil {
+		return nil
+	}
+	now := e.now().In(e.syncLoc)
+	w := cfg.SyncWindow
+	ws := &WindowStatus{Spec: w.Spec, Duration: w.Duration, Zone: e.syncLoc.String(), Open: w.Open(now)}
+	if ws.Open {
+		ws.Until = w.NextClose(now).In(e.syncLoc)
+	} else {
+		ws.Until = w.NextOpen(now).In(e.syncLoc)
+	}
+	return ws
+}
+
+// windowTimeFormat is how a time of a window is written for a person: the day,
+// so "next opens" is not read as today, and the zone, so a window is never read
+// in the wrong one.
+const windowTimeFormat = "Mon 2006-01-02 15:04 MST"
+
+// Format writes t, in the window's zone, as windowTimeFormat does.
+func (ws *WindowStatus) Format(t time.Time) string { return t.Format(windowTimeFormat) }
+
+// hold is the Hold of a window that is closed, nil when it is open or there is
+// none.
+func (ws *WindowStatus) hold() *Hold {
+	if ws == nil || ws.Open {
+		return nil
+	}
+	reason := "outside its sync window"
+	if !ws.Until.IsZero() {
+		reason += ", next opens " + ws.Format(ws.Until)
+	}
+	return &Hold{Kind: HoldWindow, Reason: reason}
+}
+
+// holdFrom is what holds a job right now: a person's pause (a row in SQLite,
+// as read once per detection cycle, which wins) or else its closed sync window.
+func holdFrom(pause *Hold, ws *WindowStatus) *Hold {
+	if pause != nil {
+		return pause
+	}
+	return ws.hold()
+}
+
+// holds indexes the pauses in force this cycle, by job. A job absent from it is
+// not paused.
 func holds(pauses []store.Pause) map[jobKey]*Hold {
 	out := make(map[jobKey]*Hold, len(pauses))
 	for _, p := range pauses {
@@ -69,10 +140,10 @@ func holds(pauses []store.Pause) map[jobKey]*Hold {
 	return out
 }
 
-// holdOf reads what holds one job now, straight from the store, for the paths
-// that act between two detection cycles (Approve, the apply loop's first step).
-// It returns nil when nothing does.
-func (e *Engine) holdOf(ctx context.Context, namespace, jobID string) (*Hold, error) {
+// pauseOf reads a job's pause straight from the store, for the paths that act
+// between two detection cycles (Approve, the apply loop's first step). It
+// returns nil when the job is not paused.
+func (e *Engine) pauseOf(ctx context.Context, namespace, jobID string) (*Hold, error) {
 	p, err := e.store.PauseOf(ctx, namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):

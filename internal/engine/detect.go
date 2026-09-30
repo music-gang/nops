@@ -85,7 +85,8 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		key := keyOf(mf.job)
 		seen[key] = true // classified as managed: never "removed from repo" this cycle
 
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], held[key])
+		window := e.windowStatus(mf.cfg)
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], holdFrom(held[key], window), window)
 		if err != nil {
 			return st, err
 		}
@@ -247,10 +248,11 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 
 // reconcileJob computes the drift of one managed job and reconciles its
 // deployment. hooks are the hook jobs of the job's own namespace, by ID. hold is
-// what holds the job this cycle, nil if nothing does. ok is false when the job
+// what holds the job this cycle, nil if nothing does, and window where its sync
+// window stands (nil without one). ok is false when the job
 // was skipped because of a Nomad failure scoped to it (already logged): the
 // caller keeps no observation for it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, hold *Hold) (obs Observation, ok bool, err error) {
+func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, hold *Hold, window *WindowStatus) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
 	jobID, ns := key.id, key.namespace
 	log := e.log.With("job", jobID, "namespace", ns, "commit", commit.sha)
@@ -304,7 +306,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	obs = Observation{
 		JobID: jobID, Namespace: ns, FilePath: mf.path,
 		Policy: mf.cfg.Policy, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
-		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold,
+		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
 	}
 	if drift {
 		obs.Drift, obs.PlanDiff = true, string(redacted)

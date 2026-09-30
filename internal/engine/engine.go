@@ -134,10 +134,14 @@ type Observation struct {
 	// BlockedBy is empty.
 	BlockedReason string
 	// Hold is what keeps nops from starting a deployment for this job right now
-	// (a pause), or nil if nothing does. Unlike BlockedBy it is not about a
+	// (a pause, or the time being outside its sync window), or nil if nothing does. Unlike BlockedBy it is not about a
 	// deployment, and it is set whether or not the job drifts: a forgotten
 	// pause must show.
 	Hold *Hold
+	// Window is where the job's sync window stands now, nil when it has none or
+	// its policy is not auto (docs/policies.md#sync-windows). It is set whether
+	// or not the job drifts: a window is something a person wants to see.
+	Window *WindowStatus
 }
 
 // HookRef is a hook a job declares, as the repository has it now.
@@ -207,6 +211,7 @@ type Engine struct {
 	driftInterval  time.Duration
 	engineInterval time.Duration
 	applyTimeout   time.Duration
+	syncLoc        *time.Location // the zone the sync windows are read in
 	now            func() time.Time
 
 	mu           sync.RWMutex
@@ -242,7 +247,10 @@ type Options struct {
 	// ApplyTimeout is how long an apply may wait for the Nomad deployment (or
 	// the allocations) to become healthy, counted from the "-> applying" event.
 	ApplyTimeout time.Duration
-	Log          *slog.Logger
+	// SyncWindowLocation is the time zone the jobs' sync windows
+	// (nops_sync_window) are read in; nil is UTC.
+	SyncWindowLocation *time.Location
+	Log                *slog.Logger
 }
 
 // New creates an Engine. Call RunDetection and RunApply to start the two
@@ -251,6 +259,10 @@ func New(o Options) *Engine {
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
+	}
+	syncLoc := o.SyncWindowLocation
+	if syncLoc == nil {
+		syncLoc = time.UTC
 	}
 	managedNS := make(map[string]bool, len(o.Namespaces))
 	for _, ns := range o.Namespaces {
@@ -268,6 +280,7 @@ func New(o Options) *Engine {
 		driftInterval:  o.DriftInterval,
 		engineInterval: o.EngineInterval,
 		applyTimeout:   o.ApplyTimeout,
+		syncLoc:        syncLoc,
 		now:            time.Now,
 		parseCache:     map[string]parseEntry{},
 		observations:   map[jobKey]Observation{},

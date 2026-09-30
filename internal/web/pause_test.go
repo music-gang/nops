@@ -272,3 +272,114 @@ func TestApproveOfAPausedJobConflict(t *testing.T) {
 	mustContain(t, rec.Body.String(), "This job is paused", "resume it to approve", "reject")
 	mustNotContain(t, rec.Body.String(), "spec changed", "not in the repository")
 }
+
+// -- a closed sync window ----------------------------------------------------
+
+func windowHold() *engine.Hold {
+	return &engine.Hold{Kind: engine.HoldWindow, Reason: "outside its sync window, next opens Fri 2026-09-25 09:00 UTC"}
+}
+
+func TestJobSyncHeld(t *testing.T) {
+	st := func(s store.State) *store.Deployment { return &store.Deployment{State: s} }
+	for _, c := range []struct {
+		name   string
+		obs    engine.Observation
+		latest *store.Deployment
+		want   syncKey
+	}{
+		{"drifting outside the window", engine.Observation{Hold: windowHold(), Drift: true}, nil, syncHeld},
+		{"after a completed deployment", engine.Observation{Hold: windowHold(), Drift: true}, st(store.StateCompleted), syncHeld},
+		{"nothing to deploy is in sync, whatever the window", engine.Observation{Hold: windowHold()}, nil, syncInSync},
+		{"a deployment in flight is deploying", engine.Observation{Hold: windowHold(), Drift: true}, st(store.StateApplying), syncDeploying},
+		{"blocked beats held: there is something to do", engine.Observation{Hold: windowHold(), Drift: true, BlockedBy: "x"}, st(store.StateFailed), syncBlocked},
+		{"a pause beats a window", engine.Observation{Hold: pausedHold(), Drift: true}, nil, syncPaused},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := jobSync(c.obs, c.latest); got != c.want {
+				t.Errorf("jobSync = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestJobsPageShowsAHeldJob(t *testing.T) {
+	en := &fakeEngine{observations: []engine.Observation{
+		{JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "web.nomad.hcl", Drift: true, Hold: windowHold()},
+		{JobID: "db", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "db.nomad.hcl", Hold: windowHold()}, // in sync
+	}}
+	ts := newTestServer(t, &fakeStore{}, en, "")
+
+	page := ts.get("/jobs")
+	mustContain(t, page, ">Held<", "outside its sync window, next opens Fri 2026-09-25 09:00 UTC", `href="?state=held"`, "In sync")
+	if n := strings.Count(page, ">Held<"); n != 1 {
+		t.Errorf("%d Held pills, want 1: the job with nothing to deploy is in sync", n)
+	}
+	mustContain(t, ts.get("/jobs?state=held"), `href="/jobs/default/web"`)
+	mustNotContain(t, ts.get("/jobs?state=held"), `href="/jobs/default/db"`)
+}
+
+// A window is nobody's decision and needs nobody: not in Needs attention.
+func TestOverviewDoesNotListAHeldJob(t *testing.T) {
+	en := &fakeEngine{observations: []engine.Observation{
+		{JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, Drift: true, Hold: windowHold()},
+	}}
+	page := newTestServer(t, &fakeStore{}, en, "").get("/")
+	mustContain(t, page, "Nothing needs your attention")
+	mustNotContain(t, page, "default/web", ">Held<")
+}
+
+func TestJobPageOfAHeldJob(t *testing.T) {
+	en := &fakeEngine{observations: []engine.Observation{{
+		JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "web.nomad.hcl", ObservedAt: testNow,
+		Drift: true, PlanDiff: diffJSON(t, sampleDiff()), Hold: windowHold(),
+	}}}
+	page := newTestServer(t, &fakeStore{}, en, "").get("/jobs/default/web")
+
+	mustContain(t, page, "Held:", "outside its sync window, next opens Fri 2026-09-25 09:00 UTC", "only inside its sync window",
+		// It can still be paused, and there is no Resume for a window.
+		`action="/jobs/default/web/pause"`)
+	mustNotContain(t, page, "Resume", "Paused by")
+
+	// Nothing to deploy: no notice.
+	en.observations[0].Drift, en.observations[0].PlanDiff = false, ""
+	mustNotContain(t, newTestServer(t, &fakeStore{}, en, "").get("/jobs/default/web"), "Held:")
+}
+
+// Approve stays open: a window gates what Nops starts on its own.
+func TestDeploymentPageOfAHeldJobCanBeApproved(t *testing.T) {
+	st := &fakeStore{deployment: sampleDeployment()}
+	en := &fakeEngine{observations: []engine.Observation{{JobID: "web", Namespace: "default", Hold: windowHold()}}}
+	page := newTestServer(t, st, en, "").get("/deployments/d1")
+
+	mustContain(t, page, `action="/deployments/d1/approve"`)
+	mustNotContain(t, page, "The job is paused")
+}
+
+// The window, and the time zone it is read in, are on the page of the job
+// whether or not it drifts: nobody should have to know Nops reads it in UTC.
+func TestJobPageShowsTheSyncWindowAndItsZone(t *testing.T) {
+	closes := time.Date(2026, time.September, 30, 20, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		window  *engine.WindowStatus
+		wants   []string
+		unwants []string
+	}{
+		{"open", &engine.WindowStatus{Spec: "0 9 * * *", Duration: 11 * time.Hour, Zone: "Europe/Rome", Open: true, Until: closes},
+			[]string{"Window", "open until Wed 2026-09-30 20:00 UTC", "Schedule", "0 9 * * * for 11h, read in Europe/Rome"}, nil},
+		{"closed", &engine.WindowStatus{Spec: "0 9 * * *", Duration: 11 * time.Hour, Zone: "UTC", Until: closes},
+			[]string{"closed until Wed 2026-09-30 20:00 UTC", "read in UTC"}, []string{"open until"}},
+		{"open for ever", &engine.WindowStatus{Spec: "* * * * *", Duration: time.Hour, Zone: "UTC", Open: true},
+			[]string{"open, it never closes"}, nil},
+		{"none", nil, nil, []string{"Schedule", "read in"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			en := &fakeEngine{observations: []engine.Observation{{
+				JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "web.nomad.hcl", ObservedAt: testNow, Window: tc.window,
+			}}}
+			page := newTestServer(t, &fakeStore{}, en, "").get("/jobs/default/web")
+			mustContain(t, page, tc.wants...)
+			mustNotContain(t, page, tc.unwants...)
+		})
+	}
+}

@@ -160,23 +160,25 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 		e.kickDetection()
 		return
 	}
+	job, err := parseJobSpec(d)
+	if err != nil {
+		log.ErrorContext(ctx, "decode job spec", "error", err)
+		return
+	}
 	// A hold gates the start: a deployment that was `detected` before the job was
-	// paused is not advanced. Detection puts it aside (see reconcileDeployment),
-	// and is asked to do it now. A store error is not "not held": the deployment
-	// waits for the next cycle rather than start on a guess (invariant 7).
-	hold, err := e.holdOf(ctx, d.Namespace, d.JobID)
+	// paused, or before its sync window closed, is not advanced. Detection puts
+	// it aside (see reconcileDeployment), and is asked to do it now. The window
+	// is the one the deployment froze, with its spec. A store error is not "not
+	// held": the deployment waits for the next cycle rather than start on a
+	// guess (invariant 7).
+	pause, err := e.pauseOf(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		log.ErrorContext(ctx, "read the job's pause", "error", err)
 		return
 	}
-	if hold != nil {
+	if hold := holdFrom(pause, e.windowStatus(meta.Parse(job.Meta))); hold != nil {
 		log.DebugContext(ctx, "detected deployment of a held job left to detection", "reason", hold.Reason)
 		e.kickDetection()
-		return
-	}
-	job, err := parseJobSpec(d)
-	if err != nil {
-		log.ErrorContext(ctx, "decode job spec", "error", err)
 		return
 	}
 	e.applyTransition(ctx, log, d, nextAfterDecision(job), "")
@@ -661,7 +663,7 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	if !e.observed(d.Namespace, d.JobID) {
 		return fmt.Errorf("approve %s: %w", id, ErrNotInRepo)
 	}
-	hold, err := e.holdOf(ctx, d.Namespace, d.JobID)
+	hold, err := e.pauseOf(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return fmt.Errorf("approve %s: %w", id, err)
 	}

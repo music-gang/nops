@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/cronexpr"
 )
 
 const prefix = "nops_"
@@ -23,6 +25,11 @@ const (
 	KeyRole            = "nops_role"
 	KeyTimeout         = "nops_timeout"
 	KeyNotifyCompleted = "nops_notify_completed"
+	// KeySyncWindow and KeySyncWindowDuration say when Nops may deploy a job on
+	// its own: a cron expression for when the window opens and how long it stays
+	// open (docs/meta-keys.md).
+	KeySyncWindow         = "nops_sync_window"
+	KeySyncWindowDuration = "nops_sync_window_duration"
 )
 
 // DefaultHookTimeout applies to a hook job that has no nops_timeout.
@@ -30,6 +37,7 @@ const DefaultHookTimeout = 5 * time.Minute
 
 var knownKeys = map[string]struct{}{
 	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {}, KeyNotifyCompleted: {},
+	KeySyncWindow: {}, KeySyncWindowDuration: {},
 }
 
 // removedKeys are keys that used to exist, with what replaces them: still
@@ -81,6 +89,11 @@ type Config struct {
 	// NotifyCompleted opts the job into a notification when a deployment of it
 	// becomes completed (nops_notify_completed = "true"; docs/error-handling.md#notifications).
 	NotifyCompleted bool
+	// SyncWindow is when Nops may deploy the job on its own
+	// (nops_sync_window + nops_sync_window_duration); nil when not declared or
+	// when either key is invalid. It is set whatever the policy is: only
+	// policy auto is gated by it (docs/policies.md).
+	SyncWindow *SyncWindow
 	// Timeout is how long a hook job may run (nops_timeout, or
 	// DefaultHookTimeout); zero for a job that is not a hook.
 	Timeout time.Duration
@@ -182,6 +195,8 @@ func Parse(m map[string]string) Config {
 		}
 	}
 
+	c.SyncWindow = parseSyncWindow(m, c.Managed, policy, add)
+
 	c.PreHooks = parseHooks(m, KeyPreHook, add)
 	c.PostHooks = parseHooks(m, KeyPostHook, add)
 
@@ -222,4 +237,106 @@ func parseHooks(m map[string]string, key string, add func(Severity, string, stri
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// SyncWindow is a recurring span of time in which Nops may start a deployment
+// of a job on its own: it opens at every time its cron expression matches and
+// stays open for Duration. It says nothing about the time zone: the caller
+// passes times in the one the expression is read in.
+type SyncWindow struct {
+	// Spec is the cron expression as written, Duration how long the window stays
+	// open from each time it matches.
+	Spec     string
+	Duration time.Duration
+	expr     *cronexpr.Expression
+}
+
+// Open reports whether t is inside the window: the latest time the expression
+// matched at or before t is less than Duration ago. The end is exclusive.
+func (w *SyncWindow) Open(t time.Time) bool {
+	open := w.expr.Next(t.Add(-w.Duration))
+	return !open.IsZero() && !open.After(t)
+}
+
+// NextOpen is the next time after t that the window opens. It is the zero
+// time if it never does again, which a Spec accepted by Parse does not do
+// unless it names a year that has passed.
+func (w *SyncWindow) NextOpen(t time.Time) time.Time { return w.expr.Next(t) }
+
+// maxCloseSteps bounds NextClose: a window that opens again before it has
+// closed, every minute for an hour say, is open for ever.
+const maxCloseSteps = 10000
+
+// NextClose is when the window that is open at t closes: the end of the last
+// of the windows that run into each other from the one covering t. It is the
+// zero time if t is outside the window, or if it never closes (a window that
+// reopens before each one has ended).
+func (w *SyncWindow) NextClose(t time.Time) time.Time {
+	if !w.Open(t) {
+		return time.Time{}
+	}
+	start := w.expr.Next(t.Add(-w.Duration)) // the earliest window still covering t
+	end := start.Add(w.Duration)
+	for i := 0; i < maxCloseSteps; i++ {
+		next := w.expr.Next(start)
+		if next.IsZero() || next.After(end) {
+			return end
+		}
+		start, end = next, next.Add(w.Duration)
+	}
+	return time.Time{}
+}
+
+// neverMatchesFrom is where parseSyncWindow looks for the first time an
+// expression matches: one that does not match after it (a 30th of February)
+// never does.
+var neverMatchesFrom = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// parseSyncWindow reads nops_sync_window and nops_sync_window_duration, which
+// are declared together or not at all. It returns nil, with an Error issue on
+// the key at fault, for any invalid value (so the job falls back to policy
+// none like any other invalid key), and, like the other keys of a managed job,
+// a Warn when the job is not managed. A window under a policy other than auto
+// is a Warn: it gates only what Nops starts on its own, and under approval the
+// person's approval is the gate.
+func parseSyncWindow(m map[string]string, managed bool, policy Policy, add func(Severity, string, string, ...any)) *SyncWindow {
+	spec, hasSpec := m[KeySyncWindow]
+	durStr, hasDur := m[KeySyncWindowDuration]
+	switch {
+	case !hasSpec && !hasDur:
+		return nil
+	case !hasDur:
+		add(SeverityError, KeySyncWindow, "needs %s: how long the window stays open", KeySyncWindowDuration)
+		return nil
+	case !hasSpec:
+		add(SeverityError, KeySyncWindowDuration, "set without %s: when the window opens", KeySyncWindow)
+		return nil
+	}
+
+	expr, err := cronexpr.Parse(spec)
+	if err != nil {
+		add(SeverityError, KeySyncWindow, "invalid cron expression %q: %v", spec, err)
+		return nil
+	}
+	if expr.Next(neverMatchesFrom).IsZero() {
+		add(SeverityError, KeySyncWindow, "cron expression %q never matches", spec)
+		return nil
+	}
+	d, err := time.ParseDuration(durStr)
+	switch {
+	case err != nil:
+		add(SeverityError, KeySyncWindowDuration, "invalid duration %q: %v", durStr, err)
+		return nil
+	case d <= 0:
+		add(SeverityError, KeySyncWindowDuration, "duration %q must be positive", durStr)
+		return nil
+	}
+
+	switch {
+	case !managed:
+		add(SeverityWarn, KeySyncWindow, "set but %s is not \"true\": ignored", KeyManaged)
+	case policy != PolicyAuto:
+		add(SeverityWarn, KeySyncWindow, "ignored under policy %s: a window gates only what Nops starts on its own (policy auto)", policy)
+	}
+	return &SyncWindow{Spec: spec, Duration: d, expr: expr}
 }
