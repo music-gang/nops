@@ -3,3 +3,5 @@
 *.db-shm
 /nops
 /dist/
+# Downloaded by `vale sync`.
+/.vale/Google/
