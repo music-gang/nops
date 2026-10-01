@@ -222,6 +222,19 @@ func TestPromote(t *testing.T) {
 	}
 }
 
+// The page Promote sends back to shows Nomad after the promotion, not the
+// cached panel from before it.
+func TestPromoteRefreshesTheNomadPanel(t *testing.T) {
+	nom := canaryNomad()
+	ts := newTestServerWithNomad(t, &fakeStore{deployment: applyingDeployment()}, &fakeEngine{}, "", nom)
+	ts.get("/deployments/d1")
+	ts.do("POST", "/deployments/d1/promote", nil, mintSession(t, ts.auth, "alice"))
+	ts.get("/deployments/d1")
+	if nom.jobCalls != 2 {
+		t.Errorf("job calls = %d, want the panel read again after the promotion", nom.jobCalls)
+	}
+}
+
 func TestPromoteNeedsALogin(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")

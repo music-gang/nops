@@ -121,6 +121,7 @@ func (s *server) promote(w http.ResponseWriter, r *http.Request) {
 	err := s.engine.Promote(r.Context(), id, actor)
 	switch {
 	case err == nil:
+		s.dropPanelOf(r, id)
 		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
@@ -135,6 +136,23 @@ func (s *server) promote(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.serverError(w, r, "promote canaries", err)
 	}
+}
+
+// dropPanelOf forgets the cached Nomad panel of a deployment's job, so the page
+// a write sends back to reads what Nomad says after it, not up to panelTTL
+// before. If the deployment cannot be read, the panel is only that old.
+func (s *server) dropPanelOf(r *http.Request, id string) {
+	if s.nomad == nil {
+		return
+	}
+	d, err := s.store.GetDeployment(r.Context(), id)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "read the deployment to refresh its Nomad panel", "deployment_id", id, "error", err)
+		return
+	}
+	s.panels.mu.Lock()
+	defer s.panels.mu.Unlock()
+	delete(s.panels.entries, jobKey(d.Namespace, d.JobID))
 }
 
 // fetchNow is POST /fetch: ask the git watcher for a poll right away, the

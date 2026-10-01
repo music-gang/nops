@@ -250,6 +250,14 @@ func TestE2EPromoteFromTheDashboard(t *testing.T) {
 	if status, _ := e.dash.post(t, page+"/promote", nil); status != http.StatusOK && status != http.StatusSeeOther {
 		t.Fatalf("POST %s/promote answered %d", page, status)
 	}
+	// The page it returns to no longer shows the wait, from nops or from its
+	// cached Nomad panel: not at the next apply cycle, now.
+	_, body = e.dash.get(t, page)
+	for _, stale := range []string{"Waiting for canary promotion in Nomad.", "requires manual promotion", `action="` + page + `/promote"`} {
+		if strings.Contains(body, stale) {
+			t.Errorf("the deployment page still shows %q right after the promotion", stale)
+		}
+	}
 	e.waitState(d2.ID, store.StateCompleted)
 	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("the post-hook did not run after the promotion: %v", err)
