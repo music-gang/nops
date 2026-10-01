@@ -737,6 +737,19 @@ func (e *Engine) Promote(ctx context.Context, id, actor string) error {
 	}
 	e.log.InfoContext(ctx, "canaries promoted", "deployment_id", id, "job", d.JobID, "namespace", d.Namespace,
 		"nomad_deployment", dep.ID, "actor", actor)
+	// Nomad promotes before it answers. The page the person is sent back to
+	// reads the deployment: record the promotion now rather than when the next
+	// apply cycle sees it, which it then records no second time. The canaries
+	// are promoted either way, so a failed write is the apply loop's to redo,
+	// and a deployment the apply loop already moved on has nothing to record.
+	switch wrote, err := e.store.MarkPromoted(ctx, id); {
+	case errors.Is(err, store.ErrStateConflict):
+	case err != nil:
+		e.log.ErrorContext(ctx, "record the promotion of the canaries", "deployment_id", id, "error", err)
+	case wrote:
+		e.log.InfoContext(ctx, "canaries promoted in Nomad: the apply timeout counts again", "deployment_id", id,
+			"apply_timeout", e.applyTimeout)
+	}
 	return nil
 }
 
