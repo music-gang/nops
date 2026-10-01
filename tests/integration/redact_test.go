@@ -82,14 +82,14 @@ func TestRedactRealPlan(t *testing.T) {
 	ctx := context.Background()
 	id := uniqueID(t, raw, "redact")
 
-	v1, err := c.ParseHCL(ctx, probeHCL(id, "old"), "")
+	v1, err := c.ParseHCL(ctx, "default", probeHCL(id, "old"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.RegisterCAS(ctx, v1, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	v2, err := c.ParseHCL(ctx, probeHCL(id, "new"), "")
+	v2, err := c.ParseHCL(ctx, "default", probeHCL(id, "new"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

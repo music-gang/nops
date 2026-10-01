@@ -24,10 +24,11 @@ import (
 
 // Nomad is what the engine needs from Nomad. *nomadx.Client implements it.
 //
-// Every call but ParseHCL names the namespace it acts on; Plan and RegisterCAS
-// take it from the job.
+// Every call names the namespace it acts on; Plan and RegisterCAS take it from
+// the job. For ParseHCL it is the namespace the request is checked in, not the
+// job's.
 type Nomad interface {
-	ParseHCL(ctx context.Context, hcl, vars string) (*api.Job, error)
+	ParseHCL(ctx context.Context, ns, hcl, vars string) (*api.Job, error)
 	Job(ctx context.Context, ns, id string) (*api.Job, error)
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
 	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)

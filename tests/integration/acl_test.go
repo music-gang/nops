@@ -191,7 +191,7 @@ plugin { policy = "read" }`, func(id string) string { return volumeJobHCL(id, "c
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := tokenWith(t, admin, tc.rules)
 			id := uniqueID(t, admin, "acl")
-			job, err := adminX.ParseHCL(ctx, tc.hcl(id), "")
+			job, err := adminX.ParseHCL(ctx, "default", tc.hcl(id), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,7 +247,7 @@ func TestPromoteNeedsSubmitJob(t *testing.T) {
 	id := uniqueID(t, admin, "aclpromote")
 	register := func(tag string) {
 		t.Helper()
-		job, err := adminX.ParseHCL(ctx, canaryHCL(id, tag), "")
+		job, err := adminX.ParseHCL(ctx, "default", canaryHCL(id, tag), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +304,7 @@ func TestNomadPanelReadsWithReadJob(t *testing.T) {
 	defer cancel()
 
 	id := uniqueID(t, admin, "aclpanel")
-	job, err := adminX.ParseHCL(ctx, canaryHCL(id, "v1"), "")
+	job, err := adminX.ParseHCL(ctx, "default", canaryHCL(id, "v1"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,5 +321,24 @@ func TestNomadPanelReadsWithReadJob(t *testing.T) {
 	}
 	if _, err := c.LatestDeployment(ctx, "default", id); err != nil {
 		t.Errorf("LatestDeployment: %v", err)
+	}
+}
+
+// TestParseNeedsNoRuleInDefault checks that parsing a job, which Nops does for
+// every file of the repository, is checked in a namespace Nops manages and not
+// in "default": a token whose only rule is in a listed namespace parses.
+func TestParseNeedsNoRuleInDefault(t *testing.T) {
+	_, admin := aclAdmin(t)
+	ns := newNamespace(t, admin, "aclparse")
+	c, _ := tokenWith(t, admin, `namespace "`+ns+`" {
+  capabilities = ["list-jobs", "read-job", "submit-job", "dispatch-job"]
+}
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	id := uniqueID(t, admin, "aclparse")
+	if _, err := c.ParseHCL(ctx, ns, inNamespace(batchHCL(id, "one"), ns), ""); err != nil {
+		t.Errorf("ParseHCL with a rule in %s only: %v, want it parsed", ns, err)
 	}
 }

@@ -141,7 +141,7 @@ func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 	// Apply it out of band, standing in for a human approving it and
 	// engine-apply carrying it out (this test only exercises detection): the
 	// live job's modify index moves.
-	parsed, err := c.ParseHCL(ctx, managedEnvHCL(jobID, hookID, secret), "")
+	parsed, err := c.ParseHCL(ctx, "default", managedEnvHCL(jobID, hookID, secret), "")
 	if err != nil {
 		t.Fatal(err)
 	}
