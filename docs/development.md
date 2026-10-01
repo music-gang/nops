@@ -305,14 +305,17 @@ PR body. If the branch falls behind `main`, use "Update branch" (or
 `git rebase main`).
 
 Issues go through the two forms in `.github/ISSUE_TEMPLATE/` (blank issues
-are disabled). The kind of an issue is its type: the bug form sets `Bug`, the
-feature form `Feature`, and the rest is a `Task`. Both forms add the
-`needs-triage` label, which the maintainer removes once he has read the issue.
-An issue opened with `gh issue create` skips the forms and gets neither. The
-other labels are `documentation`, and `dependencies` and `go`, which
-Dependabot puts on its PRs. The scope already sits in the
-title (`feat(web): ...`), so it has no label. The open issues are the list
-of work: there is no roadmap file.
+are disabled). An issue's title is plain text ("Retry a failed deployment
+from its page"): the Angular style is for commits and PR titles. The kind of
+an issue is its type: the bug form sets `Bug`, the feature form `Feature`,
+and the rest is a `Task`. Both forms add the `needs-triage` label; the
+maintainer removes it once he has read the issue and adds a label for each
+area it touches: `engine`, `web`, `store`, `meta`, `nomadx`, `hooks`,
+`gitwatch`, `config`, `notify`, `release`, `ci` or `documentation`. An issue
+opened with `gh issue create` skips the forms and gets no type and no label.
+PRs have no labels, since their title already says the type and the scope,
+except `dependencies` and `go`, which Dependabot adds. The open issues are the
+list of work: there is no roadmap file.
 
 | Check | Required | What it runs |
 |---|---|---|
