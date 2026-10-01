@@ -139,6 +139,7 @@ func TestLoadEveryOption(t *testing.T) {
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
+	metricsTok := writeFile(t, "metrics-token", "metrics-secret\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
 
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
@@ -164,6 +165,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
 		"webhook-secret-file":       webhookSecret,
+		"metrics-token-file":        metricsTok,
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
 		"notify-discord-url-file":   discordURL,
@@ -202,6 +204,8 @@ func TestLoadEveryOption(t *testing.T) {
 		ListenAddr:             "127.0.0.1:9000",
 		WebhookSecretFile:      webhookSecret,
 		WebhookSecret:          "webhook-shared-secret",
+		MetricsTokenFile:       metricsTok,
+		MetricsToken:           "metrics-secret",
 		NotifyWebhookURLFile:   webhookURL,
 		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
 		NotifyWebhookTokenFile: webhookTok,
@@ -901,6 +905,7 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
+		{"NOPS_METRICS_TOKEN", "plain-metrics-token", func(c *Config) string { return c.MetricsToken }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
 			map[string]string{"NOPS_NOTIFY_WEBHOOK_URL": "https://n8n.example.com/webhook/plain"}},

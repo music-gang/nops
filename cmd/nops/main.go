@@ -21,6 +21,7 @@ import (
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/hooks"
+	"github.com/music-gang/nops/internal/metrics"
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/notify"
 	"github.com/music-gang/nops/internal/store"
@@ -114,10 +115,18 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("login: %w", err)
 	}
 
+	metricsHandler, err := metrics.Handler(metrics.Options{
+		Store: st, Engine: eng, Git: watcher, Notifier: notifier,
+		Version: version.String(), Token: cfg.MetricsToken, Log: log,
+	})
+	if err != nil {
+		return err
+	}
+
 	handler, err := web.New(web.Options{
 		Auth: auth, Store: st, Engine: eng, Git: watcher, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
-		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Log: log,
+		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)

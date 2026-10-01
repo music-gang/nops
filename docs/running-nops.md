@@ -191,11 +191,11 @@ so the browser and the proxy always see the full, prefixed address. Getting
 this backwards (a proxy that already strips the prefix) makes every link
 Nops renders double it.
 
-`/healthz` is the one exception: it answers at the bare path too, without
-the base path, since an orchestrator's health check (like the
-[example job](#as-a-nomad-job)'s) hits the task's own port directly,
-bypassing whatever prefix a reverse proxy mounts the dashboard under. See
-the [decision log](archive/decisions.md), 2026-09-28.
+`/healthz` and `/metrics` are the exceptions: they answer at the bare path
+too, without the base path, since an orchestrator's health check (like the
+[example job](#as-a-nomad-job)'s) and a Prometheus scrape hit the task's own
+port directly, bypassing whatever prefix a reverse proxy mounts the dashboard
+under. See the [decision log](archive/decisions.md), 2026-09-28.
 
 ## Logging in with OIDC
 

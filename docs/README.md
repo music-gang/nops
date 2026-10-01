@@ -16,6 +16,7 @@ with the [project README](../README.md).
 | run something before or after a deployment (a backup, a migration, a smoke test) | [Hooks](hooks.md) |
 | know what a page of the dashboard shows, or how login works | [Dashboard](dashboard.md) |
 | know what Nops logs, and get notified | [Logs and notifications](logs-and-notifications.md) |
+| watch Nops itself with Prometheus, and get an alert when it is stuck | [Metrics](metrics.md) |
 | look up an option | [Configuration](configuration.md) |
 | look up a `nops_*` meta key | [Meta keys](meta-keys.md) |
 | know what a word means | [Glossary](glossary.md) |

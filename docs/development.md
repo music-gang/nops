@@ -10,6 +10,7 @@
 | `internal/store` | Against **real SQLite** on a temporary file (`t.TempDir()`), not mocks: constraints, the lock index, migrations. |
 | `internal/hooks` | Unit tests with an in-memory fake Nomad, a **real SQLite** store and an injected clock (success, failure, timeout, resume, redispatch with token, Nomad/SQLite errors) + integration with `raw_exec` hooks. |
 | `internal/redact` | Unit: no secret must reach the DB or the HTML, over hand-built diffs and a fixture from a real plan (`testdata/plan_diff.json`) + integration: the same rules on a live plan. |
+| `internal/metrics` | Every metric against fakes of the store, the engine, the git watcher and the notifier (`testutil.CollectAndCompare`, the whole exposition), nothing before the first cycle, the token, and a store error failing the scrape. An end-to-end test scrapes the real binary. |
 | `internal/notify` | `httptest` receivers: the request of every adapter, several adapters at once, and non-2xx, timeout, unreachable and cancelled (a WARN each, no error, no URL in the log). |
 | `internal/gitwatch` | Unit tests against a local bare repository over `file://` (new commit, no change, force-push, coalesced triggers, vars pairing, `-git-path` scoping, a failed fetch keeps the snapshot). Skipped if `git` is not on `PATH`. |
 | `internal/web` | `httptest` for handlers, with fakes for the store, the engine and git and a fixed clock: every page in every state it has (empty, pending, blocked, failed, invalid meta, a store error), the helpers (relative times, the diff summary, sync state, the plan steps), that the whole `spec_hash` is in the approve form and `job_spec` never on a page; the login against a fake OIDC provider (`httptest` serving discovery, keys, token and userinfo, signing real ID tokens), cross-origin refusals and 401/403. No coverage target. |
@@ -65,7 +66,8 @@
   once stopped or restored); `TestE2ERetry*` the retry of
   a blocked job (a failed pre-hook fixed without a commit, and under `approval`
   the retry still waiting for a decision), `TestE2EFetchNow` the "fetch now"
-  button with a one-hour poll interval and `TestE2EOneInstanceManagesSeveralNamespaces`
+  button with a one-hour poll interval, `TestE2EMetrics` a scrape of
+  `/metrics` with a token while a job waits for an approval, and `TestE2EOneInstanceManagesSeveralNamespaces`
   one instance over two namespaces created on the agent (the same job ID in
   both, one `auto` with a hook and one `approval`, and a job in the unlisted
   `default` refused). The hooks write to a
@@ -202,6 +204,7 @@ which place.
 | The first steps on one machine | `getting-started.md`, run again by hand when a step it shows changes |
 | Flag or env var | `internal/config` **and** `configuration.md` (its tables are tested against the options: name, variable, default) |
 | Notification adapter or payload | `internal/notify` **and** `logs-and-notifications.md#notifications` |
+| A metric, its labels or `/metrics` | `internal/metrics` **and** `metrics.md` |
 | A test is renamed or deleted | every page that names it (`docs/docs_test.go` fails otherwise) |
 | A page or a heading is renamed or moved | every link to it (`TestRelativeLinksResolve` fails otherwise) |
 | The Nomad version CI tests against | `ci.yml` (`NOMAD_VERSION`, `NOMAD_SHA256`) **and** the README's *Nomad compatibility* (`docs/docs_test.go` fails otherwise); steps in [Nomad version](#nomad-version) |

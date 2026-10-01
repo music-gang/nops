@@ -41,6 +41,7 @@ whole value on hover.
 | `POST /jobs/{namespace}/{job}/resume` | Calls `Engine.Resume(ctx, namespace, job, actor)`: lifts the pause; the next detection cycle, asked for at once, treats the job as any other. `303` back like retry; `409` when it is not paused (already resumed since the page was rendered); `404` for a namespace Nops does not manage. |
 | `POST /fetch` | Asks the git watcher for a poll now (`Watcher.Trigger`, the same non-blocking trigger as the webhook), instead of waiting for the poll interval. Answers `303` to `/` without waiting for the poll. Served only when the dashboard has a trigger (always, in `cmd/nops`). |
 | `GET /healthz` | `200` with `ok <version>` (`ok v0.1.0`), no session needed: what an orchestrator or a load balancer probes. |
+| `GET /metrics` | The [metrics](metrics.md) for Prometheus, no session needed; the metrics token when one is set. |
 
 ### Sync state of a job
 
@@ -149,7 +150,7 @@ options for each are in [configuration](configuration.md#dashboard):
 
 **Every page needs a login**, reads included: the diff of a deployment says
 what runs on the cluster. Only these are open: `/auth/*` (the login itself),
-the [git webhook](running-nops.md#the-git-webhook) (its own secret), `/healthz` and `/static/*`
+the [git webhook](running-nops.md#the-git-webhook) (its own secret), `/healthz`, [`/metrics`](metrics.md#scraping) (its own optional token) and `/static/*`
 (the stylesheet and htmx, embedded in the binary: nothing in them is secret).
 
 After a login, either backend sends the browser back to the page it asked for

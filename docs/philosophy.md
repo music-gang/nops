@@ -111,4 +111,8 @@ these patterns.
 
 **Deliberately dropped:** the stateless design (Nops needs state for approvals
 and hooks), the `image-only` policy, flap guard and active rollback,
-deregister of jobs (for now: the only thing Nops stops is a hook run that timed out and the hook revisions no deployment needs), Prometheus metrics (for now `slog` is enough).
+deregister of jobs (for now: the only thing Nops stops is a hook run that timed out and the hook revisions no deployment needs).
+Prometheus metrics were on this list too, while `slog` seemed enough. They
+are back, in [metrics](metrics.md), for what no notification says: Nops
+alive but stuck (a git fetch or a store failing every cycle, an approval
+forgotten), which the log alone leaves to someone reading it.
