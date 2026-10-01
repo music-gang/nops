@@ -552,6 +552,32 @@ func TestRunAfterDispatchErrorDoesNotDispatchBlind(t *testing.T) {
 	}
 }
 
+// A dispatch Nomad refused was not created, so there is nothing to look up
+// later: the run fails at once with Nomad's answer instead of ending as an
+// unknown outcome one cycle after.
+func TestRunFailsOnRefusedDispatch(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.dispatchErr = fmt.Errorf("dispatch job hook: %w: Unexpected response code: 403 (Permission denied)", nomadx.ErrDispatchRefused)
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "403 (Permission denied)") || strings.Contains(res.Error, "unknown") {
+		t.Fatalf("result = %+v", res)
+	}
+	if run := h.hookRun(); run.State != store.HookFailed || run.FinishedAt.IsZero() {
+		t.Errorf("stored run = %+v, want failed and finished", run)
+	}
+
+	// The next cycle gets the stored result and does not look for a child.
+	h.nomad.calls = 0
+	if again := mustRun(t, h.runner, h.request("hook", time.Minute)); again != res {
+		t.Errorf("second run = %+v, want %+v", again, res)
+	}
+	if h.nomad.calls != 0 {
+		t.Errorf("a failed run called Nomad %d times", h.nomad.calls)
+	}
+}
+
 func TestRunRecoveryErrorIsRetryable(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)

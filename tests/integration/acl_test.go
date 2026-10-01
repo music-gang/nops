@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -292,6 +293,31 @@ func TestPromoteNeedsSubmitJob(t *testing.T) {
 	submit, _ := tokenWith(t, admin, `namespace "default" { capabilities = ["list-jobs", "read-job", "submit-job"] }`)
 	if err := submit.PromoteDeployment(ctx, "default", dep.ID); err != nil {
 		t.Errorf("promote with submit-job: %v, want it promoted", err)
+	}
+}
+
+// TestDispatchNeedsDispatchJob checks what running-nops.md#the-nomad-token says
+// of the hooks: a token without dispatch-job is refused with 403, and the
+// refusal is the one a run fails on at once (ErrDispatchRefused).
+func TestDispatchNeedsDispatchJob(t *testing.T) {
+	adminX, admin := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	id := uniqueID(t, admin, "acldispatch")
+	hook, err := adminX.ParseHCL(ctx, "default", hookHCL(id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminX.RegisterCAS(ctx, hook, 0, false); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := map[string]string{"nops_deployment_id": "d1", "nops_phase": "pre"}
+	noDispatch, _ := tokenWith(t, admin, `namespace "default" { capabilities = ["list-jobs", "read-job", "submit-job"] }`)
+	_, err = noDispatch.Dispatch(ctx, "default", id, meta, "d1:pre")
+	if !errors.Is(err, nomadx.ErrDispatchRefused) || !strings.Contains(err.Error(), "403 (Permission denied)") {
+		t.Errorf("dispatch without dispatch-job: %v, want ErrDispatchRefused with 403 (Permission denied)", err)
 	}
 }
 
