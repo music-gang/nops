@@ -347,8 +347,8 @@ does: the request is recorded first (an event with the person), then Nomad is
 asked. It refuses unless the deployment is waiting and Nomad still says so
 now (its latest deployment tracks `applied_index`, is `running`, and the
 canaries are healthy and not promoted), so a page a few seconds old cannot
-promote what someone already promoted. The apply loop needs nothing more: it
-sees the canaries promoted, as for a promotion made in Nomad.
+promote what someone already promoted. Once Nomad accepts, the promotion is
+recorded at once, so the timeout restarts from the click.
 
 ### Races with detection
 

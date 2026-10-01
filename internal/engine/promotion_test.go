@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,13 +324,62 @@ func TestPromotePromotesTheCanariesAndRecordsWho(t *testing.T) {
 		t.Errorf("last event when Nomad was asked = %+v, want the request by iacopo (invariant 7)", last)
 	}
 
-	// The apply loop sees the canaries promoted and the timeout counts again.
-	h.clock.Advance(time.Hour)
-	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
-	h.step(h.get(d.ID))
+	// Nomad answered: the canaries are promoted, and the deployment says so
+	// now, not at the next apply cycle, so the page the person is sent back to
+	// no longer asks for a promotion.
 	got := h.get(d.ID)
 	if got.State != store.StateApplying || got.PromotedAt.IsZero() {
-		t.Fatalf("after the promotion: %+v, want applying with promoted_at set", got)
+		t.Fatalf("after Promote: %+v, want applying with promoted_at set", got)
+	}
+}
+
+// The apply loop then sees in Nomad the promotion Promote already recorded: it
+// records it no second time, and the apply timeout counts from the promotion.
+func TestPromoteThenTheApplyLoop(t *testing.T) {
+	h := newHarness(t)
+	d := h.waiting(canaryJob(false, nil))
+	h.clock.Advance(time.Hour) // longer than the apply timeout, which does not run in the wait
+	if err := h.engine.Promote(context.Background(), d.ID, "iacopo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("after the apply step: state %s (%q), want still applying", got.State, got.Error)
+	}
+	evs, _ := h.store.Events(context.Background(), d.ID)
+	promoted := 0
+	for _, ev := range evs {
+		if ev.Message == "canaries promoted in Nomad: the apply timeout counts again" {
+			promoted++
+		}
+	}
+	if promoted != 1 {
+		t.Errorf("promotion recorded %d times, want once: %+v", promoted, evs)
+	}
+}
+
+// The Nomad deployment can finish, and the apply loop move the deployment on,
+// between Nomad promoting and Promote recording it: that is no error.
+func TestPromoteAfterTheApplyLoopMovedOn(t *testing.T) {
+	h := newHarness(t)
+	d := h.waiting(canaryJob(false, nil))
+	var logs bytes.Buffer
+	h.engine.log = slog.New(slog.NewTextHandler(&logs, nil))
+	h.nomad.onPromote = func() {
+		h.nomad.setDeployment("web", &api.Deployment{ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusSuccessful})
+		h.step(h.get(d.ID))
+	}
+
+	if err := h.engine.Promote(context.Background(), d.ID, "iacopo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if got := h.get(d.ID); got.State != store.StateCompleted {
+		t.Fatalf("state = %s, want completed", got.State)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("logged an error for a deployment that finished meanwhile:\n%s", logs.String())
 	}
 }
 
