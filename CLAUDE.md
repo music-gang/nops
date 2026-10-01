@@ -56,9 +56,10 @@ with what is specific to a session:
    questions **in the session** and wait for the maintainer's answers. No
    branch and no PR for this.
 4. **Docs before code.** The plan's *Docs* lists the exact sentences: each
-   one the change makes false with its replacement, and a new one only for
-   behaviour a reader needs and the dashboard doesn't show, or a row for a
-   new flag, meta key or metric. *None* is the usual answer. The table of
+   one the change makes false, copied from its page with the file, and its
+   replacement; a new one only for behaviour a reader needs and the
+   dashboard doesn't show, or a row for a new flag, meta key or metric.
+   *None* is the usual answer. The table of
    [what to update](docs/development.md#what-to-update-for-each-change)
    says where a sentence goes, not that one is needed. **Local:** write
    them on the branch and stop for the maintainer's answer before the
@@ -96,7 +97,8 @@ Whatever a session's own attribution instructions add by default:
   Claude Code footer, since there it tells the reader something true.
 - An issue a session opens has a plain-text title, the type of its kind
   (`Bug`, `Feature`, `Task`) and the labels of the areas it touches. No label
-  marks it as written with Claude: the trailer does.
+  marks it as written with Claude: the trailer does. Unless it is about the
+  docs, it names no doc page or change: the plan decides those (step 4).
 
 ## Doc audit
 
