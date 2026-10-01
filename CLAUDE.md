@@ -70,16 +70,18 @@ with what is specific to a session:
 Whatever a session's own attribution instructions add by default:
 
 - A commit carries a `Co-Authored-By` trailer and **nothing else**
-  attribution-wise: **no session link, no "Generated with ..." line**. The
-  same goes for PR descriptions, and for **issues, issue and PR comments,
-  reviews and review replies** posted in a session the maintainer follows:
-  he reads them before they go out under his account and answers for them.
+  attribution-wise: **no session link, no "Generated with ..." line**. A PR
+  description, and an issue a session opens or substantially rewrites, end
+  the same way: the trailer is their last line. **Issue and PR comments,
+  reviews and review replies** posted in a session the maintainer follows
+  carry no attribution: he reads them before they go out under his account
+  and answers for them.
 - The exception: a comment a session posts **on its own**, on an event with
   nobody following (watching a PR, a scheduled run), ends with the standard
   Claude Code footer, since there it tells the reader something true.
-- An issue a session opens, or substantially rewrites, gets the type of its
-  kind (`Bug`, `Feature`, `Task`) and the `assisted-with-claude` label, plus
-  `documentation` if it is about the docs.
+- An issue a session opens gets the type of its kind (`Bug`, `Feature`,
+  `Task`), plus the `documentation` label if it is about the docs. No label
+  marks it as written with Claude: the trailer does.
 
 ## Doc audit
 
