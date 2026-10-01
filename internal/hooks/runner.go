@@ -195,7 +195,8 @@ func (r *Runner) finish(ctx context.Context, log *slog.Logger, run *store.HookRu
 //
 // The run is saved as running BEFORE the dispatch, so a crash after Nomad
 // accepted it is recognisable on resume (see recoverChild). Saving the child ID
-// comes right after.
+// comes right after. A dispatch Nomad refused (4xx) created nothing, so it fails
+// the run with Nomad's answer; any other error leaves the run for recoverChild.
 func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, run *store.HookRun, deadline time.Time) (res Result, done bool, err error) {
 	if !r.now().Before(deadline) {
 		res, err = r.finish(ctx, log, run, store.HookTimedOut, fmt.Sprintf("timed out after %s before the hook was dispatched", run.Timeout))
@@ -236,6 +237,9 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 	}
 	run.State = store.HookRunning
 	child, err := r.nomad.Dispatch(ctx, req.Namespace, run.HookJobID, dm, run.IdempotencyToken)
+	if errors.Is(err, nomadx.ErrDispatchRefused) {
+		return fail("dispatch of hook job %q: %v", run.HookJobID, err)
+	}
 	if err != nil {
 		return Result{}, false, err
 	}

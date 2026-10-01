@@ -24,6 +24,10 @@ var (
 	// not the expected one (or the job exists/does not exist against
 	// expectations). The caller must re-detect the current state.
 	ErrCASConflict = errors.New("job modify index conflict")
+	// ErrDispatchRefused is returned by Dispatch when Nomad answered with a 4xx:
+	// it did not accept the dispatch, so nothing was created. A 5xx or a
+	// transport error is not this: the dispatch may have gone through.
+	ErrDispatchRefused = errors.New("dispatch refused")
 )
 
 // casConflictMarker is the prefix Nomad puts on every enforce-index failure.
@@ -224,7 +228,7 @@ type DispatchResult struct {
 // Dispatch dispatches a parameterized job. A non-empty idempotencyToken makes
 // Nomad return the existing child if a child with the same token already
 // exists, also after the child has finished (TestDispatch). Nomad rejects meta
-// keys the job does not declare.
+// keys the job does not declare. A 4xx answer wraps ErrDispatchRefused.
 func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
 	wq, err := c.write(ctx, ns)
 	if err != nil {
@@ -232,6 +236,9 @@ func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[str
 	}
 	wq.IdempotencyToken = idempotencyToken
 	resp, _, err := c.jobs.DispatchOpts(&api.DispatchOptions{JobID: parentID, Meta: meta}, wq)
+	if isRefused(err) {
+		return nil, fmt.Errorf("dispatch job %s: %w: %w", parentID, ErrDispatchRefused, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("dispatch job %s: %w", parentID, err)
 	}
@@ -427,6 +434,11 @@ func isCASConflict(err error) bool {
 func isNotFound(err error) bool {
 	var ue api.UnexpectedResponseError
 	return errors.As(err, &ue) && ue.StatusCode() == http.StatusNotFound
+}
+
+func isRefused(err error) bool {
+	var ue api.UnexpectedResponseError
+	return errors.As(err, &ue) && ue.StatusCode() >= 400 && ue.StatusCode() < 500
 }
 
 func deref(s *string) string {

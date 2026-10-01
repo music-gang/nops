@@ -280,6 +280,28 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	}
 }
 
+// Only an answer that says the dispatch was not accepted (a 4xx) is a refusal:
+// after a 5xx the dispatch may have been created.
+func TestDispatchRefused(t *testing.T) {
+	for _, tc := range []struct {
+		status      int
+		wantRefused bool
+	}{
+		{403, true},
+		{400, true},
+		{500, false},
+	} {
+		_, c := newStub(t, tc.status, "Permission denied")
+		_, err := c.Dispatch(context.Background(), "default", "hook", nil, "d1:pre")
+		if err == nil || !strings.Contains(err.Error(), "Permission denied") {
+			t.Errorf("%d: err = %v, want Nomad's answer in it", tc.status, err)
+		}
+		if got := errors.Is(err, ErrDispatchRefused); got != tc.wantRefused {
+			t.Errorf("%d: errors.Is(ErrDispatchRefused) = %v, want %v", tc.status, got, tc.wantRefused)
+		}
+	}
+}
+
 func TestAllocations(t *testing.T) {
 	const body = `[
 	  {"ID":"a1","JobVersion":3,"ClientStatus":"complete","DesiredStatus":"run"},
