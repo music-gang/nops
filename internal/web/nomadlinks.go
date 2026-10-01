@@ -1,17 +1,11 @@
 package web
 
-import "net/url"
+import "github.com/music-gang/nops/internal/nomadx"
 
 // nomadJobURL is the page of a job in the Nomad UI, or "" when the dashboard
-// does not know where a person opens Nomad (-nomad-ui-url unset): no link,
-// never one made from -nomad-addr, which is the address nops uses and often not
-// one a browser can reach. The UI names a job by its ID and namespace in one
-// path segment, so an ID with a "/" (a hook's dispatched child) is escaped.
+// does not know where a person opens Nomad (-nomad-ui-url unset).
 func (s *server) nomadJobURL(namespace, jobID string) string {
-	if s.nomadUI == "" {
-		return ""
-	}
-	return s.nomadUI + "/ui/jobs/" + url.PathEscape(jobID) + "@" + url.PathEscape(namespace)
+	return nomadx.UIJobURL(s.nomadUI, namespace, jobID)
 }
 
 // nomadDeploymentsURL is the Deployments tab of a job in the Nomad UI: where its

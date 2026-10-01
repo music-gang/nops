@@ -31,7 +31,7 @@ func (s staticSnapshot) Changed() <-chan struct{}    { return s.changed }
 
 type noopNotifier struct{}
 
-func (noopNotifier) Notify(context.Context, *store.Deployment) {}
+func (noopNotifier) Notify(context.Context, *store.Deployment, string) {}
 
 // managedEnvHCL is a managed batch job with a pre-hook and a secret
 // environment variable, to exercise redaction end to end.

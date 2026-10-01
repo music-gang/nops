@@ -98,8 +98,9 @@ type Snapshots interface {
 
 // Notifier tells people a deployment needs them. *notify.Notifier implements
 // it. Notify never returns an error: a failed delivery is only ever a WARN.
+// phase is where a failed deployment failed (failedPhase), "" for any other.
 type Notifier interface {
-	Notify(ctx context.Context, d *store.Deployment)
+	Notify(ctx context.Context, d *store.Deployment, phase string)
 }
 
 // jobKey identifies a job: the same ID in two namespaces is two jobs.

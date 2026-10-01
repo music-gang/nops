@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/meta"
+	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -73,7 +74,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		CommitSubj: "subject", CommitAuthor: "me", SpecHash: "hash", SpecShort: "hash", CASIndex: 7, EvalID: "eval", EvalShort: "eval",
 		DecidedBy: "alice", DecidedAt: tv, RetriedBy: "alice", RetriedAt: tv, CreatedAt: tv, UpdatedAt: tv,
 	}
-	summary := summarize(diff)
+	summary := nomadx.Summarize(diff)
 	dd := deploymentDetailData{
 		baseData: baseData{Actor: "alice"}, Deployment: dc, Diff: diff, Summary: summary, CanDecide: true, Notice: "review again",
 		Steps: []planStep{{Kind: "pre", Job: "h", Timeout: "5m"}, {Kind: "register", Text: "Update"}, {Kind: "health"}, {Kind: "post", Job: "p", Timeout: "1m"}},

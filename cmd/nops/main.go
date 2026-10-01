@@ -87,13 +87,15 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	hooksRunner := hooks.New(nomadClient, st, log, cfg.HookPollInterval)
 
 	notifier := notify.New(notify.Options{
-		Webhook:   notify.Endpoint{URL: cfg.NotifyWebhookURL, Token: cfg.NotifyWebhookToken},
-		Discord:   notify.Endpoint{URL: cfg.NotifyDiscordURL},
-		Slack:     notify.Endpoint{URL: cfg.NotifySlackURL},
-		Ntfy:      notify.Endpoint{URL: cfg.NotifyNtfyURL, Token: cfg.NotifyNtfyToken},
-		Gotify:    notify.Endpoint{URL: cfg.NotifyGotifyURL, Token: cfg.NotifyGotifyToken},
-		PublicURL: cfg.PublicURL,
-		Timeout:   cfg.NotifyTimeout,
+		Webhook:    notify.Endpoint{URL: cfg.NotifyWebhookURL, Token: cfg.NotifyWebhookToken},
+		Discord:    notify.Endpoint{URL: cfg.NotifyDiscordURL},
+		Slack:      notify.Endpoint{URL: cfg.NotifySlackURL},
+		Ntfy:       notify.Endpoint{URL: cfg.NotifyNtfyURL, Token: cfg.NotifyNtfyToken},
+		Gotify:     notify.Endpoint{URL: cfg.NotifyGotifyURL, Token: cfg.NotifyGotifyToken},
+		PublicURL:  cfg.PublicURL,
+		CommitURL:  func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
+		NomadUIURL: cfg.NomadUIURL,
+		Timeout:    cfg.NotifyTimeout,
 	}, log)
 
 	watcher := gitwatch.New(gitwatch.Options{

@@ -13,6 +13,7 @@ import (
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
+	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -199,7 +200,7 @@ type deploymentDetailData struct {
 	// Nomad UI; "" without a -nomad-ui-url.
 	NomadURL, NomadDeploymentsURL string
 	Diff                          *api.JobDiff
-	Summary                       diffSummary
+	Summary                       nomadx.DiffSummary
 	Steps                         []planStep // what Approve will do; only while it can be approved
 	Events                        []eventView
 	HookRuns                      []hookRunView
@@ -258,7 +259,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	if !ok {
 		return deploymentDetailData{}, false
 	}
-	diff, err := parseDiff(d.PlanDiff)
+	diff, err := nomadx.ParseDiff(d.PlanDiff)
 	if err != nil {
 		s.serverError(w, r, "parse deployment diff", err)
 		return deploymentDetailData{}, false
@@ -272,7 +273,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		baseData:      s.base(r, ""),
 		Deployment:    s.card(d),
 		Diff:          diff,
-		Summary:       summarize(diff),
+		Summary:       nomadx.Summarize(diff),
 		CanDecide:     d.State == store.StatePendingApproval,
 		Notice:        notice,
 		PromotionWait: d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero(),
