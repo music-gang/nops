@@ -19,6 +19,7 @@ type stub struct {
 	method string
 	path   string
 	query  map[string][]string
+	header http.Header
 	body   []byte
 }
 
@@ -27,7 +28,7 @@ func newStub(t *testing.T, status int, response string) (*stub, *Client) {
 	t.Helper()
 	s := &stub{}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.method, s.path, s.query = r.Method, r.URL.Path, r.URL.Query()
+		s.method, s.path, s.query, s.header = r.Method, r.URL.Path, r.URL.Query(), r.Header.Clone()
 		s.body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(status)
 		io.WriteString(w, response)
@@ -41,6 +42,43 @@ func newStub(t *testing.T, status int, response string) (*stub, *Client) {
 		t.Fatal(err)
 	}
 	return s, c
+}
+
+// A client sends the token it is given and, without one, no token header at
+// all: that is how nops runs against a Nomad with ACLs off (no -nomad-token-file)
+// and against one with them on. NOMAD_TOKEN of the environment is never read
+// (config.Config.Nomad builds the client config), so the test sets both ways
+// itself.
+func TestTokenHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, want string
+	}{
+		{"with a token", "s3cret", "s3cret"},
+		{"without a token", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &stub{}
+			s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				s.header = r.Header.Clone()
+				io.WriteString(w, `[]`)
+			}))
+			t.Cleanup(s.srv.Close)
+			c, err := New(&api.Config{Address: s.srv.URL, SecretID: tc.token})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.ListJobs(context.Background(), "default"); err != nil {
+				t.Fatal(err)
+			}
+			got, present := s.header["X-Nomad-Token"]
+			switch {
+			case tc.want == "" && present:
+				t.Errorf("X-Nomad-Token = %q, want no header", got)
+			case tc.want != "" && (len(got) != 1 || got[0] != tc.want):
+				t.Errorf("X-Nomad-Token = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func testJob(id string) *api.Job {

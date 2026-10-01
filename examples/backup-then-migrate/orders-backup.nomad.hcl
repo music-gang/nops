@@ -18,7 +18,7 @@
 #
 # The Nops token needs `host_volume "db*backup" { policy = "write" }` in its ACL
 # policy: a policy cannot name a volume with `_`, and `*` matches it
-# (docs/configuration.md#token-acl).
+# (docs/running-nops.md#the-nomad-token).
 
 job "orders-backup" {
   datacenters = ["dc1"]
