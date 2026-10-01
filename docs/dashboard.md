@@ -13,8 +13,8 @@ retry, pause, and resume deployments. Every page needs a
 - **Jobs** (`/jobs`): every managed job with its [sync state](#sync-state-of-a-job),
   policy and last deployment, filterable by state.
 - **Job** (`/jobs/{namespace}/{job}`): the job's drift, hooks, sync window,
-  [Nomad panel](#the-nomad-panel), meta issues, and deployments. Retry, pause
-  and resume a job from here.
+  [Nomad panel](#the-nomad-panel), meta issues, and deployments. Pause and
+  resume the job, and retry its failed deployments, from here.
 - **Deployment** (`/deployments/{id}`): the plan diff, the hook runs, the
   timeline and, while it waits for you, what approving does and the
   *Approve* and *Reject* buttons. *Promote* appears when Nomad waits for you

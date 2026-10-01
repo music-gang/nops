@@ -122,7 +122,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Cycle: cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
 			Attention: []attentionItem{
 				{Kind: "pending", KindLabel: "Needs approval", KindClass: "state-pending", Title: "default/web", Path: "/deployments/d1", Detail: "d", When: tv},
-				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/jobs/default/web/retry"},
+				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/deployments/d1/retry"},
 				{Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: "default/old", Path: "/jobs/default/old", Detail: "d"},
 			},
 			InProgress:        []deploymentCard{dc},
@@ -136,7 +136,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", InRepo: true, Policy: meta.PolicyApproval,
 			Sync: syncBlocked, SyncLabel: "Blocked", SyncClass: "state-failed", File: "web.nomad.hcl", Observed: tv,
 			PreHooks: []hookView{{JobID: "a", Timeout: "5m0s"}}, PostHooks: []hookView{{JobID: "b", Timeout: "5m0s"}},
-			Blocked: true, BlockedReason: "why", BlockedBy: "d1", RetryPath: "/jobs/default/web/retry",
+			Blocked: true, BlockedReason: "why", BlockedBy: "d1", RetryPath: "/deployments/d1/retry",
 			Drift: true, Diff: diff, Summary: summary,
 			Issues:      []meta.Issue{{Severity: meta.SeverityError, Key: "k", Message: "m"}, {Severity: meta.SeverityWarn, Key: "k2", Message: "m2"}},
 			Deployments: []deploymentCard{dc},

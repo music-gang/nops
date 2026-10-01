@@ -15,16 +15,26 @@ import (
 )
 
 func TestRetry(t *testing.T) {
-	en := &fakeEngine{}
+	en := &fakeEngine{retryNext: "d2"}
 	ts := newTestServer(t, &fakeStore{}, en, "")
 	cookie := mintSession(t, ts.auth, "alice")
 
-	rec := ts.do("POST", "/jobs/default/web/retry", nil, cookie)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("status %d, Location %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
+	rec := ts.do("POST", "/deployments/d1/retry", nil, cookie)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/deployments/d2" {
+		t.Fatalf("status %d, Location %q, want 303 to the deployment that retries, /deployments/d2", rec.Code, rec.Header().Get("Location"))
 	}
-	if len(en.retryCalls) != 1 || en.retryCalls[0] != (retryCall{"default", "web", "alice"}) {
-		t.Errorf("Retry calls = %+v, want one for default/web by alice", en.retryCalls)
+	if len(en.retryCalls) != 1 || en.retryCalls[0] != (retryCall{"d1", "alice"}) {
+		t.Errorf("Retry calls = %+v, want one for d1 by alice", en.retryCalls)
+	}
+}
+
+// With no deployment to go to (the job is held), the person lands on the one
+// they retried.
+func TestRetryWithNoSuccessorGoesToTheRetriedDeployment(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	rec := ts.do("POST", "/deployments/d1/retry", nil, mintSession(t, ts.auth, "alice"))
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/deployments/d1" {
+		t.Errorf("status %d, Location %q, want 303 to /deployments/d1", rec.Code, got)
 	}
 }
 
@@ -32,9 +42,10 @@ func TestRetry(t *testing.T) {
 // else the form carries (a URL, a path, a "next") never reaches the Location
 // header.
 func TestRetryReturnsToANamedPage(t *testing.T) {
+	dep := &store.Deployment{ID: "d1", JobID: "web", Namespace: "default"}
 	blocked := engine.Observation{JobID: "web", Namespace: "default", BlockedBy: "d1"}
 	for back, want := range map[string]string{
-		"":         "/",
+		"":         "/deployments/d2",
 		"overview": "/",
 		"jobs":     "/jobs",
 		"activity": "/history",
@@ -47,9 +58,9 @@ func TestRetryReturnsToANamedPage(t *testing.T) {
 		"javascript:alert(1)": "/",
 		"JOBS":                "/",
 	} {
-		ts := newTestServer(t, &fakeStore{}, &fakeEngine{observations: []engine.Observation{blocked}}, "")
+		ts := newTestServer(t, &fakeStore{deployment: dep}, &fakeEngine{observations: []engine.Observation{blocked}, retryNext: "d2"}, "")
 		cookie := mintSession(t, ts.auth, "alice")
-		rec := ts.do("POST", "/jobs/default/web/retry", formBody(url.Values{"back": {back}, "next": {back}, "url": {back}}), cookie)
+		rec := ts.do("POST", "/deployments/d1/retry", formBody(url.Values{"back": {back}, "next": {back}, "url": {back}}), cookie)
 		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != want {
 			t.Errorf("back=%q: status %d, Location %q, want 303 to %q", back, rec.Code, got, want)
 		}
@@ -60,11 +71,22 @@ func TestRetryReturnsToANamedPage(t *testing.T) {
 // the engine does not know goes to the Overview rather than to a path made of
 // the request's.
 func TestRetryBackToAJobTheEngineDoesNotKnow(t *testing.T) {
-	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	dep := &store.Deployment{ID: "d1", JobID: "../../evil", Namespace: "default"}
+	ts := newTestServer(t, &fakeStore{deployment: dep}, &fakeEngine{}, "")
 	cookie := mintSession(t, ts.auth, "alice")
-	rec := ts.do("POST", "/jobs/default/..%2F..%2Fevil/retry", formBody(url.Values{"back": {"job"}}), cookie)
+	rec := ts.do("POST", "/deployments/d1/retry", formBody(url.Values{"back": {"job"}}), cookie)
 	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
 		t.Errorf("status %d, Location %q, want 303 to /", rec.Code, got)
+	}
+}
+
+// The old address of a retry, by job, is gone.
+func TestRetryByJobIsGone(t *testing.T) {
+	en := &fakeEngine{}
+	ts := newTestServer(t, &fakeStore{}, en, "")
+	rec := ts.do("POST", "/jobs/default/web/retry", nil, mintSession(t, ts.auth, "alice"))
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed || len(en.retryCalls) != 0 {
+		t.Errorf("status %d, %d Retry calls, want the route gone", rec.Code, len(en.retryCalls))
 	}
 }
 
@@ -86,9 +108,9 @@ func TestRetryErrors(t *testing.T) {
 		code int
 		body string
 	}{
-		{"not blocked", engine.ErrNotBlocked, http.StatusConflict, "Nothing to retry"},
+		{"not retryable", engine.ErrNotRetryable, http.StatusConflict, "Nothing to retry"},
 		{"already retried", store.ErrAlreadyRetried, http.StatusConflict, "Nothing to retry"},
-		{"unknown job", store.ErrNotFound, http.StatusNotFound, "This job does not exist."},
+		{"unknown deployment", store.ErrNotFound, http.StatusNotFound, "Not found"},
 		{"anything else", errors.New("sqlite: disk on fire"), http.StatusInternalServerError, "it has been logged"},
 	}
 	for _, c := range cases {
@@ -97,7 +119,7 @@ func TestRetryErrors(t *testing.T) {
 			ts := newTestServer(t, &fakeStore{}, en, "")
 			cookie := mintSession(t, ts.auth, "alice")
 
-			rec := ts.do("POST", "/jobs/default/web/retry", nil, cookie)
+			rec := ts.do("POST", "/deployments/d1/retry", nil, cookie)
 			if rec.Code != c.code || !strings.Contains(rec.Body.String(), c.body) {
 				t.Fatalf("status %d, want %d with %q; body: %s", rec.Code, c.code, c.body, rec.Body)
 			}
@@ -112,7 +134,7 @@ func TestRetryErrors(t *testing.T) {
 func TestRetryServerErrorIsLogged(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{retryErr: errors.New("disk on fire")}, "")
 	cookie := mintSession(t, ts.auth, "alice")
-	ts.do("POST", "/jobs/default/web/retry", nil, cookie)
+	ts.do("POST", "/deployments/d1/retry", nil, cookie)
 	if logs := ts.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "disk on fire") {
 		t.Errorf("expected the failure at ERROR, got: %s", logs)
 	}
@@ -123,7 +145,7 @@ func TestRetryRefusesCrossOrigin(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, en, "")
 	cookie := mintSession(t, ts.auth, "alice")
 
-	req := httptest.NewRequest("POST", "/jobs/default/web/retry", nil)
+	req := httptest.NewRequest("POST", "/deployments/d1/retry", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

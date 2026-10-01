@@ -120,6 +120,9 @@ type Deployment struct {
 	// reason a job's drift is blocked.
 	RetriedBy string
 	RetriedAt time.Time // zero if not retried
+	// RetryOf is the ID of the failed or rejected deployment this one retries,
+	// empty if it is not a retry.
+	RetryOf string
 	// PromotionWaitSince is when an applying deployment was first seen waiting
 	// for a human to promote the canaries of its Nomad deployment (set by
 	// MarkAwaitingPromotion), PromotedAt when they were seen promoted (set by
@@ -374,10 +377,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
 		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff,
-		 policy, state, error, cas_index, created_at, updated_at)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?)`,
+		 policy, state, error, cas_index, retry_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?)`,
 		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff,
-		string(d.Policy), string(born), d.Error, int64(d.CASIndex), now, now)
+		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
@@ -395,7 +398,11 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 			return fmt.Errorf("create deployment: hook %s/%d: %w", h.Phase, h.Position, err)
 		}
 	}
-	if err := insertEvent(ctx, tx, id, now, "", StateDetected, "nops", fmt.Sprintf("detected at commit %s", d.CommitSHA)); err != nil {
+	detected := fmt.Sprintf("detected at commit %s", d.CommitSHA)
+	if d.RetryOf != "" {
+		detected += fmt.Sprintf(", retry of %s", d.RetryOf)
+	}
+	if err := insertEvent(ctx, tx, id, now, "", StateDetected, "nops", detected); err != nil {
 		return err
 	}
 	switch born {
@@ -533,7 +540,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 
 const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
 	plan_diff, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
-	retried_by, retried_at, promotion_wait_since, promoted_at, created_at, updated_at`
+	retried_by, retried_at, retry_of, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -542,6 +549,7 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		d                                   Deployment
 		plan, eval, errMsg, by, decidedAt   sql.NullString
 		subject, author, retriedBy, retried sql.NullString
+		retryOf                             sql.NullString
 		waitSince, promoted                 sql.NullString
 		applied                             sql.NullInt64
 		cas                                 int64
@@ -549,11 +557,11 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan,
 		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
-		&waitSince, &promoted, &createdAt, &updatedAt); err != nil {
+		&retryOf, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	d.PlanDiff, d.EvalID, d.Error, d.DecidedBy = plan.String, eval.String, errMsg.String, by.String
-	d.CommitSubject, d.CommitAuthor, d.RetriedBy = subject.String, author.String, retriedBy.String
+	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
 	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)
 	var err error
 	if d.DecidedAt, err = parseTime(decidedAt.String); err != nil {
@@ -585,6 +593,20 @@ func (s *Store) GetDeployment(ctx context.Context, id string) (*Deployment, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get deployment %s: %w", id, err)
+	}
+	return d, nil
+}
+
+// RetryOf returns the deployment that retries id, or ErrNotFound if none does
+// (yet: a retry creates it at the next detection cycle).
+func (s *Store) RetryOf(ctx context.Context, id string) (*Deployment, error) {
+	d, err := scanDeployment(s.db.QueryRowContext(ctx, `SELECT `+deploymentCols+` FROM deployments
+		WHERE retry_of = ? ORDER BY created_at DESC, id DESC LIMIT 1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("retry of %s: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("retry of %s: %w", id, err)
 	}
 	return d, nil
 }

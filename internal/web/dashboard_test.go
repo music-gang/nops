@@ -341,7 +341,7 @@ func TestOverviewNeedsAttention(t *testing.T) {
 		// approval: what it is, the subject, where to go
 		"Needs approval", `href="/deployments/d1"`, "feat(web): scale up", ">Review<",
 		// blocked: the reason and the retry, which comes back to the Overview
-		"Blocked", "failed on the same live job; push a new commit or retry it", `action="/jobs/default/web2/retry"`, `name="back" value="overview"`,
+		"Blocked", "failed on the same live job; push a new commit or retry it", `action="/deployments/blk/retry"`, `name="back" value="overview"`,
 		// a failure nobody dealt with
 		"pre-hook failed", `href="/deployments/f1"`,
 		// invalid meta names the error, not the warning
@@ -646,7 +646,7 @@ func TestJobPageBlockedOffersARetryThatComesBack(t *testing.T) {
 
 	page := ts.get("/jobs/default/web")
 	mustContain(t, page, "Blocked.", "failed on the same live job; push a new commit or retry it", `href="/deployments/d1"`,
-		`action="/jobs/default/web/retry"`, `name="back" value="job"`, "Retry</button>")
+		`action="/deployments/d1/retry"`, `name="back" value="job"`, "Retry</button>")
 }
 
 func TestJobPageOnlyDeploymentsRemain(t *testing.T) {
@@ -893,7 +893,8 @@ func TestDeploymentPageThatBlocksItsJobOffersARetry(t *testing.T) {
 	}}
 	page := newTestServer(t, &fakeStore{deployment: d}, en, "").get("/deployments/d1")
 	mustContain(t, page, "This deployment blocks its job.", "failed on the same live job; push a new commit or retry it",
-		`action="/jobs/default/web/retry"`, `name="back" value="job"`, "Retry</button>")
+		`action="/deployments/d1/retry"`, "Retry</button>")
+	mustNotContain(t, page, `name="back"`) // it goes to the deployment that retries it
 
 	// Not the blocker (a newer deployment replaced it, or it was retried): no button.
 	page = newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "").get("/deployments/d1")
@@ -1128,4 +1129,94 @@ func TestJobSyncOrphanHasALabelAndAClass(t *testing.T) {
 	if !syncOrphan.valid() || syncOrphan.label() != "Not in git" || syncOrphan.class() != "state-pending" {
 		t.Errorf("orphan sync state = %q / %q / %q", syncOrphan, syncOrphan.label(), syncOrphan.class())
 	}
+}
+
+// A failed deployment can be retried where it is read even when it blocks
+// nothing (a failed post-hook leaves no drift), and says so.
+func TestDeploymentPageOffersARetryWithoutABlock(t *testing.T) {
+	d := sampleDeployment()
+	d.State, d.AppliedIndex, d.Error = store.StateFailed, 9, "post-hook smoke failed"
+	st := &fakeStore{deployment: d, byJob: []*store.Deployment{d}}
+	en := &fakeEngine{
+		observations: []engine.Observation{{JobID: "web", Namespace: "default", Policy: meta.PolicyAuto}},
+		retryable:    map[string]bool{"d1": true},
+	}
+	page := newTestServer(t, st, en, "").get("/deployments/d1")
+	mustContain(t, page, "This deployment can be retried.", "a retry registers nothing", `action="/deployments/d1/retry"`, "Retry</button>")
+	mustNotContain(t, page, "blocks its job")
+
+	// With drift, the retry is a new deployment of the spec.
+	en.observations[0].Drift = true
+	page = newTestServer(t, st, en, "").get("/deployments/d1")
+	mustContain(t, page, "A retry starts a new deployment of the same spec.")
+	mustNotContain(t, page, "registers nothing")
+
+	// Not the one the engine would take: no button.
+	page = newTestServer(t, st, &fakeEngine{observations: en.observations}, "").get("/deployments/d1")
+	mustNotContain(t, page, "Retry", "/retry")
+}
+
+// Both pages say what retried what: the failed one links to the deployment that
+// retries it, and that one to the failed one.
+func TestRetriedDeploymentsLinkBothWays(t *testing.T) {
+	failed := sampleDeployment()
+	failed.State, failed.RetriedBy, failed.RetriedAt = store.StateFailed, "bob", testNow.Add(-5*time.Minute)
+	next := dep("d2", "web", store.StateApplying, time.Minute)
+	next.RetryOf = "d1"
+
+	page := newTestServer(t, &fakeStore{deployment: failed, retryOf: next}, &fakeEngine{}, "").get("/deployments/d1")
+	mustContain(t, page, "Retried", "bob", ` as <a href="/deployments/d2">Applying</a>`)
+
+	page = newTestServer(t, &fakeStore{deployment: next}, &fakeEngine{}, "").get("/deployments/d2")
+	mustContain(t, page, "Retry of", `href="/deployments/d1"`)
+
+	// Retried, and the job is held: nothing retries it yet.
+	page = newTestServer(t, &fakeStore{deployment: failed}, &fakeEngine{}, "").get("/deployments/d1")
+	mustContain(t, page, "Retried", "bob")
+	mustNotContain(t, page, " as <a")
+}
+
+func TestActivityOffersARetryOnTheDeploymentsTheEngineWouldRetry(t *testing.T) {
+	failed := dep("f1", "web", store.StateFailed, time.Hour)
+	old := dep("f0", "web", store.StateFailed, 2*time.Hour)
+	st := &fakeStore{history: []*store.Deployment{failed, old}, latest: []*store.Deployment{failed}}
+	en := &fakeEngine{retryable: map[string]bool{"f1": true, "f0": true}}
+
+	page := newTestServer(t, st, en, "").get("/history")
+	mustContain(t, page, `action="/deployments/f1/retry"`, `name="back" value="activity"`)
+	mustNotContain(t, page, `/deployments/f0/retry`) // not the latest of its job
+}
+
+func TestJobPageOffersARetryOnItsLatestFailedDeployment(t *testing.T) {
+	failed := dep("d1", "web", store.StateFailed, time.Hour)
+	st := &fakeStore{byJob: []*store.Deployment{failed}}
+	en := &fakeEngine{
+		observations: []engine.Observation{{JobID: "web", Namespace: "default", Policy: meta.PolicyAuto}},
+		retryable:    map[string]bool{"d1": true},
+	}
+	page := newTestServer(t, st, en, "").get("/jobs/default/web")
+	mustContain(t, page, `action="/deployments/d1/retry"`, `name="back" value="job"`)
+	mustNotContain(t, page, "Blocked.")
+}
+
+func TestOverviewFailedItemOffersARetry(t *testing.T) {
+	failed := dep("f1", "web", store.StateFailed, time.Hour)
+	failed.Error = "post-hook smoke failed"
+	st := &fakeStore{latest: []*store.Deployment{failed}}
+	en := &fakeEngine{retryable: map[string]bool{"f1": true}}
+
+	page := newTestServer(t, st, en, "").get("/")
+	mustContain(t, page, "post-hook smoke failed", `action="/deployments/f1/retry"`, `name="back" value="overview"`)
+}
+
+// What Approve will do for a retry with nothing to register: no pre-hook, no
+// register, the health check and the post-hooks.
+func TestReviewOfARetryWithNothingToRegister(t *testing.T) {
+	d := sampleDeployment()
+	d.RetryOf, d.PlanDiff = "d0", ""
+	st := &fakeStore{deployment: d, hooks: sampleHooks()}
+
+	page := newTestServer(t, st, &fakeEngine{}, "").get("/deployments/d1")
+	mustContain(t, page, "Wait for the new version to become healthy.", "Run the post-hook")
+	mustNotContain(t, page, "Run the pre-hook", "Update the job in Nomad", "Create the job in Nomad")
 }

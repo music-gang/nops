@@ -3,7 +3,6 @@ package engine
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -364,13 +363,11 @@ func TestRetryInASecondNamespace(t *testing.T) {
 		t.Fatalf("setup: observations = %+v, want infra/web blocked by %s", obs, d.ID)
 	}
 
-	if err := h.engine.Retry(ctx, "apps", "web", "iacopo"); !errors.Is(err, ErrNotBlocked) {
-		t.Errorf("apps/web: err = %v, want ErrNotBlocked: a job of the same ID in another namespace", err)
-	}
-	if err := h.engine.Retry(ctx, "other", "web", "iacopo"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("other/web: err = %v, want store.ErrNotFound", err)
-	}
-	if err := h.engine.Retry(ctx, "infra", "web", "iacopo"); err != nil {
+	next, err := h.engine.Retry(ctx, d.ID, "iacopo")
+	if err != nil {
 		t.Fatalf("infra/web: %v", err)
+	}
+	if got, err := h.store.GetDeployment(ctx, next); err != nil || got.Namespace != "infra" || got.RetryOf != d.ID {
+		t.Errorf("the retry = %+v, %v; want a deployment of infra/web retrying %s", got, err, d.ID)
 	}
 }

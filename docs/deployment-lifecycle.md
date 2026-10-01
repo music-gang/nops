@@ -40,6 +40,8 @@ After a deployment fails or is rejected, Nops doesn't create the same
 deployment again while nothing changed: the job is **blocked**. A new commit
 unblocks it. So does a person's **retry** from the dashboard: the next
 deployment then follows the policy as usual, and can fail and block again.
+If the live job already matches git, a retry only waits for it to be healthy
+and runs the post-hooks again.
 
 A deployment that failed after its register stays blocked even if the live
 job changes, so Nomad's `auto_revert` can't cause an apply and revert loop.

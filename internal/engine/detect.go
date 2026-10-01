@@ -35,6 +35,8 @@ type parsedFile struct {
 // scoped to the one file or job it came from: it is logged, counted in
 // Status and the cycle continues.
 func (e *Engine) Detect(ctx context.Context) error {
+	e.detectMu.Lock()
+	defer e.detectMu.Unlock()
 	start := e.now()
 	st, err := e.detect(ctx)
 	st.At = e.now()
@@ -312,7 +314,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 
 	obs = Observation{
 		JobID: jobID, Namespace: ns, FilePath: mf.path,
-		Policy: mf.cfg.Policy, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
+		Policy: mf.cfg.Policy, SpecHash: hash, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
 		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
 	}
 	if drift {
@@ -373,7 +375,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 				if err := e.transition(ctx, log, active, store.StateSuperseded, "job modified outside nops"); err != nil {
 					return "", "", err
 				}
-			case !drift:
+			case !drift && !Rerun(active):
 				if err := e.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
 					return "", "", err
 				}
@@ -394,7 +396,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		}
 	}
 
-	if cfg.Policy == meta.PolicyNone || !drift {
+	if cfg.Policy == meta.PolicyNone {
 		return "", "", nil
 	}
 
@@ -404,9 +406,17 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	latest, err := e.store.LatestDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		latest = nil
 	case err != nil:
 		return "", "", fmt.Errorf("latest deployment of %s: %w", jobID, err)
-	default:
+	}
+	// What a person asked to retry gets its deployment even with nothing left to
+	// register, if the failed one had registered: what failed came after it.
+	retrying := latest != nil && retried(latest, hash)
+	if !drift && !(retrying && latest.AppliedIndex != 0) {
+		return "", "", nil
+	}
+	if drift && latest != nil {
 		if blockedBy, blockedReason = blockedRetry(latest, hash, liveIndex); blockedBy != "" {
 			return blockedBy, blockedReason, nil
 		}
@@ -424,6 +434,12 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		JobID: jobID, Namespace: key.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen,
+	}
+	if retrying {
+		d.RetryOf = latest.ID
+		if !drift {
+			d.PlanDiff = ""
+		}
 	}
 	// The deployment is created in the state it stays in until someone acts:
 	// failed when a hook it declares is missing or invalid (nothing to approve,
@@ -496,6 +512,21 @@ func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (bloc
 		return latest.ID, what + " on the same live job; push a new commit or retry it"
 	}
 	return "", ""
+}
+
+// retried reports whether a person asked to retry latest, a failed or rejected
+// deployment of the spec the job has now.
+func retried(latest *store.Deployment, hash string) bool {
+	return (latest.State == store.StateFailed || latest.State == store.StateRejected) &&
+		!latest.RetriedAt.IsZero() && latest.SpecHash == hash
+}
+
+// Rerun reports whether d is a retry with nothing to register: the one it
+// retries failed after its register, so the job is live as the spec says, and
+// what is left is to wait for it to be healthy and to run the post-hooks. It
+// has no plan diff, which is how it is known after a restart.
+func Rerun(d *store.Deployment) bool {
+	return d.RetryOf != "" && d.PlanDiff == ""
 }
 
 // supersedeRemoved supersedes every detected/pending_approval deployment

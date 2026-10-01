@@ -152,6 +152,7 @@
     <span class="row__detail" title="{{.CommitSubj}}">{{if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="muted">no commit message</span>{{end}}</span>
     <span class="row__meta hide-sm">{{if .DecidedBy}}{{.DecidedBy}}{{else}}<span class="muted">&mdash;</span>{{end}}</span>
     <span class="row__when">{{template "time" .CreatedAt}}</span>
+    <span class="row__action">{{if .RetryPath}}<form method="post" action="{{.RetryPath}}"><input type="hidden" name="back" value="job"><button type="submit" class="btn btn--sm">Retry</button></form>{{end}}</span>
   </li>
   {{end}}
 </ul>
@@ -220,7 +221,13 @@
   <section class="flash flash--warn flash--action">
     <div><strong>This deployment blocks its job.</strong> {{.Reason}}</div>
     <form method="post" action="{{.RetryPath}}">
-      <input type="hidden" name="back" value="job">
+      <button type="submit" class="btn btn--sm">Retry</button>
+    </form>
+  </section>
+  {{else with .Retry}}
+  <section class="flash flash--warn flash--action">
+    <div><strong>This deployment can be retried.</strong> {{if .Rerun}}The job is already live as git says: a retry registers nothing, it waits for the job to be healthy and runs the post-hooks again.{{else}}A retry starts a new deployment of the same spec.{{end}}</div>
+    <form method="post" action="{{.Path}}">
       <button type="submit" class="btn btn--sm">Retry</button>
     </form>
   </section>
@@ -346,7 +353,8 @@
       {{if .Deployment.EvalID}}<dt>Eval</dt><dd class="mono" title="{{.Deployment.EvalID}}">{{.Deployment.EvalShort}}</dd>{{end}}
       <dt>Created</dt><dd>{{template "time" .Deployment.CreatedAt}}</dd>
       {{if .Deployment.DecidedBy}}<dt>Decided</dt><dd title="{{.Deployment.DecidedBy}}">{{.Deployment.DecidedBy}} {{template "time" .Deployment.DecidedAt}}</dd>{{end}}
-      {{if .Deployment.RetriedBy}}<dt>Retried</dt><dd title="{{.Deployment.RetriedBy}}">{{.Deployment.RetriedBy}} {{template "time" .Deployment.RetriedAt}}</dd>{{end}}
+      {{if .Deployment.RetryOfPath}}<dt>Retry of</dt><dd><a href="{{.Deployment.RetryOfPath}}">the earlier deployment</a></dd>{{end}}
+      {{if .Deployment.RetriedBy}}<dt>Retried</dt><dd title="{{.Deployment.RetriedBy}}">{{.Deployment.RetriedBy}} {{template "time" .Deployment.RetriedAt}}{{with .RetriedAs}} as <a href="{{.Path}}">{{.StateLabel}}</a>{{end}}</dd>{{end}}
     </dl>
   </section>
 </div>

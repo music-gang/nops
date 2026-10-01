@@ -61,6 +61,11 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "list history", err)
 		return
 	}
+	latest, err := s.latestByJob(r)
+	if err != nil {
+		s.serverError(w, r, "list latest deployments", err)
+		return
+	}
 	all := append(append([]*store.Deployment{}, active...), past...)
 	sort.Slice(all, func(i, j int) bool {
 		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
@@ -91,7 +96,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 			data.Days = append(data.Days, activityDay{Label: label})
 		}
 		day := &data.Days[len(data.Days)-1]
-		day.Rows = append(day.Rows, s.card(d))
+		day.Rows = append(day.Rows, s.withRetry(s.card(d), d, latest[jobKey(d.Namespace, d.JobID)]))
 	}
 	data.Filters = append(data.Filters, filterLink{Label: "All", Count: len(all), Active: filter == ""})
 	for _, f := range activityFilters {
@@ -160,6 +165,14 @@ type blockingView struct {
 	RetryPath string
 }
 
+// retryView is the "Retry" button of a failed or rejected deployment that does
+// not block its job (a failed post-hook leaves no drift to block). Rerun says
+// what it will do: nothing to register, only what came after the register.
+type retryView struct {
+	Path  string
+	Rerun bool
+}
+
 // heldView says a deployment's job is paused, so it cannot be approved, and how
 // to lift the pause.
 type heldView struct {
@@ -171,7 +184,10 @@ type deploymentDetailData struct {
 	baseData
 	Deployment deploymentCard
 	Blocking   *blockingView // set while this deployment blocks its job
-	Paused     *heldView     // set while the deployment's job is paused
+	Retry      *retryView    // set when it can be retried and does not block its job
+	// RetriedAs is the deployment that retries this one, nil while there is none.
+	RetriedAs *deploymentCard
+	Paused    *heldView // set while the deployment's job is paused
 	// PromotionWait is set while the deployment waits for someone to promote the
 	// canaries of its Nomad deployment (the apply timeout does not run meanwhile).
 	PromotionWait bool
@@ -201,16 +217,22 @@ func planSteps(d *store.Deployment, hooks []store.DeploymentHook) []planStep {
 		return planStep{Kind: kind, Job: h.HookID, Revision: strings.TrimPrefix(h.Revision, h.HookID+"-"), Timeout: hookTimeout(h)}
 	}
 	var steps []planStep
-	for _, h := range hooks {
-		if h.Phase == "pre" {
-			steps = append(steps, hookStep("pre", h))
+	if engine.Rerun(d) {
+		// The failed deployment this retries had registered: the job is live as
+		// the spec says, and what is left starts at the health check.
+		steps = append(steps, planStep{Kind: "health"})
+	} else {
+		for _, h := range hooks {
+			if h.Phase == "pre" {
+				steps = append(steps, hookStep("pre", h))
+			}
 		}
+		register := "Create the job in Nomad (it is not registered yet)."
+		if d.CASIndex != 0 {
+			register = fmt.Sprintf("Update the job in Nomad, only if it has not changed since (index %d).", d.CASIndex)
+		}
+		steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
 	}
-	register := "Create the job in Nomad (it is not registered yet)."
-	if d.CASIndex != 0 {
-		register = fmt.Sprintf("Update the job in Nomad, only if it has not changed since (index %d).", d.CASIndex)
-	}
-	steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
 	for _, h := range hooks {
 		if h.Phase == "post" {
 			steps = append(steps, hookStep("post", h))
@@ -259,12 +281,34 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	if d.State == store.StateApplying {
 		data.Nomad = s.nomadPanel(r.Context(), d.Namespace, d.JobID, d.AppliedIndex)
 	}
+	// The latest deployment of the job says whether this one is the head.
+	var latest *store.Deployment
+	if recent, err := s.store.ListByJob(r.Context(), d.Namespace, d.JobID, 1); err != nil {
+		s.log.ErrorContext(r.Context(), "read the latest deployment of the job", "deployment_id", id, "error", err)
+	} else if len(recent) > 0 {
+		latest = recent[0]
+	}
+	retryable := s.engine.Retryable(d, latest)
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {
-			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry"}
+			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.retryPath(d.ID)}
+		}
+		if retryable && data.Blocking == nil && o.Namespace == d.Namespace && o.JobID == d.JobID {
+			data.Retry = &retryView{Path: s.retryPath(d.ID), Rerun: !o.Drift}
 		}
 		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil && o.Hold.Kind == engine.HoldPaused {
 			data.Paused = &heldView{Reason: o.Hold.Reason, ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume"}
+		}
+	}
+	if !d.RetriedAt.IsZero() {
+		next, err := s.store.RetryOf(r.Context(), id)
+		switch {
+		case err == nil:
+			c := s.card(next)
+			data.RetriedAs = &c
+		case !errors.Is(err, store.ErrNotFound): // none yet: the job is held
+			s.serverError(w, r, "read the deployment that retries", err)
+			return deploymentDetailData{}, false
 		}
 	}
 	if data.CanDecide {

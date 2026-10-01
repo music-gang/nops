@@ -129,6 +129,10 @@ type deploymentCard struct {
 	StateClass string
 	Error      string
 	Retried    bool
+	// RetryOf is the deployment this one retries, RetryPath where the "Retry"
+	// button of a deployment that can be retried posts (set where a page shows it).
+	RetryOfPath string
+	RetryPath   string
 
 	CommitSHA    string
 	CommitShort  string
@@ -158,7 +162,7 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		Namespace:    d.Namespace,
 		Title:        d.Namespace + "/" + d.JobID,
 		JobPath:      s.jobPath(d.Namespace, d.JobID),
-		Path:         s.basePath + "/deployments/" + url.PathEscape(d.ID),
+		Path:         s.deploymentPath(d.ID),
 		Policy:       d.Policy,
 		State:        d.State,
 		StateLabel:   stateLabel(d.State),
@@ -182,8 +186,27 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		CreatedAt:    s.when(d.CreatedAt),
 		UpdatedAt:    s.when(d.UpdatedAt),
 	}
+	if d.RetryOf != "" {
+		c.RetryOfPath = s.deploymentPath(d.RetryOf)
+	}
 	if s.commitURL != nil {
 		c.CommitURL = s.commitURL(d.CommitSHA)
+	}
+	return c
+}
+
+func (s *server) deploymentPath(id string) string {
+	return s.basePath + "/deployments/" + url.PathEscape(id)
+}
+
+// retryPath is where the "Retry" button of a deployment posts.
+func (s *server) retryPath(id string) string { return s.deploymentPath(id) + "/retry" }
+
+// withRetry puts the "Retry" button on the card of d if the engine would take
+// it, d being the latest deployment of its job when it is latest.
+func (s *server) withRetry(c deploymentCard, d, latest *store.Deployment) deploymentCard {
+	if s.engine.Retryable(d, latest) {
+		c.RetryPath = s.retryPath(d.ID)
 	}
 	return c
 }

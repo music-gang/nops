@@ -344,8 +344,8 @@ form { margin: 0; }
 
 .row--attention { grid-template-columns: 9.5rem minmax(0, 15rem) minmax(0, 1fr) 4.5rem 4.5rem; }
 .row--progress { grid-template-columns: 9.5rem minmax(0, 15rem) minmax(0, 1fr) 4.5rem; }
-.row--activity { grid-template-columns: 9.5rem minmax(0, 15rem) minmax(0, 1fr) 7rem 5rem; }
-.row--deployment { grid-template-columns: 9.5rem 4.5rem minmax(0, 1fr) 7rem 5rem; }
+.row--activity { grid-template-columns: 9.5rem minmax(0, 15rem) minmax(0, 1fr) 7rem 5rem 4.5rem; }
+.row--deployment { grid-template-columns: 9.5rem 4.5rem minmax(0, 1fr) 7rem 5rem 4.5rem; }
 .row--hook { grid-template-columns: 6rem minmax(0, 14rem) 7rem minmax(0, 1fr) auto; }
 .row--event { grid-template-columns: 5rem 17rem 7rem minmax(0, 1fr); }
 .row--event .row__when { text-align: left; }

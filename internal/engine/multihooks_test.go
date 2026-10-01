@@ -352,10 +352,10 @@ func TestASecondHookMissingFromTheRepoFailsAtDetection(t *testing.T) {
 }
 
 func TestRoutingUsesTheLengthOfTheLists(t *testing.T) {
-	if got := nextAfterDecision(managed("web", "auto", map[string]string{"nops_pre_hook": "a,b"})); got != store.StatePreHook {
+	if got := nextAfterDecision(&store.Deployment{}, managed("web", "auto", map[string]string{"nops_pre_hook": "a,b"})); got != store.StatePreHook {
 		t.Errorf("with pre-hooks: %s", got)
 	}
-	if got := nextAfterDecision(managed("web", "auto", map[string]string{"nops_post_hook": "a,b"})); got != store.StateApplying {
+	if got := nextAfterDecision(&store.Deployment{}, managed("web", "auto", map[string]string{"nops_post_hook": "a,b"})); got != store.StateApplying {
 		t.Errorf("with post-hooks only: %s, want applying", got)
 	}
 	h := newHarness(t)

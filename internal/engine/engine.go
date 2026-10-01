@@ -63,8 +63,9 @@ type Store interface {
 	// GetHookRun is used by the hook step to time a registration that keeps
 	// failing from the end of the previous hook.
 	GetHookRun(ctx context.Context, deploymentID, phase string, position int) (*store.HookRun, error)
-	// MarkRetried is used by Retry (see docs/deployment-lifecycle.md).
+	// MarkRetried and RetryOf are used by Retry (see docs/deployment-lifecycle.md).
 	MarkRetried(ctx context.Context, id, actor string) error
+	RetryOf(ctx context.Context, id string) (*store.Deployment, error)
 	// SetApplied and AppliedSince are used by apply (see docs/archive/engine-apply.md).
 	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
 	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
@@ -116,6 +117,9 @@ type Observation struct {
 	FilePath  string
 	// Policy is the effective policy read from the job's meta, including "none".
 	Policy meta.Policy
+	// SpecHash is the spec hash a deployment of this job would have now: what a
+	// failed deployment must match to be retried.
+	SpecHash string
 	// Drift is true when the live job differs from the one in git.
 	Drift bool
 	// PlanDiff is the redacted JSON diff, empty when there is no drift.
@@ -218,6 +222,11 @@ type Engine struct {
 	syncLoc        *time.Location // the zone the sync windows are read in
 	now            func() time.Time
 
+	// detectMu keeps two detection cycles from running at once (the loop's, and
+	// the one a retry runs for the page it returns to): the later one to finish
+	// would replace the observations of the other with older ones.
+	detectMu sync.Mutex
+
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[jobKey]Observation
@@ -226,8 +235,8 @@ type Engine struct {
 	// applyAt is when the apply loop last listed the active deployments.
 	applyAt time.Time
 
-	// kick asks the detection loop for a cycle now (Retry, a deployment closed
-	// by apply or a human).
+	// kick asks the detection loop for a cycle now (a deployment closed by
+	// apply or a human, a pause).
 	kick chan struct{}
 
 	applyMu  sync.Mutex
@@ -296,7 +305,7 @@ func New(o Options) *Engine {
 }
 
 // RunDetection runs one cycle immediately, then again on every new commit
-// (Snapshots.Changed), on every DriftInterval tick and when Retry asks for
+// (Snapshots.Changed), on every DriftInterval tick and when a write asks for
 // one, until ctx is done.
 func (e *Engine) RunDetection(ctx context.Context) {
 	e.runOnce(ctx)

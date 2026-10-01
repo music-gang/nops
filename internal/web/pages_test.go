@@ -39,6 +39,18 @@ type fakeStore struct {
 	hookErr    error
 	hooks      []store.DeploymentHook // what DeploymentHooks returns, whatever the deployment
 	hooksErr   error
+	retryOf    *store.Deployment // what RetryOf returns, ErrNotFound if nil
+	retryOfErr error
+}
+
+func (f *fakeStore) RetryOf(ctx context.Context, id string) (*store.Deployment, error) {
+	if f.retryOfErr != nil {
+		return nil, f.retryOfErr
+	}
+	if f.retryOf == nil {
+		return nil, store.ErrNotFound
+	}
+	return f.retryOf, nil
 }
 
 func (f *fakeStore) DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error) {
@@ -112,7 +124,7 @@ func (f *fakeStore) ListHookRuns(ctx context.Context, deploymentID string) ([]*s
 
 type approveCall struct{ id, specHash, actor string }
 type rejectCall struct{ id, actor string }
-type retryCall struct{ namespace, job, actor string }
+type retryCall struct{ id, actor string }
 type promoteCall struct{ id, actor string }
 type pauseCall struct{ namespace, job, actor, reason string }
 type resumeCall struct{ namespace, job, actor string }
@@ -121,6 +133,8 @@ type fakeEngine struct {
 	approveErr   error
 	rejectErr    error
 	retryErr     error
+	retryNext    string          // what Retry answers: the deployment that retries; the one asked about if empty
+	retryable    map[string]bool // by deployment ID
 	promoteErr   error
 	pauseErr     error
 	resumeErr    error
@@ -145,9 +159,19 @@ func (f *fakeEngine) Reject(ctx context.Context, id, actor string) error {
 	return f.rejectErr
 }
 
-func (f *fakeEngine) Retry(ctx context.Context, namespace, jobID, actor string) error {
-	f.retryCalls = append(f.retryCalls, retryCall{namespace, jobID, actor})
-	return f.retryErr
+func (f *fakeEngine) Retry(ctx context.Context, id, actor string) (string, error) {
+	f.retryCalls = append(f.retryCalls, retryCall{id, actor})
+	if f.retryErr != nil {
+		return "", f.retryErr
+	}
+	if f.retryNext != "" {
+		return f.retryNext, nil
+	}
+	return id, nil
+}
+
+func (f *fakeEngine) Retryable(d, latest *store.Deployment) bool {
+	return f.retryable[d.ID] && latest != nil && latest.ID == d.ID
 }
 
 func (f *fakeEngine) Promote(ctx context.Context, id, actor string) error {
@@ -348,7 +372,7 @@ func TestPagesRequireLogin(t *testing.T) {
 		}
 	}
 
-	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject", "/jobs/default/web/retry", "/fetch"}
+	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject", "/deployments/d1/retry", "/fetch"}
 	for _, p := range postPaths {
 		rec := ts.do("POST", p, nil)
 		if rec.Code != http.StatusUnauthorized {

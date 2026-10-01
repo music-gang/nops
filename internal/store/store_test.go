@@ -488,8 +488,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 6 {
-		t.Errorf("user_version = %d, %v; want 6", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 7 {
+		t.Errorf("user_version = %d, %v; want 7", v, err)
 	}
 }
 
@@ -1391,5 +1391,47 @@ func TestCreateDeploymentRefusesAStateItCannotBeBornIn(t *testing.T) {
 	}
 	if _, err := s.LatestDeployment(ctx, "default", "web"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a refused deployment left a row behind: %v", err)
+	}
+}
+
+func TestRetryOfLinksARetryToTheDeploymentItRetries(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	failed := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, failed.ID, StateFailed, Transition{From: StateDetected, Actor: "nops", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RetryOf(ctx, failed.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RetryOf before any retry: err = %v, want ErrNotFound", err)
+	}
+	if err := s.MarkRetried(ctx, failed.ID, "iacopo"); err != nil {
+		t.Fatal(err)
+	}
+
+	again := newDep("web")
+	again.RetryOf = failed.ID
+	mustCreate(t, s, again)
+
+	got, err := s.GetDeployment(ctx, again.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryOf != failed.ID {
+		t.Errorf("RetryOf of the new deployment = %q, want %q", got.RetryOf, failed.ID)
+	}
+	next, err := s.RetryOf(ctx, failed.ID)
+	if err != nil || next.ID != again.ID {
+		t.Fatalf("RetryOf(%s) = %+v, %v; want %s", failed.ID, next, err, again.ID)
+	}
+	if first, err := s.GetDeployment(ctx, failed.ID); err != nil || first.RetryOf != "" {
+		t.Errorf("the retried deployment is not itself a retry: %+v, %v", first, err)
+	}
+	evs, err := s.Events(ctx, again.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "detected at commit abc1234, retry of " + failed.ID; evs[0].Message != want {
+		t.Errorf("first event = %q, want %q", evs[0].Message, want)
 	}
 }

@@ -3,42 +3,54 @@ package web
 import (
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/store"
 )
 
-// retry is POST /jobs/{namespace}/{job}/retry: unblock a job whose drift is
-// suppressed by a failed or rejected deployment, without a new commit
-// (Engine.Retry). It never applies anything: the next deployment follows the
-// job's policy, so under "approval" it still waits for a human decision.
+// retry is POST /deployments/{id}/retry: try a failed or rejected deployment
+// again, without a new commit (Engine.Retry). It never applies anything: the
+// deployment it creates follows the job's policy, so under "approval" it still
+// waits for a human decision. Engine.Retry has run the detection cycle that
+// creates it by the time it answers, so the page the person lands on already
+// shows it.
 //
 // The form's "back" names the page to return to (see backTo): nothing the
-// browser sends reaches the Location header as a path or URL.
+// browser sends reaches the Location header as a path or URL. Without one the
+// person goes to the deployment that retries this one.
 func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFrom(r.Context())
 	if !ok {
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}
-	ns, job := r.PathValue("namespace"), r.PathValue("job")
-	err := s.engine.Retry(r.Context(), ns, job, actor)
+	id := r.PathValue("id")
+	next, err := s.engine.Retry(r.Context(), id, actor)
 	switch {
 	case err == nil:
-		http.Redirect(w, r, s.backTo(r.FormValue("back"), ns, job), http.StatusSeeOther)
+		http.Redirect(w, r, s.afterRetry(r, id, next), http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
-		s.notFoundMessage(w, r, "This job does not exist.")
-	case errors.Is(err, engine.ErrNotBlocked), errors.Is(err, store.ErrAlreadyRetried):
-		w.WriteHeader(http.StatusConflict)
-		s.render(w, r, "error", errorData{
-			baseData: s.base(r, ""),
-			Status:   http.StatusConflict,
-			Title:    "Nothing to retry",
-			Message:  "This job is no longer blocked: it was already retried, or a newer deployment replaced the failed one.",
-		})
+		s.notFound(w, r)
+	case errors.Is(err, engine.ErrNotRetryable), errors.Is(err, store.ErrAlreadyRetried):
+		s.conflict(w, r, "Nothing to retry", "This deployment can no longer be retried: it was already retried, a newer deployment replaced it, or git has another spec for the job now.")
 	default:
-		s.serverError(w, r, "retry job", err)
+		s.serverError(w, r, "retry deployment", err)
 	}
+}
+
+// afterRetry is where a retry sends the person: the page the form named, or the
+// deployment that retries the one they asked about.
+func (s *server) afterRetry(r *http.Request, id, next string) string {
+	back := r.FormValue("back")
+	if back == "" {
+		return s.basePath + "/deployments/" + url.PathEscape(next)
+	}
+	var ns, job string
+	if d, err := s.store.GetDeployment(r.Context(), id); err == nil {
+		ns, job = d.Namespace, d.JobID
+	}
+	return s.backTo(back, ns, job)
 }
 
 // pause is POST /jobs/{namespace}/{job}/pause: hold a job so nops starts no new
