@@ -18,6 +18,7 @@
       <span class="row__detail" title="{{if .Error}}{{.Error}}{{else}}{{.CommitSubj}}{{end}}">{{if .Error}}<span class="text-failed">{{.Error}}</span>{{else if .CommitSubj}}{{.CommitSubj}}{{else}}<span class="mono muted">{{.CommitShort}}</span>{{end}}</span>
       <span class="row__meta hide-sm">{{if .DecidedBy}}{{.DecidedBy}}{{end}}</span>
       <span class="row__when">{{template "time" .CreatedAt}}</span>
+      <span class="row__action">{{if .RetryPath}}<form method="post" action="{{.RetryPath}}"><input type="hidden" name="back" value="activity"><button type="submit" class="btn btn--sm">Retry</button></form>{{end}}</span>
     </li>
     {{end}}
   </ul>

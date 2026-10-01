@@ -48,10 +48,11 @@ type Store interface {
 	Events(ctx context.Context, deploymentID string) ([]store.Event, error)
 	ListHookRuns(ctx context.Context, deploymentID string) ([]*store.HookRun, error)
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
+	RetryOf(ctx context.Context, id string) (*store.Deployment, error)
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to
-// retry a blocked job, to pause and resume a job, to promote the canaries of a
+// retry a failed or rejected one, to pause and resume a job, to promote the canaries of a
 // deployment that waits for it and to read the drift of "none"-policy jobs.
 // *engine.Engine implements it.
 type Engine interface {
@@ -59,7 +60,8 @@ type Engine interface {
 	Reject(ctx context.Context, id, actor string) error
 	Observations() []engine.Observation
 	Orphans() []engine.Orphan
-	Retry(ctx context.Context, namespace, jobID, actor string) error
+	Retry(ctx context.Context, id, actor string) (string, error)
+	Retryable(d, latest *store.Deployment) bool
 	Promote(ctx context.Context, id, actor string) error
 	Pause(ctx context.Context, namespace, jobID, actor, reason string) error
 	Resume(ctx context.Context, namespace, jobID, actor string) error
@@ -266,7 +268,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("POST /deployments/{id}/approve", s.auth.Require(http.HandlerFunc(s.approve)))
 	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
 	mux.Handle("POST /deployments/{id}/promote", s.auth.Require(http.HandlerFunc(s.promote)))
-	mux.Handle("POST /jobs/{namespace}/{job}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
+	mux.Handle("POST /deployments/{id}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
 	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.auth.Require(http.HandlerFunc(s.pause)))
 	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.auth.Require(http.HandlerFunc(s.resume)))
 	if s.trigger != nil {

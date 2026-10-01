@@ -43,7 +43,7 @@ disagrees with this one, this page wins. Code-only terms are in
 | **supersede** | Replace a deployment that hasn't started applying with a newer one. |
 | **revalidation** | Re-checking every pending deployment on each detection cycle. |
 | **blocked drift** | Drift Nops doesn't redeploy after a failure or a rejection. A **retry** or a new commit unblocks it. |
-| **retry** | A person unblocking a blocked drift. The next deployment follows the policy. |
+| **retry** | A person trying a failed or rejected deployment again. The new deployment follows the policy. |
 | **hold** | Something that keeps Nops from starting a deployment for a job: a **pause** or a closed **sync window**. |
 | **pause / resume** | A person holding a job and releasing it. |
 | **sync window** | When an `auto` job may deploy on its own ([policies](policies.md#sync-window)). |

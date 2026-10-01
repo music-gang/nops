@@ -144,9 +144,13 @@ func parseJobSpec(d *store.Deployment) (*api.Job, error) {
 
 // nextAfterDecision picks pre_hook or applying for a deployment about to
 // start applying: pre_hook if the target spec declares any nops_pre_hook, else
-// applying straight away. Used both for an auto deployment leaving detected
-// and for Approve leaving pending_approval.
-func nextAfterDecision(job *api.Job) store.State {
+// applying straight away. A rerun has no register to prepare for: it goes
+// straight to applying. Used both for an auto deployment leaving detected and
+// for Approve leaving pending_approval.
+func nextAfterDecision(d *store.Deployment, job *api.Job) store.State {
+	if Rerun(d) {
+		return store.StateApplying
+	}
 	if len(meta.Parse(job.Meta).PreHooks) > 0 {
 		return store.StatePreHook
 	}
@@ -184,7 +188,7 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 		e.kickDetection()
 		return
 	}
-	e.applyTransition(ctx, log, d, nextAfterDecision(job), "")
+	e.applyTransition(ctx, log, d, nextAfterDecision(d, job), "")
 }
 
 // stepHook runs the deployment's hooks for phase ("pre" or "post"), one after
@@ -335,21 +339,27 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 			e.registerRetry(ctx, log, d, err)
 			return
 		}
-		if plan.Diff == nil || plan.Diff.Type == "None" {
+		switch {
+		case plan.Diff != nil && plan.Diff.Type != "None":
+			res, err := e.nomad.RegisterCAS(ctx, job, d.CASIndex, false)
+			if err != nil {
+				if errors.Is(err, nomadx.ErrCASConflict) {
+					e.applyTransition(ctx, log, d, store.StateFailed, "job modified outside nops: "+err.Error())
+					return
+				}
+				log.ErrorContext(ctx, "register", "error", err)
+				e.registerRetry(ctx, log, d, err)
+				return
+			}
+			evalID = res.EvalID
+		case Rerun(d):
+			// Nothing to register, and nothing is: the plan is empty (invariant
+			// 1). The live job is the one this retry waits on, as when a register
+			// went through before a crash.
+		default:
 			e.applyTransition(ctx, log, d, store.StateCompleted, "already in sync")
 			return
 		}
-		res, err := e.nomad.RegisterCAS(ctx, job, d.CASIndex, false)
-		if err != nil {
-			if errors.Is(err, nomadx.ErrCASConflict) {
-				e.applyTransition(ctx, log, d, store.StateFailed, "job modified outside nops: "+err.Error())
-				return
-			}
-			log.ErrorContext(ctx, "register", "error", err)
-			e.registerRetry(ctx, log, d, err)
-			return
-		}
-		evalID = res.EvalID
 	} else {
 		// The live index moved since detection: either the register already
 		// happened (a crash between it succeeding and the next step) or a
@@ -677,7 +687,7 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	if err != nil {
 		return fmt.Errorf("approve %s: %w", id, err)
 	}
-	next := nextAfterDecision(job)
+	next := nextAfterDecision(d, job)
 	t := store.Transition{From: d.State, Actor: actor, Message: "approved", DecidedBy: actor}
 	if err := e.store.Transition(ctx, id, next, t); err != nil {
 		return fmt.Errorf("approve %s: %w", id, err)

@@ -325,7 +325,7 @@ type jobData struct {
 	Blocked                 bool
 	BlockedReason           string
 	BlockedBy               string
-	RetryPath               string // where the "Retry" button posts, set when Blocked
+	RetryPath               string // where the "Retry" button of the blocking deployment posts, set when Blocked
 	Paused                  *pauseView
 	Held                    string // why a closed sync window holds a drifting job, "" otherwise
 	Window                  *windowView
@@ -372,7 +372,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	data.Nomad = s.nomadPanel(r.Context(), ns, id, 0)
 	data.NomadURL = s.nomadJobURL(ns, id)
 	for _, d := range deps {
-		data.Deployments = append(data.Deployments, s.card(d))
+		data.Deployments = append(data.Deployments, s.withRetry(s.card(d), d, deps[0]))
 	}
 	if orphan != nil {
 		data.Orphan = &orphanView{NomadStatus: orphan.NomadStatus, StopCommand: "nomad job stop -namespace " + orphan.Namespace + " " + orphan.JobID}
@@ -396,7 +396,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
 		if data.Blocked {
-			data.RetryPath = s.jobPath(ns, id) + "/retry"
+			data.RetryPath = s.retryPath(obs.BlockedBy)
 		}
 		// A pause can be lifted here; a closed sync window cannot, it only
 		// opens, and a job it holds can still be paused.
@@ -431,7 +431,8 @@ type attentionItem struct {
 	Path      string // where to act: a deployment or a job
 	Detail    string
 	When      timeView
-	// RetryPath, when set, is where the "Retry" button of a blocked job posts.
+	// RetryPath, when set, is where the "Retry" button of the deployment posts: the
+	// one that blocks the job, or the failed one.
 	RetryPath string
 	// ResumePath, when set, is where the "Resume" button of a paused job posts.
 	ResumePath string
@@ -466,7 +467,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		blocking[o.BlockedBy] = true
 		it := attentionItem{
 			Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: o.Namespace + "/" + o.JobID,
-			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason, RetryPath: s.jobPath(o.Namespace, o.JobID) + "/retry",
+			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason, RetryPath: s.retryPath(o.BlockedBy),
 		}
 		if d := latest[jobKey(o.Namespace, o.JobID)]; d != nil {
 			it.When = s.when(d.UpdatedAt)
@@ -489,6 +490,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		}
 		items = append(items, attentionItem{
 			Kind: "failed", KindLabel: "Failed", KindClass: "state-failed", Title: c.Title, Path: c.Path, Detail: detail, When: s.when(d.UpdatedAt),
+			RetryPath: s.withRetry(c, d, d).RetryPath,
 		})
 	}
 

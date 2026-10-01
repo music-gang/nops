@@ -47,7 +47,7 @@ func TestAHoldDoesNotHideABlock(t *testing.T) {
 			if obs.BlockedBy != failed.ID {
 				t.Errorf("BlockedBy = %q, want %q: the failed deployment still blocks the job", obs.BlockedBy, failed.ID)
 			}
-			if err := h.engine.Retry(context.Background(), testNamespace, "web", "iacopo"); err != nil {
+			if _, err := h.retryOf(failed.ID); err != nil {
 				t.Fatalf("Retry of a blocked job that is held: %v, want the block lifted", err)
 			}
 			h.detect()
