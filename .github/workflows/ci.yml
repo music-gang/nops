@@ -69,6 +69,21 @@ jobs:
         with:
           version: v2.18.2
           args: check
+      # Prose lint of the docs with the Google style (docs/development.md#writing-docs).
+      # Pinned version and checksum: bump both by hand. Any alert fails the step.
+      - name: vale
+        env:
+          VALE_VERSION: "3.23.0"
+          VALE_SHA256: cc35445a45186b8f0b01e11c01359694cf941e72cf6ab0fc44774f0e54c9d5fc
+        run: |
+          tarball="vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          curl -sSfLO "https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}/${tarball}"
+          echo "${VALE_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" vale
+          ./vale sync
+          ./vale --output=line docs README.md CONTRIBUTING.md > vale.out || true
+          cat vale.out
+          test ! -s vale.out
 
   integration:
     name: integration

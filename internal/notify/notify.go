@@ -243,7 +243,7 @@ const (
 	colorFailed           = 0xD03030
 	colorPending          = 0xE0A000
 	// colorCompleted matches the dashboard's own "completed" colour
-	// (docs/development.md#look-and-technology, --success in app.css).
+	// (docs/development.md#the-dashboards-code, --success in app.css).
 	colorCompleted = 0x1A7F37
 )
 

@@ -1,21 +1,20 @@
 # Getting started
 
-In about fifteen minutes on one machine: run Nomad in development mode, point
-Nops at a local git repository holding one of the [examples](../examples/),
-approve its first deployment from the dashboard, then let a commit deploy on
-its own.
+In this tutorial you run Nomad and Nops on one machine, approve a first
+deployment from the dashboard, then let a commit deploy on its own. It takes
+about fifteen minutes.
 
 ## What you need
 
-- **Linux with Docker running**: the example runs containers.
+- **Linux with Docker running.**
 - **[Nomad](https://developer.hashicorp.com/nomad/install)**, the version in
   the README's [Nomad compatibility](../README.md#nomad-compatibility).
 - **git**, and a clone of this repository for the example:
   `git clone https://github.com/music-gang/nops`.
 - **Nops**: the `linux/amd64` binary from the
   [Releases](https://github.com/music-gang/nops/releases) page, or
-  `go install github.com/music-gang/nops/cmd/nops@latest`. Not the container
-  image for this guide: it has no `git`, which a `file://` repository needs.
+  `go install github.com/music-gang/nops/cmd/nops@latest`. The container
+  image can't read the local repository this tutorial uses.
 - **`htpasswd`** (`apache2-utils` on Debian and Ubuntu), or Docker to run it.
 
 ## 1. Start Nomad
@@ -24,13 +23,9 @@ its own.
 sudo nomad agent -dev -bind 0.0.0.0 -network-interface eth0
 ```
 
-Replace `eth0` with your machine's main network interface
-(`ip route show default` prints it after `dev`). Plain `nomad agent -dev`
-gives every service the address `127.0.0.1`, which the example's smoke test,
-running in a container of its own, cannot reach.
-
-Leave it running. In another terminal, `nomad node status` shows one node,
-`ready`.
+Replace `eth0` with your main network interface, shown after `dev` by
+`ip route show default`. Leave Nomad running.
+In another terminal, `nomad node status` shows one node, `ready`.
 
 ## 2. Make a repository of jobs
 
@@ -48,9 +43,9 @@ It holds three files:
 
 | File | What it is |
 |---|---|
-| `web.nomad.hcl` | A small web service. Its `meta` block makes Nops manage it (`nops_managed`), under the policy `approval` (`nops_policy`), with `web-smoke` run after each deployment (`nops_post_hook`). |
-| `web-smoke.nomad.hcl` | The hook: a parameterized batch job that calls the service once it is up. |
-| `web.vars.hcl` | The values of `web`'s variables: its image and how many instances. |
+| `web.nomad.hcl` | A web service under policy `approval`, with `web-smoke` as a post-hook. |
+| `web-smoke.nomad.hcl` | The hook: calls the service once it is up. |
+| `web.vars.hcl` | The service's image and instance count. |
 
 ## 3. Make a user for the dashboard
 
@@ -70,27 +65,19 @@ docker run --rm httpd:2.4-alpine htpasswd -nbB admin change-me > users
 nops -git-url "file://$PWD/nops-jobs" -auth-mode basic -users-file users -git-poll-interval 10s
 ```
 
-Everything else is the default: Nomad at `http://127.0.0.1:4646`, the
-dashboard on port 8080, the database in `nops.db` in the current directory.
-`-git-poll-interval 10s` makes Nops notice a commit within seconds instead of
-the default minute. Every option is in [configuration](configuration.md).
-
-Nops logs one JSON line per event. Its first cycle finds that `web` is in git
-but not in Nomad, and logs `deployment pending_approval` for it.
+Nops finds that `web` is in git but not in Nomad, and logs
+`deployment pending_approval` for it.
 
 ## 5. Approve the first deployment
 
 Open <http://localhost:8080> and log in as `admin`, password `change-me`.
 
-The Overview lists `web` as waiting for approval. Its page shows the
-difference with the cluster (the whole job, since it does not exist yet) and
-what *Approve* will do. Approve it.
+The Overview lists `web` as waiting for approval. Open it, check the diff and
+click *Approve*.
 
 Nops registers the job, waits for it to be healthy, then runs `web-smoke`.
-Within a minute the deployment is **completed**, and the log shows each step:
-`deployment approved`, `apply registered`, `deployment post_hook`,
-`hook succeeded`, `deployment completed`. `nomad job status web` shows it
-running.
+Within a minute the deployment is **completed**, and `nomad job status web`
+shows it running.
 
 ## 6. Let a commit deploy on its own
 
@@ -105,26 +92,22 @@ git commit -am "web: deploy on its own, two instances"
 cd ..
 ```
 
-Within a few seconds Nops fetches the commit, plans it and applies it without
-asking anyone, then runs the smoke test again. `nomad job status web` shows
-two instances running.
+Within a few seconds Nops deploys the commit without asking, then runs the
+smoke test again. `nomad job status web` shows two instances running.
 
 ## Clean up
 
-Stop Nops with `Ctrl-C`, then remove the job and stop Nomad (in development
-mode it keeps nothing):
+Stop Nops with `Ctrl-C`, then:
 
 ```sh
 nomad job stop -purge web
+rm nops.db users
 ```
 
-`Ctrl-C` in Nomad's terminal, and `rm nops.db users`.
+Stop Nomad with `Ctrl-C` in its terminal.
 
 ## Next
 
-- [Policies](policies.md): which policy suits which job, approving,
-  sync windows, pausing a job.
-- [Hooks](hooks.md): writing your own, and the other
-  [examples](../examples/): a migration, a backup, pre-pulling an image.
-- [Running Nops](running-nops.md): Nops on a real cluster, as a Nomad job.
-- [Dashboard](dashboard.md): every page and what it shows.
+- [Policies](policies.md): pick a policy for each job.
+- [Hooks](hooks.md): write your own.
+- [Running Nops](running-nops.md): run Nops on a real cluster.

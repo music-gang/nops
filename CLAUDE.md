@@ -22,13 +22,19 @@ repeat them, and read the relevant page before extending a part.
 - **Follow the contributor rules** of
   [`docs/development.md`](docs/development.md): tests
   ([what needs which](docs/development.md#what-needs-which-tests)), docs in
-  the same commit ([which page](docs/development.md#if-you-change-x-update-y)),
+  the same commit ([which page](docs/development.md#what-to-update-for-each-change)),
   the terms of
   [`docs/glossary.md`](docs/glossary.md) and of
   [the code](docs/development.md#terms-used-in-the-code), the
   [Go conventions](docs/development.md#go-conventions), fail loud
   ([`docs/philosophy.md#fail-loud`](docs/philosophy.md#fail-loud)), established packages
   before a new library, English everywhere.
+- **Write short, by the standards** of
+  [`docs/development.md#writing-docs`](docs/development.md#writing-docs)
+  (Diátaxis, Google style, Vale clean). It applies to every doc change,
+  issue, commit, PR description and comment a session writes: only what the
+  reader needs, what changes and why. No implementation detail the code
+  answers, no history, no restating another page, no edge-case lists.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it
   aligned with `docs/meta-keys.md`.
 - **`docs/archive/decisions.md` is an archive** up to v0.4.0: read it for

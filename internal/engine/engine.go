@@ -140,7 +140,7 @@ type Observation struct {
 	// pause must show.
 	Hold *Hold
 	// Window is where the job's sync window stands now, nil when it has none or
-	// its policy is not auto (docs/policies.md#sync-windows). It is set whether
+	// its policy is not auto (docs/policies.md#sync-window). It is set whether
 	// or not the job drifts: a window is something a person wants to see.
 	Window *WindowStatus
 }

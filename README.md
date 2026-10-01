@@ -9,43 +9,33 @@
 
 A semi-automatic GitOps controller for [HashiCorp Nomad](https://www.nomadproject.io/).
 
-Nops watches a git repo of Nomad job definitions (HCL), compares them with the
-live cluster, and brings them in line according to a **policy you set per
-job**: apply automatically, wait for a human approval, or only observe. It
-keeps its own state in SQLite, shows pending changes in a PR-style dashboard,
-and can run **pre/post deployment hooks** (regular Nomad jobs that Nops
-dispatches for you) around each deployment.
+Nops watches a git repository of Nomad jobs and deploys them according to a
+**policy you set per job**: automatically, after a person approves, or never.
+It shows pending changes in a dashboard and can run **hooks**, Nomad jobs
+that run before or after a deployment.
 
-> **Status: early development.** The design is settled and documented and
-> every building block is implemented and tested end to end against a real
-> Nomad; what is left is using it on a real cluster. What each release
-> changed is in its [release notes](https://github.com/music-gang/nops/releases), what is left in the
-> [issues](https://github.com/music-gang/nops/issues).
+> **Status:** ready to use, still at `v0`: a minor release may change the
+> configuration or the database, and its release notes say how to upgrade.
+> Built for a self-hosted cluster for personal use. Inspired by
+> [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops).
 
-Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops),
-but written from scratch and extended with persistent state, approvals and hooks.
-Aimed at a self-hosted cluster for personal use: no enterprise-scale machinery.
-
-**Try it:** [getting started](docs/getting-started.md) takes one machine from
-nothing to an approved deployment in about fifteen minutes.
+**Try it:** [getting started](docs/getting-started.md) takes about fifteen
+minutes on one machine.
 
 ## How it works
 
-1. Nops reads the job files from a git repo and asks Nomad to parse them
-   (`/v1/jobs/parse`), so Nomad stays the only HCL interpreter.
-2. For each managed job it runs `nomad job plan` and, if there is a
-   difference, creates a **deployment** whose state is stored in SQLite.
-3. What happens next depends on the job's policy:
+1. Nops reads the job files from git and has Nomad parse them.
+2. It plans each managed job and, if there is a difference, creates a
+   **deployment**.
+3. The job's policy decides what happens next:
 
    | Policy | Behaviour |
    |---|---|
-   | `auto` | Nops applies the change on its own. |
-   | `approval` | The deployment waits in the dashboard, with its diff, until someone approves or rejects it. |
-   | `none` | The drift is shown but never applied (default). |
+   | `auto` | Nops deploys the change. |
+   | `approval` | The deployment waits in the dashboard until someone approves or rejects it. |
+   | `none` | Nops shows the drift and deploys nothing. The default. |
 
-4. Applying is a plain `job register` protected by Nomad's check-index (CAS): if
-   the job changed since Nops looked at it, the write is rejected instead of
-   overwriting someone else's change.
+4. Nops registers the job only if nobody changed it since the plan.
 
 ```
 detected → [pending_approval] → [pre_hook] → applying → [post_hook] → completed
@@ -69,36 +59,18 @@ job "api" {
 }
 ```
 
-If a pre-hook fails or times out, the deployment stops (the hooks after it do
-not run), the live job is left untouched and you get a notification. Every key
-is in the [meta-keys reference](docs/meta-keys.md); how to write a hook, with
-runnable [examples](examples/) for a migration, a backup, a smoke test and
-pre-pulling an image, is in the [hooks guide](docs/hooks.md).
+Every key is in the [meta keys reference](docs/meta-keys.md). To write a hook,
+see the [hooks guide](docs/hooks.md) and the [examples](examples/).
 
 ## Nomad compatibility
 
-Nops is tested against **Nomad 2.0.7**: the integration tests run on that
-version in CI. Other 2.0.x releases should work; a new minor is supported once
-the same tests pass on it. Nops relies on a few behaviours of Nomad's API that
-are not part of a contract (the wording of a check-index failure, the names of
-the fields of a plan diff); each has an integration test, so an upgrade that
-changes one fails there. How to move to a new version:
-[development](docs/development.md#nomad-version).
+Nops is tested against **Nomad 2.0.7**. Other 2.0.x releases should work.
 
 ## Documentation
 
-| I want to… | Read |
-|---|---|
-| try Nops on one machine | [Getting started](docs/getting-started.md) |
-| run it on a cluster, or upgrade it | [Running Nops](docs/running-nops.md) |
-| choose how a job is applied | [Policies](docs/policies.md) |
-| write a hook | [Hooks](docs/hooks.md) |
-| look up an option or a meta key | [Configuration](docs/configuration.md), [meta keys](docs/meta-keys.md) |
-| understand how it works, and why | [Philosophy](docs/philosophy.md), [architecture](docs/architecture.md) |
-| see what changed in a release | [Releases](https://github.com/music-gang/nops/releases) |
-| contribute | [Contributing](CONTRIBUTING.md) |
-
-Everything else is in the [documentation index](docs/README.md).
+See the [documentation index](docs/README.md). Changes are in the
+[release notes](https://github.com/music-gang/nops/releases). To contribute,
+see [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 

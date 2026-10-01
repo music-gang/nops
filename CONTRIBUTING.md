@@ -1,28 +1,18 @@
 # Contributing to Nops
 
-Thanks for your interest. The full guide is in
-[docs/development.md](docs/development.md); the short version:
+The full guide is [docs/development.md](docs/development.md). In short:
 
-1. Read [docs/philosophy.md](docs/philosophy.md). The invariants there are not
-   negotiable, and some features are deliberately out of scope.
-2. Pick an open [issue](https://github.com/music-gang/nops/issues) nobody is
-   working on yet (no branch, no open pull request). If its design is still
-   open, settle it in the issue before writing code.
-3. Branch from `main` (`type/short-description`, e.g. `feat/pause-job`).
-   `main` is protected: all changes go through a pull request.
-4. Add tests for every behaviour change and update the docs in the same PR.
-5. Make sure the checks pass
-   ([commands](docs/development.md#commands) and
-   [what "done" means](docs/development.md#when-a-piece-of-work-is-done)).
-6. Title the PR in [Angular style](docs/development.md#commit-messages)
-   (`type(scope): subject`) and write each commit of the branch in the same
-   style. PRs are squash-merged: the title becomes the commit subject on
-   `main` and the body comes from the branch's commits, which the maintainer
-   checks by hand when merging. The PR description is a separate text for the
-   reviewer (`## What changes`, `## Why`, and a `## Notes` if there is a
-   question, plus `Closes #N`) and does not reach `main`; the PR template has
-   those headings. A change after review is a new commit, not a force-push.
-   Details in [docs/development.md](docs/development.md#workflow-and-ci).
+1. Read the [invariants](docs/philosophy.md#invariants): a change never
+   breaks them.
+2. Pick an open [issue](https://github.com/music-gang/nops/issues) with no
+   branch or pull request yet. Settle open design questions in the issue first.
+3. Branch from `main` as `type/short-description`, for example `feat/pause-job`.
+4. Add tests for every behaviour change and update the docs in the same pull
+   request.
+5. Run the [checks](docs/development.md#commands).
+6. Write commits and the pull request title as
+   [Conventional Commits](docs/development.md#commit-messages). Fill in the
+   pull request template. After review, push new commits, never a force-push.
 
-By contributing you agree that your contribution is licensed under the
+By contributing, you agree to license your contribution under the
 [Apache License 2.0](LICENSE).

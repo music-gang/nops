@@ -1,5 +1,5 @@
 // Package docs holds the tests that read the Markdown pages of the repository:
-// docs/development.md#doc-audit says what they guard.
+// docs/development.md#what-needs-which-tests says what they guard.
 package docs
 
 import (
@@ -272,9 +272,8 @@ var agentWords = regexp.MustCompile(`(?i)\bclaude\b|\bassistants?\b|\bAI\b|\bLLM
 
 // TestDocsSpeakToPeople fails when a Markdown page other than CLAUDE.md, the
 // file for agents, talks about or to an AI agent: the docs describe Nops and
-// how anyone contributes, and what only an agent needs lives in CLAUDE.md
-// (docs/development.md#docs-and-agent-instructions). It reads words, not
-// tone.
+// how anyone contributes, and what only an agent needs lives in CLAUDE.md.
+// It reads words, not tone: a written rule alone kept being broken.
 func TestDocsSpeakToPeople(t *testing.T) {
 	for _, page := range markdownPages(t) {
 		name := filepath.ToSlash(strings.TrimPrefix(page, ".."+string(filepath.Separator)))

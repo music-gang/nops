@@ -370,7 +370,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 // wins over the literal value in envVar. There is no flag for the literal
 // form, so a secret can never reach the command line: only an env var is
 // this permissive, since it never shows in `ps` or `/proc/<pid>/cmdline`
-// (see docs/configuration.md#secrets-without-a-file).
+// (see docs/configuration.md#secrets).
 type secretValue struct {
 	envVar string // always the _FILE option's variable with _FILE dropped
 	isURL  bool   // Discord/Slack/webhook URLs are validated, but never echoed
