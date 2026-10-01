@@ -26,7 +26,7 @@ key twice, and a parser that rejects duplicates would drop the line.
 | A job paused or resumed from the dashboard (`Engine.Pause`, `Engine.Resume`, with the `actor` and, for a pause, the reason) | INFO |
 | Nomad refuses to promote, or a read for the dashboard's Nomad panel fails (once per cached panel) | ERROR |
 | Unknown meta key | WARN |
-| Notification not delivered | WARN |
+| Notification not delivered (also counted in [metrics](metrics.md)) | WARN |
 | Deployment `failed`, meta with an invalid value, job that cannot be parsed | ERROR |
 | Nomad or SQLite error | ERROR (with context) |
 

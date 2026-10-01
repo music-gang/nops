@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -292,6 +293,33 @@ func TestEveryAdapterReceives(t *testing.T) {
 	}
 	if strings.Count(buf.String(), "notification not delivered") != 1 || !strings.Contains(buf.String(), "adapter=webhook") {
 		t.Errorf("log = %s", buf)
+	}
+}
+
+// TestFailuresCountsEachAdapter checks the count /metrics exposes: every
+// configured adapter is there, one that never failed with 0, and each failed
+// delivery adds one to its own adapter only.
+func TestFailuresCountsEachAdapter(t *testing.T) {
+	ok := newServer(t, http.StatusOK)
+	broken := newServer(t, http.StatusInternalServerError)
+	log, _ := logger()
+	n := New(Options{
+		Webhook: Endpoint{URL: broken.URL + "/webhook"},
+		Ntfy:    Endpoint{URL: ok.URL + "/ntfy"},
+		Timeout: time.Second,
+	}, log)
+	want := map[string]uint64{"webhook": 0, "ntfy": 0}
+	if got := n.Failures(); !maps.Equal(got, want) {
+		t.Fatalf("Failures before any notification = %v, want %v", got, want)
+	}
+	n.Notify(context.Background(), failed)
+	n.Notify(context.Background(), pending)
+	want = map[string]uint64{"webhook": 2, "ntfy": 0}
+	if got := n.Failures(); !maps.Equal(got, want) {
+		t.Errorf("Failures = %v, want %v", got, want)
+	}
+	if got := New(Options{Timeout: time.Second}, log).Failures(); len(got) != 0 {
+		t.Errorf("Failures without an adapter = %v, want none", got)
 	}
 }
 

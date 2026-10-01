@@ -183,6 +183,9 @@ type Status struct {
 	// Error is the failure that aborted the cycle (a store or redact error),
 	// or "" if it ran to the end.
 	Error string
+	// SucceededAt is when the last cycle that ran to the end ended: At when
+	// Error is "", kept from before when it is not. Zero until one does.
+	SucceededAt time.Time
 	// Managed is how many managed jobs the cycle found. Skipped is how many of
 	// them it could not plan because of a Nomad failure scoped to the job
 	// (they have no observation this cycle). Unparsed is how many files Nomad
@@ -220,6 +223,8 @@ type Engine struct {
 	observations map[jobKey]Observation
 	orphans      []Orphan
 	status       Status
+	// applyAt is when the apply loop last listed the active deployments.
+	applyAt time.Time
 
 	// kick asks the detection loop for a cycle now (Retry, a deployment closed
 	// by apply or a human).
@@ -354,8 +359,22 @@ func (e *Engine) Status() Status {
 
 func (e *Engine) setStatus(st Status) {
 	e.mu.Lock()
+	if st.Error == "" {
+		st.SucceededAt = st.At
+	} else {
+		st.SucceededAt = e.status.SucceededAt
+	}
 	e.status = st
 	e.mu.Unlock()
+}
+
+// ApplySucceededAt returns when an apply cycle last read the active
+// deployments from the store, zero before the first one. A cycle that could
+// not read them did nothing, so this is when the apply loop last worked.
+func (e *Engine) ApplySucceededAt() time.Time {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.applyAt
 }
 
 // Orphans returns the jobs nops deployed that are gone from the repository but

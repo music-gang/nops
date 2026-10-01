@@ -78,6 +78,12 @@ type Config struct {
 	WebhookSecretFile string
 	WebhookSecret     string
 
+	// MetricsToken protects /metrics (docs/metrics.md): when set, a scrape
+	// must send it as Authorization: Bearer. Empty leaves /metrics open,
+	// like /healthz.
+	MetricsTokenFile string
+	MetricsToken     string
+
 	// Notification adapters: each one is on when its URL is set. URLs that
 	// carry a token and every token are read from files by Load.
 	NotifyWebhookURLFile   string
@@ -218,6 +224,12 @@ var options = []option{
 		set: func(c *Config, v string) (err error) {
 			c.WebhookSecretFile = v
 			c.WebhookSecret, err = secretFile(v)
+			return
+		}},
+	{name: "metrics-token-file", usage: "file holding the token a Prometheus scrape of /metrics must send as Authorization: Bearer (empty: /metrics is open)",
+		set: func(c *Config, v string) (err error) {
+			c.MetricsTokenFile = v
+			c.MetricsToken, err = secretFile(v)
 			return
 		}},
 
@@ -375,6 +387,8 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
+	{envVar: "NOPS_METRICS_TOKEN",
+		get: func(c *Config) string { return c.MetricsToken }, set: func(c *Config, v string) { c.MetricsToken = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
 		get: func(c *Config) string { return c.NotifyWebhookURL }, set: func(c *Config, v string) { c.NotifyWebhookURL = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_TOKEN",

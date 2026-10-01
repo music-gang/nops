@@ -56,6 +56,9 @@ func (e *Engine) applyCycle(ctx context.Context) {
 		e.log.ErrorContext(ctx, "apply cycle: list active deployments", "error", err)
 		return
 	}
+	e.mu.Lock()
+	e.applyAt = e.now()
+	e.mu.Unlock()
 	for _, d := range active {
 		if !e.managedNS[d.Namespace] || !e.startApply(d.ID) {
 			continue

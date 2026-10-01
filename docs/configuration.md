@@ -66,6 +66,7 @@ variable and default are the option's; and the same for the secrets table).
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
+| `NOPS_METRICS_TOKEN_FILE` (`-metrics-token-file`) | `NOPS_METRICS_TOKEN` |
 | `NOPS_NOTIFY_WEBHOOK_URL_FILE` (`-notify-webhook-url-file`) | `NOPS_NOTIFY_WEBHOOK_URL` |
 | `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` (`-notify-webhook-token-file`) | `NOPS_NOTIFY_WEBHOOK_TOKEN` |
 | `NOPS_NOTIFY_DISCORD_URL_FILE` (`-notify-discord-url-file`) | `NOPS_NOTIFY_DISCORD_URL` |
@@ -107,6 +108,7 @@ supported. A `file://` URL works only where a `git` executable is installed
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and of the git webhook (`host:port`). |
 | `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the git forge's webhook secret (or `NOPS_WEBHOOK_SECRET`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/webhook/git` answers 404. See [dashboard](running-nops.md#the-git-webhook). |
+| `-metrics-token-file` | `NOPS_METRICS_TOKEN_FILE` | none | File holding the token a scrape of `/metrics` must send as `Authorization: Bearer` (or `NOPS_METRICS_TOKEN`, see [secrets without a file](#secrets-without-a-file-at-a-glance)). Unset: `/metrics` is open, like `/healthz`. See [metrics](metrics.md#scraping). |
 | `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | The URL people use to reach the dashboard, e.g. `https://nops.example.com` (Nops sits behind a proxy and cannot know it). Used to build the OIDC redirect URL, to decide whether session cookies are `Secure`, and notifications link to `<public-url>/deployments/<id>`. A path in it, e.g. `https://domain.example.org/nops`, becomes the dashboard's **base path** (see [dashboard](running-nops.md#under-a-sub-path)): there is no separate flag for it. Left unset, it becomes `http://<host>:<port>` from `-listen-addr`, `localhost` in place of an empty or wildcard host (`0.0.0.0`, `::`) — meant for `-auth-mode=basic` with no reverse proxy; with `-auth-mode=oidc` set it explicitly to what the browser and the provider's registered redirect URI actually need, since `localhost` is essentially never that. |
 | `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | How the dashboard logs people in: `oidc` or `basic`. The two are mutually exclusive — only the options of the chosen one may be set, Nops refuses to start otherwise (a leftover flag from switching modes is caught, not silently ignored). See [authentication](dashboard.md#authentication). |
 

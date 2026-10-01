@@ -125,12 +125,17 @@ type Options struct {
 	// /healthz body. Optional: empty shows none.
 	Version string
 
+	// Metrics serves GET /metrics (internal/metrics), which checks its own
+	// token and never needs a session. Optional: nil serves no /metrics.
+	Metrics http.Handler
+
 	// BasePath is the sub path the dashboard is served under (e.g. "/nops"),
 	// or "" for the domain root. It is stripped from every incoming request
-	// (except /healthz, reachable at the bare path too: an orchestrator
-	// probes the task's own port, bypassing whatever prefix a reverse proxy
-	// mounts it under) and prepended to every generated URL: redirects,
-	// cookie paths, template links and static asset addresses. There is no
+	// (except /healthz and /metrics, reachable at the bare path too: an
+	// orchestrator probes, and Prometheus scrapes, the task's own port,
+	// bypassing whatever prefix a reverse proxy mounts it under) and
+	// prepended to every generated URL: redirects, cookie paths, template
+	// links and static asset addresses. There is no
 	// separate flag for it: config.Config reads it from -public-url's own
 	// path. See docs/running-nops.md#under-a-sub-path.
 	BasePath string
@@ -152,6 +157,7 @@ type server struct {
 	now       func() time.Time
 	secret    []byte
 	version   string
+	metrics   http.Handler // nil: no /metrics
 	basePath  string
 	log       *slog.Logger
 	tmpl      *template.Template
@@ -192,6 +198,7 @@ func New(o Options) (http.Handler, error) {
 		now:       o.Now,
 		secret:    []byte(o.WebhookSecret),
 		version:   o.Version,
+		metrics:   o.Metrics,
 		basePath:  o.BasePath,
 		log:       o.Log,
 		tmpl:      tmpl,
@@ -204,19 +211,19 @@ func New(o Options) (http.Handler, error) {
 // handler wraps the routes with the security headers and, if the dashboard
 // is served under a base path, strips it from every incoming request before
 // they reach the routes below, which are registered at their bare paths:
-// docs/running-nops.md#under-a-sub-path has the reasoning. /healthz stays reachable at
-// the bare path too, without the prefix, since an orchestrator's health
-// check hits the task's own port directly.
+// docs/running-nops.md#under-a-sub-path has the reasoning. /healthz and
+// /metrics stay reachable at the bare path too, without the prefix, since an
+// orchestrator's health check and a Prometheus scrape hit the task's own port
+// directly.
 func (s *server) handler() http.Handler {
 	h := securityHeaders(s.routes())
 	if s.basePath == "" {
 		return h
 	}
 	stripped := http.StripPrefix(s.basePath, h)
-	healthz := http.HandlerFunc(s.healthz)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			healthz.ServeHTTP(w, r)
+		if r.URL.Path == "/healthz" || (s.metrics != nil && r.URL.Path == "/metrics") {
+			h.ServeHTTP(w, r)
 			return
 		}
 		stripped.ServeHTTP(w, r)
@@ -239,6 +246,9 @@ func (s *server) routes() *http.ServeMux {
 	s.auth.Register(mux) // GET/POST /auth/*, whichever backend this is
 
 	mux.HandleFunc("GET /healthz", s.healthz)
+	if s.metrics != nil {
+		mux.Handle("GET /metrics", s.metrics)
+	}
 	if len(s.secret) > 0 {
 		mux.HandleFunc("POST /webhook/git", s.webhook)
 	}

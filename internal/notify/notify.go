@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/music-gang/nops/internal/store"
@@ -71,6 +72,7 @@ type sender struct {
 	name   string
 	url    string
 	format func(Event) (request, error)
+	failed *atomic.Uint64 // deliveries that did not go through, for Failures
 }
 
 // Notifier sends notifications. Build it with New.
@@ -90,7 +92,7 @@ func New(o Options, log *slog.Logger) *Notifier {
 	}
 	add := func(name, url string, format func(Event) (request, error)) {
 		if url != "" {
-			n.senders = append(n.senders, sender{name: name, url: url, format: format})
+			n.senders = append(n.senders, sender{name: name, url: url, format: format, failed: new(atomic.Uint64)})
 		}
 	}
 	add("webhook", o.Webhook.URL, func(e Event) (request, error) { return webhook(e, o.Webhook.Token) })
@@ -128,11 +130,24 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment) {
 	}
 	for _, s := range n.senders {
 		if err := n.send(ctx, s, e); err != nil {
+			s.failed.Add(1)
 			n.log.WarnContext(ctx, "notification not delivered",
 				"adapter", s.name, "deployment_id", e.DeploymentID, "job", e.Job,
 				"namespace", e.Namespace, "state", e.State, "error", err)
 		}
 	}
+}
+
+// Failures returns, for every configured adapter, how many notifications it
+// failed to deliver since the start: a failed delivery is only a WARN in the
+// log, so this is how a scrape of /metrics sees an adapter that stopped
+// working (docs/metrics.md). An adapter that never failed is there with 0.
+func (n *Notifier) Failures() map[string]uint64 {
+	out := make(map[string]uint64, len(n.senders))
+	for _, s := range n.senders {
+		out[s.name] = s.failed.Load()
+	}
+	return out
 }
 
 // send delivers one notification. Its errors never contain the URL: Discord
