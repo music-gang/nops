@@ -360,15 +360,17 @@ func (f *fakeSnapshots) Snapshot() gitwatch.Snapshot {
 func (f *fakeSnapshots) Changed() <-chan struct{} { return f.changed }
 
 type fakeNotifier struct {
-	mu    sync.Mutex
-	calls []*store.Deployment
+	mu     sync.Mutex
+	calls  []*store.Deployment
+	phases []string // the phase of each call, in the same order
 }
 
-func (n *fakeNotifier) Notify(_ context.Context, d *store.Deployment) {
+func (n *fakeNotifier) Notify(_ context.Context, d *store.Deployment, phase string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	cp := *d
 	n.calls = append(n.calls, &cp)
+	n.phases = append(n.phases, phase)
 }
 
 // waitFor polls until n calls were recorded, or fails the test.
