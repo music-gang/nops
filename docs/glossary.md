@@ -1,100 +1,76 @@
 # Glossary
 
-The words Nops uses, so that the docs, the dashboard, code, commits and
-conversation say the same thing. When a word here and a word somewhere else
-disagree, this page wins and the other place gets fixed. When a new concept
-appears, or a term is renamed, add or change its row **in the same PR**. The
-terms that only matter inside the code or the repository are in
+The words Nops uses, in the docs, the dashboard, and the code. If another page
+disagrees with this one, this page wins. Code-only terms are in
 [development](development.md#terms-used-in-the-code).
 
-Identifiers in code follow the term: `HookRun`, `DispatchedJobID`,
-`cas_index`. Discussion in another language keeps these terms untranslated
-(*deployment*, *hook*, *supersede*), so they stay searchable.
+## Words shared with Nomad
 
-## Nomad's words and ours
-
-Some words exist in both worlds and mean different things. Say which one.
-
-| Word | In Nops | In Nomad | Rule |
-|---|---|---|---|
-| **deployment** | One attempt to bring a job to a given spec, a row in SQLite with a state machine. | The rolling-update tracker Nomad creates after a register. | Bare "deployment" is always the Nops one. Write **Nomad deployment** for the other. |
-| **job** | A Nomad job, seen through Nops. | The same. | Qualify it when it matters: **live job**, **target job**, **hook job**, **dispatched job**. |
-| **evaluation**, **allocation** | Not used as Nops concepts. | Scheduler terms. | Only in code that talks to Nomad (`nomadx`, outcome detection). |
-| **version** | The build of Nops: a release tag (`v0.1.0`) or, for a dev build, a Go pseudo-version ([releasing](development.md#releasing)). | A job's version (`Job.Version`), which Nomad bumps on a register that changes the job. | Write **Nops version** or **job version** when both could be meant. |
-| **stop** | Deregistering a job without purge (`StopJob`): a dispatched job whose hook timed out, or a hook revision no deployment needs. | Same operation, `DELETE /v1/job/<id>`. | Nops stops a dispatched job of a hook that timed out, and the hook revisions no deployment needs. It never deregisters anything else. |
+| Word | In Nops | In Nomad |
+|---|---|---|
+| **deployment** | One attempt to bring a job to a spec, tracked by Nops. | The rolling update Nomad runs after a register: write **Nomad deployment**. |
+| **job** | A Nomad job. Qualify it: **live job**, **target job**, **hook job**, **dispatched job**. | The same. |
+| **version** | The Nops build (`v0.1.0`): write **Nops version**. | A job's version: write **job version**. |
+| **stop** | Deregister without purge. Nops stops only timed-out hook runs and unused hook revisions. | The same. |
 
 ## Jobs and specs
 
 | Term | Meaning |
 |---|---|
-| **live job** | The job as it is in Nomad right now. |
-| **spec** | The HCL of a job as parsed by Nomad. The **target spec** is the one in the repo that a deployment wants to reach. |
-| **spec hash** | Hash that identifies what a deployment will do (`spec_hash`): the target spec combined with the frozen hooks, in order (the target's own when it has none). An approval is valid for one `(deployment_id, spec_hash)`. |
-| **target job** | The job a deployment is about (the hook receives it as `nops_job_id`). |
-| **managed namespace** | A namespace listed in `-nomad-namespaces`: the only ones Nops reads jobs for, deploys to and looks for orphans in. A job is identified by `(namespace, ID)`; a hook lives in its job's namespace ([configuration](running-nops.md#namespaces)). |
-| **managed job** | A target job with `nops_managed = "true"`, eligible for deployment detection. A target job without it is ignored by detection; hook jobs are separate and use `nops_role = "hook"`. |
-| **meta key** | A `nops_*` key in a job's `meta` block: the [only syntax](meta-keys.md) Nops reads. |
-| **policy** | `auto`, `approval` or `none`: who gives the go-ahead. It says nothing about *how* the apply is done. |
-| **drift** | A difference between the target spec and the live job. Under policy `none` it is only shown. |
-| **plan** | Nomad's dry-run of a register (`Jobs.Plan`), with the diff. |
-| **diff** | The plan's `JobDiff`. Once redacted, it is the **redacted diff** saved in SQLite and shown in the dashboard ([rules](dashboard.md#secret-redaction)). |
+| **live job** | The job as it is in Nomad now. |
+| **spec** | A job's HCL as Nomad parses it. The **target spec** is the one in git. |
+| **spec hash** | Identifies what a deployment does: the target spec plus its hooks. An approval is valid for one spec hash. |
+| **target job** | The job a deployment is about. |
+| **managed namespace** | A namespace in `-nomad-namespaces`. |
+| **managed job** | A job with `nops_managed = "true"`. |
+| **meta key** | A `nops_*` key in a job's `meta` block ([meta keys](meta-keys.md)). |
+| **policy** | `auto`, `approval` or `none`: who gives the go-ahead ([policies](policies.md)). |
+| **drift** | A difference between the target spec and the live job. |
+| **plan** | Nomad's dry run of a register, with its diff. |
+| **diff** | The plan's changes. Nops saves and shows it [redacted](dashboard.md#secret-redaction). |
 
 ## Deployment lifecycle
 
 | Term | Meaning |
 |---|---|
-| **detection** | Comparing the repo with Nomad and creating, superseding or revalidating deployments. One pass is a **detection cycle**; the loop that runs it is also called the **reconciler**. |
-| **deployment** | See above. States: `detected`, `pending_approval`, `pre_hook`, `applying`, `post_hook`, `completed`, `failed`, `rejected`, `superseded`. |
-| **state** | Where a deployment (or a hook run) is in its state machine. Not the same as *phase*. |
-| **active deployment** | One in a non-terminal state. A job has at most one: the **per-job lock**, enforced by the partial unique index. |
-| **terminal state** | `completed`, `failed`, `rejected`, `superseded`. No way out. |
-| **pending deployment** | A deployment in `pending_approval`. |
-| **approve / reject** | The authenticated human decision on a pending deployment, recorded with the **actor**. |
-| **actor** | Who did something: the logged-in user for a decision, `nops` for the engine. The user is the OIDC token's `preferred_username`, else `email`, else `sub` (`-auth-mode=oidc`), or the username as is (`-auth-mode=basic`). It goes in `decided_by` and `events.actor`. |
-| **session** | The signed, encrypted cookie set after a login, either backend (`-auth-mode`), valid 12 hours, with a key that lives only in the process ([dashboard](dashboard.md#authentication)). |
-| **allowlist** | `-oidc-allowed-users` and `-oidc-allowed-groups`: who may log in. Required. |
-| **supersede** | A newer commit (or a change outside Nops) replaces a deployment that has not started applying. Result: `superseded`. |
-| **revalidation** | Re-checking every pending deployment on each detection cycle, so the one shown in the dashboard is always approvable. |
-| **observation** | The last detection cycle's drift for one managed job (policy, whether it drifted, its redacted diff), kept only in memory (`Engine.Observations()`), never in SQLite: it is always a function of the current git head and the current live job, so there is nothing to persist. It is how a `none` policy job's drift reaches the dashboard, since no deployment is ever created for it. |
-| **blocked drift** | Drift a retry rule is deliberately not turning into a new deployment (`Observation.BlockedBy`/`BlockedReason`): either the existing rule for a `failed`/`rejected` deployment with an unchanged `spec_hash` and live index, or the anti-loop rule for a deployment that `failed` after reaching the register. Only a new commit or a **retry** unblocks it. |
-| **retry** | A human lifting a **blocked drift** without a new commit (`Engine.Retry`): the blocking deployment is marked *retried* (`retried_by`, `retried_at`) and stops blocking, and the next detection cycle creates a new deployment that follows the policy. It never approves and never applies anything by itself. |
-| **hold** | A condition that keeps Nops from *starting* a deployment for a job (`Observation.Hold`, `engine.Hold`): detection still plans it and shows the drift, but creates nothing, and an `auto` deployment still `detected` is superseded. It gates the start only (a deployment in `pre_hook`/`applying`/`post_hook` finishes) and only ever subtracts. It has two sources: a person's **pause** and a closed **sync window** ([deployment lifecycle](deployment-lifecycle.md#holding-a-job)). Not a **blocked drift**: that is about a failed deployment and leaves the job's policy to a *retry*. |
-| **sync window** | When Nops may deploy a job **on its own** (`nops_sync_window` + `nops_sync_window_duration`, read in `-sync-window-time-zone`): a scheduled **hold**, outside of which the job is **Held** (sync state) and no deployment is created. Only under policy `auto`; it gates the start, never a deployment already running ([policies](policies.md#sync-windows)). |
-| **pause / resume** | A person holding a job (`Engine.Pause`) and lifting it (`Engine.Resume`), from the Job page or the Overview: who, when and an optional reason are kept in SQLite (`job_pauses`), the sync state is **Paused**, and Approve is refused while it lasts. It is not *frozen*: that word is taken by the **frozen hook**. |
-| **sync state** | Where a managed job stands against git, in one word, as the Jobs page shows and filters it: invalid meta, paused, blocked, not in git, awaiting approval, deploying, held, drift or in sync (the first that applies wins; [dashboard](dashboard.md#sync-state-of-a-job)). Not a deployment state: it is about the *job*. |
-| **needs attention** | What the Overview lists for a person to act on: approvals waiting, blocked jobs, failures nobody retried, meta errors, paused jobs, orphans. Not drift under policy `none`: that is a sync state. |
-| **orphan** | A job Nops deployed (it has a `completed` deployment) that is no longer in the repository but still exists in Nomad, not stopped and not `dead`. Reported (`Engine.Orphans()`, sync state **Not in git**, a line in **needs attention**), never stopped by Nops ([architecture](architecture.md#orphan-jobs)). A job still in the repository without `nops_managed` is not one. |
-| **apply** | The CAS register of the target spec, always preceded by a plan. Nomad carries out the update. |
-| **healthy** | What ends `applying` ([architecture](architecture.md#healthy)): the Nomad deployment that tracks the applied index is `successful`; when there is none (a `batch` job, or no `update` block), every allocation of the applied job version is `running` or `complete`. That is a weaker test than a health check: Nops does not compare the number of allocations with the counts. A job that never has an allocation of its own (periodic, parameterized, or every group at count 0) is healthy as soon as it is registered. A Nomad deployment that waits for a canary promotion is not healthy yet, and not failing either: see **promotion wait**. |
-| **promotion wait** | What an `applying` deployment does while the job's Nomad deployment is running with its canaries placed and healthy and not all of them promoted yet, and its `update` block has `auto_promote = false`: it waits for a person to promote them in Nomad. The apply timeout does not run in it, it is notified once, and the Deployment page says so; the timeout counts again from the promotion ([architecture](architecture.md#the-apply-timeout)). A person promotes from the Deployment page (**Promote**) or in Nomad ([architecture](architecture.md#the-apply-timeout)). |
-| **Nomad panel** | The read-only box of the Job and Deployment pages with what Nomad reports about a job: its status, its groups against their counts, its latest Nomad deployment. Nothing computed by Nops on top ([dashboard](dashboard.md#the-nomad-panel)). |
-| **CAS** | Compare-and-set on the job's modify index. |
-| **cas index** | The live `JobModifyIndex` captured at detection (`cas_index`). `0` means "the job must not exist". |
-| **applied index** | The live `JobModifyIndex` re-read after the apply (`applied_index`), never the one in the register response. |
-| **recovery** | Resuming non-terminal deployments after a restart: it is the first cycle of the **apply loop**, not a separate pass. Every step is written to be **resumable**: calling it again continues where it stopped. |
-| **event** | A row of the append-only audit log, written together with every transition. The **actor** is a user name or `nops`. |
-| **fail loud** | Never swallow a Nomad or SQLite error; a failure is logged, stored and notified. |
-| **conservative reading** | When in doubt take the safe path: an invalid meta key means policy `none`, a missing hook means `failed`. |
-| **notification** | The message Nops sends when a deployment needs a person. Which transitions send one is defined in [notifications](logs-and-notifications.md#notifications). Not delivered is a WARN, never an error. |
-| **notification adapter** | One way to deliver a notification: `webhook` (generic JSON), `discord`, `slack`, `ntfy`, `gotify`. Each has its own options and is on when its URL is set. |
+| **detection** | Comparing git with Nomad and creating, superseding, or revalidating deployments. One pass is a **detection cycle**. |
+| **state** | Where a deployment or a hook run is: see [deployment lifecycle](deployment-lifecycle.md). |
+| **active deployment** | One not in a terminal state. A job has at most one. |
+| **terminal state** | `completed`, `failed`, `rejected` or `superseded`. |
+| **approve / reject** | A logged-in person's decision on a deployment in `pending_approval`. |
+| **actor** | Who did something: a user name, or `nops` for Nops itself. |
+| **allowlist** | The users and groups allowed to log in with OIDC. |
+| **supersede** | Replace a deployment that hasn't started applying with a newer one. |
+| **revalidation** | Re-checking every pending deployment on each detection cycle. |
+| **blocked drift** | Drift Nops doesn't redeploy after a failure or a rejection. A **retry** or a new commit unblocks it. |
+| **retry** | A person unblocking a blocked drift. The next deployment follows the policy. |
+| **hold** | Something that keeps Nops from starting a deployment for a job: a **pause** or a closed **sync window**. |
+| **pause / resume** | A person holding a job and releasing it. |
+| **sync window** | When an `auto` job may deploy on its own ([policies](policies.md#sync-window)). |
+| **sync state** | Where a job stands against git, in one word ([dashboard](dashboard.md#sync-state-of-a-job)). |
+| **orphan** | A job Nops deployed that is gone from git but still runs in Nomad. Nops shows it and never stops it. |
+| **apply** | The register of the target spec, after a fresh plan. |
+| **healthy** | What ends an apply: see [architecture](architecture.md#healthy). |
+| **promotion wait** | An apply waiting for someone to promote its canaries. The apply timeout pauses meanwhile. |
+| **Nomad panel** | The dashboard box with what Nomad reports about a job. |
+| **CAS** | Compare-and-set: Nomad registers only if the job's modify index is the one Nops read. |
+| **recovery** | Resuming unfinished deployments after a restart. |
+| **event** | A row of a deployment's audit log. |
+| **notification** | A message to people when a deployment needs them ([notifications](logs-and-notifications.md#notifications)). |
+| **notification adapter** | One way to deliver it: webhook, Discord, Slack, ntfy, Gotify. |
 
 ## Hooks
 
 | Term | Meaning |
 |---|---|
-| **hook** | The concept: a job Nops runs before (`pre`) or after (`post`) an apply. |
-| **phase** | `pre` or `post`. It is the value of `nops_phase`. The deployment *states* around it are `pre_hook` and `post_hook`. |
-| **hook job** | The `batch` + `parameterized` job in the repo, marked `nops_role = "hook"`. Inert until dispatched. Also called the parent in Nomad's API. |
-| **hook revision** | A hook job at one exact spec, registered in Nomad as `<hook-id>-<first 8 hex of its spec hash>` right before it is dispatched, from the spec the deployment froze. The unit that is dispatched, and the one [garbage collected](hooks.md#hook-revisions) when no deployment in progress needs it. |
-| **frozen hook** | A hook as a deployment saw it when it was detected: ID, spec, hash and revision (`deployment_hooks`). Approving covers it. |
-| **dispatch** | Asking Nomad to start a run of the hook job (`Jobs.Dispatch`). |
-| **dispatched job** | The job Nomad creates from a dispatch (`<hook job>/dispatch-<id>`), stored as `dispatched_job_id`. Nomad's API calls it a child (`ParentID`); code may say `child` for the parent/child link, docs say *dispatched job*. |
-| **dispatch meta** | The `nops_*` values passed at dispatch: `nops_deployment_id`, `nops_job_id`, `nops_commit`, `nops_phase`, `nops_image_<task>`. Only the ones the hook declares. |
-| **idempotency token** | `<deployment_id>:<phase>:<position>`. Makes a second dispatch return the same dispatched job. It lives as long as that job. |
-| **hook run** | The execution of one hook for one deployment: a row in `hook_runs`, unique per `(deployment_id, phase, position)`. Run by `hooks.Runner`. |
-| **position** | The place of a hook among those of its phase, from 0, in the order they are listed in `nops_pre_hook` / `nops_post_hook`. The hooks of a phase run in position order and stop at the first failure. |
-| **hook run states** | `dispatching` (row created, nothing sent), `running` (saved *before* the dispatch is sent), then `succeeded`, `failed`, `timed_out`. |
-| **outcome** | What the dispatched job and its allocations say about a run: success, failure, stopped from outside, or not decided yet. |
-| **timeout** | The duration a hook may run (`nops_timeout` on the hook job, frozen with its revision), in whole seconds. |
-| **deadline** | `started_at + timeout`. It does not move when Nops restarts. |
-| **outcome unknown** | A run that may have been dispatched but whose dispatched job cannot be found. It is `failed` and never dispatched again. |
+| **hook** | A job Nops runs before (`pre`) or after (`post`) an apply ([hooks](hooks.md)). |
+| **phase** | `pre` or `post`. |
+| **hook job** | The parameterized batch job in git marked `nops_role = "hook"`. |
+| **hook revision** | A hook job at one exact spec, registered in Nomad under a name with its hash. |
+| **frozen hook** | A hook as the deployment saw it when created. Approving covers it. |
+| **dispatch** | Asking Nomad to start a run of a hook job. |
+| **dispatched job** | The job Nomad creates for a dispatch. |
+| **dispatch meta** | The `nops_*` values Nops passes to a hook. |
+| **hook run** | One run of one hook for one deployment. |
+| **position** | A hook's place among the hooks of its phase. |
+| **timeout** | How long a hook may run (`nops_timeout`). |

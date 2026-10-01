@@ -24,7 +24,7 @@ const timingSafetyPassword = "nops-unknown-user-timing-safety"
 type BasicAuthOptions struct {
 	// UsersFile holds one "username:bcrypt-hash" per line (blank lines and
 	// lines starting with "#" are ignored). Generate a line with, for
-	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users).
+	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users--auth-modebasic).
 	UsersFile string
 	// PublicURL decides whether cookies are Secure, like OIDC's RedirectURL.
 	PublicURL string
@@ -37,7 +37,7 @@ type BasicAuthOptions struct {
 // BasicAuth is the local-users login: no external identity provider, an
 // operator-maintained file of usernames and bcrypt hashes instead. It
 // implements Authenticator; *session gives it Require and its share of
-// Register (logout) for free. See docs/dashboard.md#local-users.
+// Register (logout) for free. See docs/dashboard.md#local-users--auth-modebasic.
 type BasicAuth struct {
 	*session
 	users map[string]string // username -> bcrypt hash
