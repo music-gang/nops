@@ -579,9 +579,11 @@ func (e *Engine) transition(ctx context.Context, log *slog.Logger, d *store.Depl
 // once that is persisted (invariant 7): after a transition, or for a deployment
 // created already in that state.
 func (e *Engine) announce(ctx context.Context, log *slog.Logger, d *store.Deployment, from, to store.State, message string) {
+	phase := ""
 	if to == store.StateFailed {
 		// Fail loud (docs/logs-and-notifications.md): what failed, where and why.
-		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", failedPhase(from), "error", message)
+		phase = failedPhase(from)
+		log.ErrorContext(ctx, "deployment failed", "deployment_id", d.ID, "phase", phase, "error", message)
 	} else {
 		log.InfoContext(ctx, "deployment "+string(to), "deployment_id", d.ID, "message", message)
 	}
@@ -598,10 +600,10 @@ func (e *Engine) announce(ctx context.Context, log *slog.Logger, d *store.Deploy
 		log.ErrorContext(ctx, "reload deployment before notify", "deployment_id", d.ID, "error", err)
 		return
 	}
-	go e.notifier.Notify(ctx, fresh)
+	go e.notifier.Notify(ctx, fresh, phase)
 }
 
-// failedPhase names where a deployment was when it failed, for the log:
+// failedPhase names where a deployment was when it failed, for the log and the notification:
 // detection (a declared hook missing), pre, apply or post.
 func failedPhase(from store.State) string {
 	switch from {

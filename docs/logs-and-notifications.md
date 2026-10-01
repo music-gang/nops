@@ -28,7 +28,7 @@ Turn on one or more adapters in [configuration](configuration.md#notifications):
 |---|---|
 | webhook | The JSON below, for n8n, Home Assistant, or your own receiver. |
 | Discord | An embed, colored by state. |
-| Slack | A text message. |
+| Slack | A message with link buttons. |
 | ntfy | A plain-text message with a priority by state. |
 | Gotify | A message with a priority by state. |
 
@@ -38,9 +38,16 @@ Turn on one or more adapters in [configuration](configuration.md#notifications):
   "job": "web",
   "namespace": "apps",
   "state": "failed",
+  "phase": "pre",
+  "policy": "approval",
+  "approved_by": "alice",
   "error": "pre-hook web-migrate failed: exit code 1",
   "commit": "0123456789abcdef0123456789abcdef01234567",
+  "commit_subject": "Bump web to 1.4.0",
+  "commit_author": "Alice",
+  "commit_url": "https://git.example.com/ops/jobs/commit/0123456789abcdef0123456789abcdef01234567",
   "url": "https://nops.example.com/deployments/01J8ZX4N6Q9V3T2K5M7P8R1S0W",
+  "nomad_url": "https://nomad.example.com/ui/jobs/web@apps",
   "time": "2026-09-23T10:00:00Z"
 }
 ```

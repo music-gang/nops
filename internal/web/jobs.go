@@ -9,6 +9,7 @@ import (
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
+	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -332,7 +333,7 @@ type jobData struct {
 	PausePath               string // where the "Pause" form posts, set when the job is in the repository and not paused
 	Drift                   bool
 	Diff                    *api.JobDiff
-	Summary                 diffSummary
+	Summary                 nomadx.DiffSummary
 	Issues                  []meta.Issue
 	Deployments             []deploymentCard
 	Nomad                   *nomadView // what Nomad says of the job; nil without a Nomad to ask
@@ -384,7 +385,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		if len(deps) > 0 {
 			latest = deps[0]
 		}
-		diff, err := parseDiff(obs.PlanDiff)
+		diff, err := nomadx.ParseDiff(obs.PlanDiff)
 		if err != nil {
 			s.serverError(w, r, "parse drift diff", err)
 			return
@@ -410,7 +411,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 			data.PausePath = s.jobPath(ns, id) + "/pause"
 		}
 		data.Window = windowOf(obs.Window)
-		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, summarize(diff), obs.Issues
+		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, nomadx.Summarize(diff), obs.Issues
 	}
 	s.render(w, r, "job", data)
 }

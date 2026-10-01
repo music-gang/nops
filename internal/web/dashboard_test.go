@@ -134,42 +134,6 @@ func TestDuration(t *testing.T) {
 	}
 }
 
-func TestSummarize(t *testing.T) {
-	if s := summarize(nil); s.Total() != 0 || len(s.Places) != 0 {
-		t.Errorf("summarize(nil) = %+v, want nothing", s)
-	}
-	s := summarize(sampleDiff())
-	if s.Added != 1 || s.Edited != 1 || s.Deleted != 1 || s.Total() != 3 {
-		t.Errorf("counts = +%d ~%d -%d, want one each", s.Added, s.Edited, s.Deleted)
-	}
-	want := []diffPlace{
-		{Kind: "job", Type: "Edited", Changes: 1},
-		{Kind: "group", Name: "g", Type: "Edited", Changes: 0}, // nothing directly in the group: not listed
-		{Kind: "task", Name: "g/t", Type: "Edited", Changes: 2},
-	}
-	// The group has no field of its own and is only Edited because a task in it
-	// is: it is not a place by itself.
-	want = []diffPlace{want[0], want[2]}
-	if len(s.Places) != len(want) {
-		t.Fatalf("places = %+v, want %+v", s.Places, want)
-	}
-	for i := range want {
-		if s.Places[i] != want[i] {
-			t.Errorf("place %d = %+v, want %+v", i, s.Places[i], want[i])
-		}
-	}
-
-	// A whole task group or task that appears or goes counts as a place even
-	// with no field of its own, and an unchanged field counts for nothing.
-	added := summarize(&api.JobDiff{TaskGroups: []*api.TaskGroupDiff{
-		{Type: "Added", Name: "new", Fields: []*api.FieldDiff{{Type: "None", Name: "Count"}}},
-		{Type: "Deleted", Name: "old", Tasks: []*api.TaskDiff{{Type: "Deleted", Name: "t"}}},
-	}})
-	if added.Total() != 0 || len(added.Places) != 3 {
-		t.Errorf("summary of added and deleted groups = %+v, want 3 places and no field", added)
-	}
-}
-
 func TestPlanSteps(t *testing.T) {
 	d := sampleDeployment()
 	steps := planSteps(d, sampleHooks())

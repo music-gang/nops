@@ -482,7 +482,7 @@ func (e *Engine) awaitPromotion(ctx context.Context, log *slog.Logger, d *store.
 		log.ErrorContext(ctx, "reload deployment before notify", "error", err)
 		return
 	}
-	go e.notifier.Notify(ctx, fresh)
+	go e.notifier.Notify(ctx, fresh, "")
 }
 
 // promoted records that the canaries a deployment waited for are promoted: the

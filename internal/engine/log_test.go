@@ -125,3 +125,31 @@ func TestNoLogLineCarriesAKeyTwice(t *testing.T) {
 		noKeyTwice(t, buf, "deployment rejected", "transition skipped")
 	})
 }
+
+// A failed deployment's notification says where it failed, with the same
+// names as the log; any other notification has no phase.
+func TestNotificationCarriesTheFailedPhase(t *testing.T) {
+	h := newHarness(t)
+	d := h.multi(store.StatePreHook)
+	log := h.engine.log.With("deployment_id", d.ID)
+	steps := []struct {
+		from, to store.State
+		want     string
+	}{
+		{store.StateDetected, store.StateFailed, "detection"},
+		{store.StatePreHook, store.StateFailed, "pre"},
+		{store.StateApplying, store.StateFailed, "apply"},
+		{store.StatePostHook, store.StateFailed, "post"},
+		{store.StateDetected, store.StatePendingApproval, ""},
+	}
+	for i, s := range steps {
+		h.engine.announce(context.Background(), log, d, s.from, s.to, "boom")
+		h.notifier.waitFor(t, i+1)
+		h.notifier.mu.Lock()
+		got := h.notifier.phases[i]
+		h.notifier.mu.Unlock()
+		if got != s.want {
+			t.Errorf("%s -> %s: phase = %q, want %q", s.from, s.to, got, s.want)
+		}
+	}
+}
