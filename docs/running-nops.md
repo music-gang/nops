@@ -126,8 +126,11 @@ it is an error, not a silent default.
 ## The Nomad token
 
 The token needs, in each listed namespace, `read-job`, `list-jobs`,
-`submit-job` (plan, register and the deregister of hook revisions) and
-`dispatch-job` (hooks). On top of that, every **volume** a job or a hook mounts
+`submit-job` (parse, plan, register and the deregister of hook revisions) and
+`dispatch-job` (hooks). Nomad checks the parse of a job in the namespace the
+request is made in, not in the job's: Nops asks in the first listed namespace,
+so a token needs no rule in `default` unless `default` is listed
+(`TestParseNeedsNoRuleInDefault`). On top of that, every **volume** a job or a hook mounts
 needs a rule of its own, because Nomad checks volumes when a job is registered:
 
 | The job declares | The token needs |

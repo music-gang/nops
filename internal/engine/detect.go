@@ -141,13 +141,20 @@ type commitRef struct{ sha, subject, author string }
 func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int) {
 	prev := e.snapshotParseCache()
 	next = make(map[string]parseEntry, len(snap.Files))
+	// A file is parsed in the first managed namespace whatever it declares, so
+	// the token needs a rule there anyway (docs/running-nops.md#the-nomad-token).
+	// No namespace at all is refused by the client.
+	var parseNS string
+	if len(e.namespaces) > 0 {
+		parseNS = e.namespaces[0]
+	}
 	parsed = make([]parsedFile, 0, len(snap.Files))
 
 	for _, f := range snap.Files {
 		key := parseCacheKey(f.Content, f.Vars)
 		entry, ok := e.cachedParse(prev, key)
 		if !ok {
-			job, err := e.nomad.ParseHCL(ctx, f.Content, f.Vars)
+			job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, f.Vars)
 			if err == nil && job != nil {
 				defaultNamespace(job)
 			}

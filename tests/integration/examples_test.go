@@ -53,7 +53,7 @@ func TestExamplesParse(t *testing.T) {
 				if strings.Contains(strings.ToLower(string(src)), "consul") {
 					t.Errorf("%s mentions Consul: examples must work with Nomad alone (provider = \"nomad\", nomadService in a template)", filepath.Base(path))
 				}
-				job, err := c.ParseHCL(ctx, string(src), vars)
+				job, err := c.ParseHCL(ctx, "default", string(src), vars)
 				if err != nil {
 					t.Fatalf("%s does not parse: %v", filepath.Base(path), err)
 				}

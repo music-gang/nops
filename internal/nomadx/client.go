@@ -42,6 +42,7 @@ const casConflictMarker = "Enforcing job modify index"
 type Client struct {
 	jobs        *api.Jobs
 	deployments *api.Deployments
+	raw         *api.Raw
 }
 
 // New creates a Client. nops passes config.Config.Nomad(), which ignores the
@@ -51,7 +52,7 @@ func New(cfg *api.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create nomad client: %w", err)
 	}
-	return &Client{jobs: c.Jobs(), deployments: c.Deployments()}, nil
+	return &Client{jobs: c.Jobs(), deployments: c.Deployments(), raw: c.Raw()}, nil
 }
 
 // query and write build the options of a request in namespace ns. An empty ns
@@ -85,21 +86,31 @@ func jobNamespace(job *api.Job) string {
 // an HCL2 var-file and may be empty. Nomad is the only HCL interpreter: there
 // is no local parser.
 //
-// The Nomad API client does not take a context for this call; only an
-// already-cancelled context is honoured.
-func (c *Client) ParseHCL(ctx context.Context, hcl, vars string) (*api.Job, error) {
+// ns is the namespace the request is made in, and only that: Nomad checks the
+// token for parse-job or submit-job there, and the namespace of the parsed job
+// is the one its HCL declares. Without one Nomad checks "default", which the
+// token has no reason to hold a rule in. The jobs API client has no call that
+// takes options for this, so it goes through the raw client.
+//
+// The Nomad API client does not take a context for the body of this call; only
+// an already-cancelled context is honoured.
+func (c *Client) ParseHCL(ctx context.Context, ns, hcl, vars string) (*api.Job, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	job, err := c.jobs.ParseHCLOpts(&api.JobsParseRequest{
+	w, err := c.write(ctx, ns)
+	if err != nil {
+		return nil, err
+	}
+	var job api.Job
+	if _, err := c.raw.Write("/v1/jobs/parse", &api.JobsParseRequest{
 		JobHCL:       hcl,
 		Variables:    vars,
 		Canonicalize: true,
-	})
-	if err != nil {
+	}, &job, w); err != nil {
 		return nil, fmt.Errorf("parse job: %w", err)
 	}
-	return job, nil
+	return &job, nil
 }
 
 // Job returns the live job of namespace ns, or ErrJobNotFound.

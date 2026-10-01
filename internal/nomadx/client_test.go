@@ -492,7 +492,7 @@ func TestListJobs(t *testing.T) {
 
 func TestParseHCL(t *testing.T) {
 	s, c := newStub(t, 200, `{"ID":"web"}`)
-	job, err := c.ParseHCL(context.Background(), `job "web" {}`, `tag = "1"`)
+	job, err := c.ParseHCL(context.Background(), "apps", `job "web" {}`, `tag = "1"`)
 	if err != nil || job.ID == nil || *job.ID != "web" {
 		t.Fatalf("ParseHCL = %+v, %v", job, err)
 	}
@@ -503,16 +503,26 @@ func TestParseHCL(t *testing.T) {
 	if req.JobHCL != `job "web" {}` || req.Variables != `tag = "1"` || !req.Canonicalize {
 		t.Errorf("request = %+v", req)
 	}
+	// Nomad checks the token in the namespace of the request, so it is named.
+	if got := s.query["namespace"]; len(got) != 1 || got[0] != "apps" {
+		t.Errorf("namespace query = %v, want [apps]", got)
+	}
 
 	_, c = newStub(t, 400, `Unset variable "image_tag"`)
-	if _, err := c.ParseHCL(context.Background(), "x", ""); err == nil || !strings.Contains(err.Error(), "parse job") {
+	if _, err := c.ParseHCL(context.Background(), "default", "x", ""); err == nil || !strings.Contains(err.Error(), "parse job") {
 		t.Errorf("err = %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	s, c = newStub(t, 200, `{}`)
-	if _, err := c.ParseHCL(ctx, "x", ""); !errors.Is(err, context.Canceled) {
+	if _, err := c.ParseHCL(context.Background(), "", "x", ""); !errors.Is(err, errNoNamespace) {
+		t.Errorf("no namespace: err = %v, want errNoNamespace", err)
+	}
+	if s.method != "" {
+		t.Errorf("a request without a namespace must not reach Nomad, got %s %s", s.method, s.path)
+	}
+	if _, err := c.ParseHCL(ctx, "default", "x", ""); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled ctx: err = %v", err)
 	}
 	if s.method != "" {

@@ -58,7 +58,7 @@ func TestScaleChangesTheLiveJobsIndex(t *testing.T) {
 	defer cancel()
 
 	id := uniqueID(t, raw, "scale")
-	job, err := c.ParseHCL(ctx, scalableHCL(id), "")
+	job, err := c.ParseHCL(ctx, "default", scalableHCL(id), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestMetaBlockAndObjectFormsCannotBeMixed(t *testing.T) {
   meta = {
     "diun.enable" = "true"
   }` + body
-	if _, err := c.ParseHCL(ctx, mixed, ""); err == nil {
+	if _, err := c.ParseHCL(ctx, "default", mixed, ""); err == nil {
 		t.Error("a job with meta as a block and as an object parsed: docs/meta-keys.md says it cannot")
 	}
 
@@ -132,7 +132,7 @@ func TestMetaBlockAndObjectFormsCannotBeMixed(t *testing.T) {
     "nops_managed" = "true"
     "diun.enable"  = "true"
   }` + body
-	job, err := c.ParseHCL(ctx, object, "")
+	job, err := c.ParseHCL(ctx, "default", object, "")
 	if err != nil {
 		t.Fatalf("meta as one object: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestStoppingAHookRevisionLeavesItsRunningRun(t *testing.T) {
 	defer cancel()
 	id := uniqueID(t, raw, "gcrun")
 
-	parent, err := c.ParseHCL(ctx, fmt.Sprintf(`
+	parent, err := c.ParseHCL(ctx, "default", fmt.Sprintf(`
 job %q {
   type = "batch"
   parameterized {}
@@ -213,7 +213,7 @@ func TestLongJobIDIsAccepted(t *testing.T) {
 	id := uniqueID(t, raw, "long")
 	id += strings.Repeat("x", 400-len(id)) + "-0a1b2c3d"
 
-	job, err := c.ParseHCL(ctx, batchHCL(id, "one"), "")
+	job, err := c.ParseHCL(ctx, "default", batchHCL(id, "one"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestCanaryWaitsForManualPromotion(t *testing.T) {
 	id := uniqueID(t, raw, "canary")
 	register := func(tag string) {
 		t.Helper()
-		job, err := c.ParseHCL(ctx, canaryHCL(id, tag), "")
+		job, err := c.ParseHCL(ctx, "default", canaryHCL(id, tag), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -355,7 +355,7 @@ func TestPromoteDeploymentAndTheAllocationFieldsThePanelReads(t *testing.T) {
 	id := uniqueID(t, raw, "promote")
 	register := func(tag string) {
 		t.Helper()
-		job, err := c.ParseHCL(ctx, canaryHCL(id, tag), "")
+		job, err := c.ParseHCL(ctx, "default", canaryHCL(id, tag), "")
 		if err != nil {
 			t.Fatal(err)
 		}

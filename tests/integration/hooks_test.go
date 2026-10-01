@@ -79,7 +79,7 @@ func newHookEnv(t *testing.T, cmd string, isHook bool) *hookEnv {
 	ctx := context.Background()
 	hookID := uniqueID(t, raw, "hookrun")
 
-	job, err := c.ParseHCL(ctx, hookCmdHCL(hookID, cmd, isHook), "")
+	job, err := c.ParseHCL(ctx, "default", hookCmdHCL(hookID, cmd, isHook), "")
 	if err != nil {
 		t.Fatal(err)
 	}

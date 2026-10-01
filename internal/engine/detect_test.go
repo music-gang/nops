@@ -69,6 +69,7 @@ type fakeNomad struct {
 	parseByContent map[string]*api.Job
 	parseErr       map[string]error
 	parseCalls     map[string]int
+	parseNS        map[string]bool // the namespaces ParseHCL was asked in
 
 	live   map[string]*api.Job // absent: ErrJobNotFound
 	jobErr map[string]error    // what Job returns instead of the live job
@@ -125,6 +126,7 @@ func newFakeNomad() *fakeNomad {
 		parseByContent: map[string]*api.Job{},
 		parseErr:       map[string]error{},
 		parseCalls:     map[string]int{},
+		parseNS:        map[string]bool{},
 		live:           map[string]*api.Job{},
 		jobErr:         map[string]error{},
 		plan:           map[string]planFixture{},
@@ -163,11 +165,12 @@ func (f *fakeNomad) callCount() int {
 	return f.calls
 }
 
-func (f *fakeNomad) ParseHCL(_ context.Context, content, _ string) (*api.Job, error) {
+func (f *fakeNomad) ParseHCL(_ context.Context, ns, content, _ string) (*api.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.parseCalls[content]++
+	f.parseNS[ns] = true
 	if err, ok := f.parseErr[content]; ok {
 		return nil, err
 	}

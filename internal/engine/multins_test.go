@@ -72,6 +72,21 @@ func TestSameJobIDInTwoNamespacesIsTwoJobs(t *testing.T) {
 
 // Two files parsing to the same (namespace, ID) are ignored, as before; the
 // same ID in another namespace is no clash.
+// Parsing is checked by Nomad in the namespace of the request, not of the job,
+// so it is asked in a managed one and never in "default" (which a token with a
+// rule on the managed namespaces only does not reach).
+func TestParseIsAskedInAManagedNamespace(t *testing.T) {
+	h := newHarnessIn(t, "apps", "infra")
+	h.nomad.setFile("web-infra", inNS(managed("web", "auto", nil), "infra"))
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-infra"})
+
+	h.detect()
+
+	if len(h.nomad.parseNS) != 1 || !h.nomad.parseNS["apps"] {
+		t.Errorf("ParseHCL asked in %v, want only the first managed namespace, apps", h.nomad.parseNS)
+	}
+}
+
 func TestDuplicateJobIDClashesOnlyInsideANamespace(t *testing.T) {
 	h := newHarnessIn(t, "apps", "infra")
 	h.nomad.setFile("a1", inNS(managed("web", "auto", nil), "apps"))

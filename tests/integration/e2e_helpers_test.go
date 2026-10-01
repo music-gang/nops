@@ -583,7 +583,7 @@ func (e *e2eEnv) liveVersion(jobID string) string {
 func (e *e2eEnv) editOutsideNops(jobID, jobHCL string) {
 	e.t.Helper()
 	ctx := context.Background()
-	job, err := e.nomad.ParseHCL(ctx, jobHCL, "")
+	job, err := e.nomad.ParseHCL(ctx, "default", jobHCL, "")
 	if err != nil {
 		e.t.Fatal(err)
 	}

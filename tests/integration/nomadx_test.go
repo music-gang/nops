@@ -145,7 +145,7 @@ job "x" {
     }
   }
 }`
-	job, err := c.ParseHCL(ctx, withVar, `image_tag = "2.3.4"`)
+	job, err := c.ParseHCL(ctx, "default", withVar, `image_tag = "2.3.4"`)
 	if err != nil {
 		t.Fatalf("with var-file: %v", err)
 	}
@@ -156,12 +156,12 @@ job "x" {
 		t.Errorf("job not canonicalized: namespace = %v", job.Namespace)
 	}
 
-	if _, err := c.ParseHCL(ctx, withVar, ""); err == nil || !strings.Contains(err.Error(), "Unset variable") {
+	if _, err := c.ParseHCL(ctx, "default", withVar, ""); err == nil || !strings.Contains(err.Error(), "Unset variable") {
 		t.Errorf("without a value: err = %v, want Unset variable", err)
 	}
 
 	custom := "job \"x\" {\n  nops {\n    policy = \"approval\"\n  }\n}"
-	if _, err := c.ParseHCL(ctx, custom, ""); err == nil || !strings.Contains(err.Error(), "Unsupported block type") {
+	if _, err := c.ParseHCL(ctx, "default", custom, ""); err == nil || !strings.Contains(err.Error(), "Unsupported block type") {
 		t.Errorf("custom block: err = %v, want Unsupported block type", err)
 	}
 }
@@ -181,7 +181,7 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 
 	parse := func(tag string) *api.Job {
 		t.Helper()
-		j, err := c.ParseHCL(ctx, batchHCL(id, tag), "")
+		j, err := c.ParseHCL(ctx, "default", batchHCL(id, tag), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -276,7 +276,7 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 	ctx := context.Background()
 	id := uniqueID(t, raw, "same")
 
-	job, err := c.ParseHCL(ctx, batchHCL(id, "one"), "")
+	job, err := c.ParseHCL(ctx, "default", batchHCL(id, "one"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestDispatch(t *testing.T) {
 	ctx := context.Background()
 	id := uniqueID(t, raw, "hook")
 
-	hook, err := c.ParseHCL(ctx, hookHCL(id), "")
+	hook, err := c.ParseHCL(ctx, "default", hookHCL(id), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestListJobsCarriesMetaAndStop(t *testing.T) {
 	ctx := context.Background()
 	id := uniqueID(t, raw, "list")
 
-	hook, err := c.ParseHCL(ctx, hookHCL(id), "")
+	hook, err := c.ParseHCL(ctx, "default", hookHCL(id), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestHookRevisionRegistration(t *testing.T) {
 	hookID := uniqueID(t, raw, "rev")
 	revision := hookID + "-0a1b2c3d"
 
-	hook, err := c.ParseHCL(ctx, hookHCL(hookID), "")
+	hook, err := c.ParseHCL(ctx, "default", hookHCL(hookID), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestSameJobIDInTwoNamespaces(t *testing.T) {
 
 	inNS := func(ns, tag string) *api.Job {
 		t.Helper()
-		j, err := c.ParseHCL(ctx, inNamespace(batchHCL(id, tag), ns), "")
+		j, err := c.ParseHCL(ctx, "default", inNamespace(batchHCL(id, tag), ns), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -544,7 +544,7 @@ func TestSameJobIDInTwoNamespaces(t *testing.T) {
 	}
 
 	// A job with no namespace goes to "default".
-	def, err := c.ParseHCL(ctx, batchHCL(id, "d"), "")
+	def, err := c.ParseHCL(ctx, "default", batchHCL(id, "d"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
