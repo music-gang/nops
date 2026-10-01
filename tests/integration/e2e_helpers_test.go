@@ -118,10 +118,16 @@ type nopsProc struct {
 // test does not wait for the production defaults. env entries ("KEY=value")
 // are added last and win. It waits for /healthz and kills the process at
 // cleanup if the test did not stop it.
+//
+// Nops runs on a token of its own, never on the management one: a client token
+// holding the rule running-nops.md#the-nomad-token documents, in every
+// namespace it manages. So whatever nops asks of Nomad that the documented
+// token does not allow fails here and not on a cluster.
 func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	t.Helper()
 	addr := testAddr(t)
 	bin := buildNopsBinary(t)
+	tokenFile := writeNopsToken(t, managedNamespaces(env))
 
 	usersFile := writeUsersFile(t, e2eUser, e2ePassword)
 	dbPath := filepath.Join(t.TempDir(), "nops.db")
@@ -131,6 +137,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	cmd.Env = append(os.Environ(),
 		"NOPS_NOMAD_ADDR="+addr,
 		"NOPS_NOMAD_NAMESPACES=default",
+		"NOPS_NOMAD_TOKEN_FILE="+tokenFile,
 		"NOPS_GIT_URL="+repoURL,
 		"NOPS_GIT_BRANCH=main",
 		"NOPS_DB_PATH="+dbPath,
@@ -182,6 +189,37 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	}
 	t.Fatalf("GET /healthz never succeeded: %v", lastErr)
 	return nil
+}
+
+// managedNamespaces is the namespaces nops is started with: the last
+// NOPS_NOMAD_NAMESPACES of env, which wins as it does for the process, or
+// "default".
+func managedNamespaces(env []string) []string {
+	namespaces := "default"
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "NOPS_NOMAD_NAMESPACES="); ok {
+			namespaces = v
+		}
+	}
+	return strings.Split(namespaces, ",")
+}
+
+// writeNopsToken creates a client token holding the documented rule in every
+// namespace of namespaces, and returns the file holding its secret, for
+// -nomad-token-file. The policy and the token go when the test ends, after nops
+// is stopped.
+func writeNopsToken(t *testing.T, namespaces []string) string {
+	t.Helper()
+	_, admin := newClient(t)
+	var rules strings.Builder
+	for _, ns := range namespaces {
+		rules.WriteString(nsRule(strings.TrimSpace(ns)))
+	}
+	path := filepath.Join(t.TempDir(), "nomad-token")
+	if err := os.WriteFile(path, []byte(newToken(t, admin, rules.String()).SecretID), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // shutdownWaitTimeout is generous next to cmd/nops's own 10s

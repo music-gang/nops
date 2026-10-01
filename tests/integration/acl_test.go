@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,21 +17,10 @@ import (
 	"github.com/music-gang/nops/internal/nomadx"
 )
 
-// The tests of this file settle what docs/running-nops.md#the-nomad-token says the
-// Nomad token needs. They need an agent with ACLs enabled, which the other
-// tests do not run against: NOPS_TEST_NOMAD_ACL_ADDR is its address and
-// NOPS_TEST_NOMAD_ACL_TOKEN a management token (the bootstrap one). Without
-// them they are skipped.
-
-// aclAdmin returns a management client of the ACL agent, raw and as nomadx.
-func aclAdmin(t *testing.T) (*nomadx.Client, *api.Client) {
-	t.Helper()
-	addr, token := os.Getenv("NOPS_TEST_NOMAD_ACL_ADDR"), os.Getenv("NOPS_TEST_NOMAD_ACL_TOKEN")
-	if addr == "" || token == "" {
-		t.Skip("NOPS_TEST_NOMAD_ACL_ADDR or NOPS_TEST_NOMAD_ACL_TOKEN not set: skipping ACL test")
-	}
-	return aclClients(t, addr, token)
-}
+// The tests of this file settle what docs/running-nops.md#the-nomad-token says
+// the Nomad token needs, one rule at a time, on the agent of every other test.
+// The end-to-end tests run nops on the documented token as a whole (see
+// startNops); these say what each part of it is for.
 
 func aclClients(t *testing.T, addr, token string) (*nomadx.Client, *api.Client) {
 	t.Helper()
@@ -60,9 +48,9 @@ func randSuffix(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
-// tokenWith creates an ACL policy with rules and a client token holding it,
-// both deleted when the test ends, and returns a nomadx client on that token.
-func tokenWith(t *testing.T, admin *api.Client, rules string) (*nomadx.Client, *api.Client) {
+// newToken creates an ACL policy with rules and a client token holding it,
+// both deleted when the test ends, and returns the token.
+func newToken(t *testing.T, admin *api.Client, rules string) *api.ACLToken {
 	t.Helper()
 	name := "nops-it-" + randSuffix(t)
 	if _, err := admin.ACLPolicies().Upsert(&api.ACLPolicy{Name: name, Rules: rules}, nil); err != nil {
@@ -74,14 +62,26 @@ func tokenWith(t *testing.T, admin *api.Client, rules string) (*nomadx.Client, *
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { admin.ACLTokens().Delete(tok.AccessorID, nil) })
-	return aclClients(t, admin.Address(), tok.SecretID)
+	return tok
 }
 
-// jobCaps is the namespace rule configuration.md gives the token.
-const jobCaps = `namespace "default" {
+// tokenWith is newToken, and returns a nomadx client and a raw one on the token.
+func tokenWith(t *testing.T, admin *api.Client, rules string) (*nomadx.Client, *api.Client) {
+	t.Helper()
+	return aclClients(t, admin.Address(), newToken(t, admin, rules).SecretID)
+}
+
+// nsRule is the rule running-nops.md#the-nomad-token gives the token in one
+// namespace: what nops needs there and nothing more.
+func nsRule(ns string) string {
+	return fmt.Sprintf(`namespace %q {
   capabilities = ["list-jobs", "read-job", "submit-job", "dispatch-job"]
 }
-`
+`, ns)
+}
+
+// jobCaps is the rule of the "default" namespace.
+var jobCaps = nsRule("default")
 
 // volumeJobHCL is a job whose group asks for a volume and mounts it; the task
 // never has to run, only the register is looked at.
@@ -147,7 +147,7 @@ job %q {
 // token needs, on top of the namespace rule, to register a job that mounts a
 // volume, and that Plan checks none of it.
 func TestTokenACLForVolumes(t *testing.T) {
-	adminX, admin := aclAdmin(t)
+	adminX, admin := newClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -214,7 +214,7 @@ plugin { policy = "read" }`, func(id string) string { return volumeJobHCL(id, "c
 // TestACLPolicyVolumeNames checks what running-nops.md#the-nomad-token says of the
 // name in a host_volume rule: letters, digits, "-" and "*" only.
 func TestACLPolicyVolumeNames(t *testing.T) {
-	_, admin := aclAdmin(t)
+	_, admin := newClient(t)
 	for name, ok := range map[string]bool{
 		"db-data": true,
 		"db*data": true,
@@ -240,7 +240,7 @@ func TestACLPolicyVolumeNames(t *testing.T) {
 // dashboard's Promote: a token with list-jobs and read-job only is refused
 // with 403, one that also has submit-job promotes.
 func TestPromoteNeedsSubmitJob(t *testing.T) {
-	adminX, admin := aclAdmin(t)
+	adminX, admin := newClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -299,7 +299,7 @@ func TestPromoteNeedsSubmitJob(t *testing.T) {
 // the panel needs: the three reads it makes (the job, its allocations, its
 // latest Nomad deployment) pass with list-jobs and read-job.
 func TestNomadPanelReadsWithReadJob(t *testing.T) {
-	adminX, admin := aclAdmin(t)
+	adminX, admin := newClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -328,12 +328,9 @@ func TestNomadPanelReadsWithReadJob(t *testing.T) {
 // every file of the repository, is checked in a namespace Nops manages and not
 // in "default": a token whose only rule is in a listed namespace parses.
 func TestParseNeedsNoRuleInDefault(t *testing.T) {
-	_, admin := aclAdmin(t)
+	_, admin := newClient(t)
 	ns := newNamespace(t, admin, "aclparse")
-	c, _ := tokenWith(t, admin, `namespace "`+ns+`" {
-  capabilities = ["list-jobs", "read-job", "submit-job", "dispatch-job"]
-}
-`)
+	c, _ := tokenWith(t, admin, nsRule(ns))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 

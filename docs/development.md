@@ -21,14 +21,26 @@
 ## Integration
 
 - Build tag `integration`, in `tests/integration/`. They run against a local
-  `nomad agent -dev`. If `NOPS_TEST_NOMAD_ADDR` is not set they are skipped
-  (skip, not fail).
-- What the Nomad token needs (`acl_test.go`, the tables of
-  [token ACL](running-nops.md#the-nomad-token)) runs against a second dev agent with
-  ACLs enabled: `NOPS_TEST_NOMAD_ACL_ADDR` is its address and
-  `NOPS_TEST_NOMAD_ACL_TOKEN` a management token (the bootstrap one). The tests
-  create their own policies and tokens and delete them; without the two
-  variables they are skipped.
+  `nomad agent -dev` **with ACLs enabled**, bootstrapped: `NOPS_TEST_NOMAD_ADDR`
+  is its address and `NOPS_TEST_NOMAD_TOKEN` its management token (the bootstrap
+  one). Without the address they are skipped (skip, not fail); with the address
+  and no token they fail, since nothing could run.
+- The tests' own setup (fixtures, namespaces, purges, policies) uses the
+  management token, but **`nops` never does**: the end-to-end harness creates a
+  policy holding exactly the rule of
+  [the Nomad token](running-nops.md#the-nomad-token) in each namespace the
+  instance manages, a client token with it, and starts `nops` with
+  `-nomad-token-file`. A capability the documented token lacks (for a plan, a
+  register, a hook dispatch, the deregister of a hook revision) fails CI instead
+  of a cluster. There is no agent without ACLs: Nops has no code path that
+  depends on whether ACLs are on, only on whether a token is set (a unit test of
+  `internal/nomadx` covers the request without one), and a management token
+  behaves like an agent without ACLs, so it would add nothing.
+- What each part of that token is for (`acl_test.go`: the volume table, the
+  names a policy accepts, the Nomad panel with `read-job`, Promote with
+  `submit-job`, the parse in a namespace without a rule in `default`) is checked
+  one rule at a time on the same agent: the tests create their own policies and
+  tokens and delete them.
 - Hooks are tested with **lightweight jobs**, never with heavy images:
   - `raw_exec` (enabled in dev mode): `true` → success, `false` → failure,
     `sleep 600` → timeout;
@@ -216,14 +228,12 @@ every line that slipped through named the tool or the session.
 go test -race -cover ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest -tags integration ./...
 
-nomad agent -dev &                     # in another terminal
-NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646 go test -tags integration -race -count=1 ./tests/integration/...
-
-# the ACL tests: a second agent, with ACLs, on other ports
-printf 'ports {\n  http = 5646\n  rpc  = 5647\n  serf = 5648\n}\nacl {\n  enabled = true\n}\n' > acl-agent.hcl
-nomad agent -dev -config=acl-agent.hcl &
-export NOPS_TEST_NOMAD_ACL_ADDR=http://127.0.0.1:5646
-export NOPS_TEST_NOMAD_ACL_TOKEN=$(curl -s -X POST $NOPS_TEST_NOMAD_ACL_ADDR/v1/acl/bootstrap | jq -r .SecretID)
+# in another terminal: a dev agent with ACLs, as CI runs it
+printf 'acl {\n  enabled = true\n}\n' > agent.hcl
+nomad agent -dev -config=agent.hcl &
+export NOPS_TEST_NOMAD_ADDR=http://127.0.0.1:4646
+export NOPS_TEST_NOMAD_TOKEN=$(curl -s -X POST $NOPS_TEST_NOMAD_ADDR/v1/acl/bootstrap | jq -r .SecretID)
+go test -tags integration -race -count=1 ./tests/integration/...
 ```
 
 `staticcheck`: with a recent Go, the binary in `~/go/bin` may have been built
@@ -322,7 +332,7 @@ list of work: there is no roadmap file.
 |---|---|---|
 | `test` | yes | `gofmt` (no unformatted files), `go mod tidy` (no diff), build, `go vet` (also with `-tags integration`), `go test -race -cover ./...` |
 | `lint` | yes | `staticcheck` (pinned version, also with `-tags integration`), `shellcheck` and the tests of `scripts/`, `goreleaser check` of `.goreleaser.yaml` |
-| `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev` and a second one with ACLs (bootstrapped, its token masked), runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
+| `integration` | yes | Downloads Nomad (pinned version, SHA256-verified), starts `nomad agent -dev` with ACLs (bootstrapped, its management token masked), runs `go test -tags integration -race -count=1 -v ./tests/integration/...` |
 | `pr-title` | yes | The PR title matches `type(scope): subject` with the types listed below and a lowercase subject (at most 72 characters) without trailing period |
 | `govulncheck` | no | Known vulnerabilities in dependencies, on PRs, on `main` and weekly. Not required so a new advisory cannot block unrelated PRs |
 

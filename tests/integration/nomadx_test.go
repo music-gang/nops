@@ -1,8 +1,10 @@
 //go:build integration
 
-// Package integration holds tests that run against a real Nomad, typically
-// `nomad agent -dev`. Set NOPS_TEST_NOMAD_ADDR to enable them; otherwise they
-// are skipped.
+// Package integration holds tests that run against a real Nomad: a
+// `nomad agent -dev` with ACLs enabled, so that what Nops asks of Nomad is
+// checked against the token it is documented to need. Set NOPS_TEST_NOMAD_ADDR
+// to enable them (otherwise they are skipped) and NOPS_TEST_NOMAD_TOKEN to the
+// management token of the agent (the bootstrap one).
 package integration
 
 import (
@@ -31,11 +33,26 @@ func testAddr(t *testing.T) string {
 	return addr
 }
 
-// newClient returns a nomadx client and a raw API client for cleanup.
+// testToken is the management token of the agent under test. The tests' own
+// setup (fixtures, namespaces, purges, policies) runs on it; nops never does
+// (see startNops). An address without a token is a mistake, not a reason to
+// skip: the agent has ACLs and nothing would run.
+func testToken(t *testing.T) string {
+	t.Helper()
+	token := os.Getenv("NOPS_TEST_NOMAD_TOKEN")
+	if token == "" {
+		t.Fatal("NOPS_TEST_NOMAD_TOKEN not set: it is the management token of the agent (curl -X POST $NOPS_TEST_NOMAD_ADDR/v1/acl/bootstrap, see docs/development.md#commands)")
+	}
+	return token
+}
+
+// newClient returns a nomadx client and a raw API client on the management
+// token, for the tests' own setup and cleanup.
 func newClient(t *testing.T) (*nomadx.Client, *api.Client) {
 	t.Helper()
 	cfg := api.DefaultConfig()
 	cfg.Address = testAddr(t)
+	cfg.SecretID = testToken(t)
 	// A client of its own, so its idle connections can be closed at the end.
 	cfg.HttpClient = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	// Every client keeps its idle connections until the process exits, and
