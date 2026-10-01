@@ -55,19 +55,28 @@ with what is specific to a session:
    that leaves a choice open) is **planned first**: lay out the plan and the
    questions **in the session** and wait for the maintainer's answers. No
    branch and no PR for this.
-4. Do the issue as the flow says. What you learned that a later issue needs
+4. **Docs before code.** The plan's *Docs* lists the exact sentences: each
+   one the change makes false with its replacement, and a new one only for
+   behaviour a reader needs and the dashboard doesn't show, or a row for a
+   new flag, meta key or metric. *None* is the usual answer. The table of
+   [what to update](docs/development.md#what-to-update-for-each-change)
+   says where a sentence goes, not that one is needed. **Local:** write
+   them on the branch and stop for the maintainer's answer before the
+   code. **Cloud:** write them first and go on. A doc change made later
+   and not in the plan goes in the PR's `## Notes`, with why.
+5. Do the issue as the flow says. What you learned that a later issue needs
    goes in a comment on that issue.
-5. Run the checks ([commands](docs/development.md#commands)). If `nomad` is
+6. Run the checks ([commands](docs/development.md#commands)). If `nomad` is
    not installed, CI runs the integration tests: wait for green checks and
    fix what is red. staticcheck needs the toolchain of `go.mod`
    (`GOTOOLCHAIN=go<version>` if the local Go is older).
-6. **Cloud:** commit (unsigned), push and open the PR once there is something
+7. **Cloud:** commit (unsigned), push and open the PR once there is something
    to review. **Local:** prepare the branch, stage the files and write the
    message to a file; the maintainer commits with his GPG key.
-7. If a decision is the maintainer's to take: ask in the session before a
+8. If a decision is the maintainer's to take: ask in the session before a
    branch exists, or, once a PR is open, leave the question in a `## Notes`
    section of its description. Do not guess.
-8. Nothing worth keeping lives only in private memory: a decision's
+9. Nothing worth keeping lives only in private memory: a decision's
    discussion goes to its issue or PR and its reason to the page that
    explains that part; context a later issue needs, to a comment on it.
 
