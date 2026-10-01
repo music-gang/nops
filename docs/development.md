@@ -311,7 +311,8 @@ an issue is its type: the bug form sets `Bug`, the feature form `Feature`,
 and the rest is a `Task`. Both forms add the `needs-triage` label; the
 maintainer removes it once he has read the issue and adds a label for each
 area it touches: `engine`, `web`, `store`, `meta`, `nomadx`, `hooks`,
-`gitwatch`, `config`, `notify`, `release`, `ci` or `documentation`. An issue
+`gitwatch`, `config`, `notify`, `integration`, `release`, `ci` or
+`documentation`; a unit test belongs to the area of its package. An issue
 opened with `gh issue create` skips the forms and gets no type and no label.
 PRs have no labels, since their title already says the type and the scope,
 except `dependencies` and `go`, which Dependabot adds. The open issues are the
