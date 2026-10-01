@@ -14,8 +14,10 @@ Nops watches a git repository of Nomad jobs and deploys them according to a
 It shows pending changes in a dashboard and can run **hooks**, Nomad jobs
 that run before or after a deployment.
 
-> **Status: early development.** Built for a self-hosted cluster for personal
-> use. Inspired by [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops).
+> **Status:** ready to use, still at `v0`: a minor release may change the
+> configuration or the database, and its release notes say how to upgrade.
+> Built for a self-hosted cluster for personal use. Inspired by
+> [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops).
 
 **Try it:** [getting started](docs/getting-started.md) takes about fifteen
 minutes on one machine.

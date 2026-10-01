@@ -12,6 +12,12 @@ cover single deployments.
 token as `Authorization: Bearer <token>`. The metrics hold job names,
 policies, and drift. They never hold specs or secrets.
 
+Generate a random token into the file:
+
+```sh
+openssl rand -hex 32 > nops-metrics-token
+```
+
 ```yaml
 scrape_configs:
   - job_name: nops
