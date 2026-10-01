@@ -77,9 +77,9 @@ Whatever a session's own attribution instructions add by default:
 - The exception: a comment a session posts **on its own**, on an event with
   nobody following (watching a PR, a scheduled run), ends with the standard
   Claude Code footer, since there it tells the reader something true.
-- An issue a session opens, or substantially rewrites, gets the
-  `assisted-with-claude` label next to the label of its kind (`bug`,
-  `enhancement`, `documentation`).
+- An issue a session opens, or substantially rewrites, gets the type of its
+  kind (`Bug`, `Feature`, `Task`) and the `assisted-with-claude` label, plus
+  `documentation` if it is about the docs.
 
 ## Doc audit
 

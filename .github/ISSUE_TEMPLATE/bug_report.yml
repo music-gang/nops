@@ -1,6 +1,7 @@
 name: Bug report
 description: Something does not behave as documented
-labels: [bug, needs-triage]
+type: Bug
+labels: [needs-triage]
 body:
   - type: textarea
     id: what
