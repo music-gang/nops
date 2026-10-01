@@ -79,8 +79,8 @@ Whatever a session's own attribution instructions add by default:
 - The exception: a comment a session posts **on its own**, on an event with
   nobody following (watching a PR, a scheduled run), ends with the standard
   Claude Code footer, since there it tells the reader something true.
-- An issue a session opens gets the type of its kind (`Bug`, `Feature`,
-  `Task`), plus the `documentation` label if it is about the docs. No label
+- An issue a session opens has a plain-text title, the type of its kind
+  (`Bug`, `Feature`, `Task`) and the labels of the areas it touches. No label
   marks it as written with Claude: the trailer does.
 
 ## Doc audit
