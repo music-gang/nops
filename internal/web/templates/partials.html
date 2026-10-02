@@ -353,6 +353,7 @@
       {{if .Deployment.EvalID}}<dt>Eval</dt><dd class="mono" title="{{.Deployment.EvalID}}">{{.Deployment.EvalShort}}</dd>{{end}}
       <dt>Created</dt><dd>{{template "time" .Deployment.CreatedAt}}</dd>
       {{if .Deployment.DecidedBy}}<dt>Decided</dt><dd title="{{.Deployment.DecidedBy}}">{{.Deployment.DecidedBy}} {{template "time" .Deployment.DecidedAt}}</dd>{{end}}
+      {{if .Deployment.WindowLiftedBy}}<dt>Deployed now</dt><dd title="{{.Deployment.WindowLiftedBy}}">outside its sync window, asked by {{.Deployment.WindowLiftedBy}}</dd>{{end}}
       {{if .Deployment.RetryOfPath}}<dt>Retry of</dt><dd><a href="{{.Deployment.RetryOfPath}}">the earlier deployment</a></dd>{{end}}
       {{if .Deployment.RetriedBy}}<dt>Retried</dt><dd title="{{.Deployment.RetriedBy}}">{{.Deployment.RetriedBy}} {{template "time" .Deployment.RetriedAt}}{{with .RetriedAs}} as <a href="{{.Path}}">{{.StateLabel}}</a>{{end}}</dd>{{end}}
     </dl>

@@ -47,6 +47,7 @@ disagrees with this one, this page wins. Code-only terms are in
 | **hold** | Something that keeps Nops from starting a deployment for a job: a **pause** or a closed **sync window**. |
 | **pause / resume** | A person holding a job and releasing it. |
 | **sync window** | When an `auto` job may deploy on its own ([policies](policies.md#sync-window)). |
+| **deploy now** | A person deploying a job held by its sync window once, without waiting for the window to open. |
 | **sync state** | Where a job stands against git, in one word ([dashboard](dashboard.md#sync-state-of-a-job)). |
 | **orphan** | A job Nops deployed that is gone from git but still runs in Nomad. Nops shows it and never stops it. |
 | **apply** | The register of the target spec, after a fresh plan. |

@@ -123,6 +123,10 @@ type Deployment struct {
 	// RetryOf is the ID of the failed or rejected deployment this one retries,
 	// empty if it is not a retry.
 	RetryOf string
+	// WindowLiftedBy is who asked to deploy the job outside its sync window, on
+	// the deployment that request led to (CreateDeployment writes it and deletes
+	// the request in the same transaction); empty for any other.
+	WindowLiftedBy string
 	// PromotionWaitSince is when an applying deployment was first seen waiting
 	// for a human to promote the canaries of its Nomad deployment (set by
 	// MarkAwaitingPromotion), PromotedAt when they were seen promoted (set by
@@ -377,10 +381,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
 		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff,
-		 policy, state, error, cas_index, retry_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?)`,
+		 policy, state, error, cas_index, retry_of, window_lifted_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
 		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff,
-		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, now, now)
+		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, d.WindowLiftedBy, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
@@ -404,6 +408,16 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	}
 	if err := insertEvent(ctx, tx, id, now, "", StateDetected, "nops", detected); err != nil {
 		return err
+	}
+	if d.WindowLiftedBy != "" {
+		// The request is used up with the deployment it led to: it can't make a
+		// second one, and a crash can't leave both.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM window_lifts WHERE namespace = ? AND job_id = ?`, d.Namespace, d.JobID); err != nil {
+			return fmt.Errorf("create deployment: delete window lift: %w", err)
+		}
+		if err := insertEvent(ctx, tx, id, now, StateDetected, StateDetected, d.WindowLiftedBy, "deploy now requested outside the sync window"); err != nil {
+			return err
+		}
 	}
 	switch born {
 	case StatePendingApproval:
@@ -540,7 +554,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 
 const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
 	plan_diff, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
-	retried_by, retried_at, retry_of, promotion_wait_since, promoted_at, created_at, updated_at`
+	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -549,7 +563,7 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		d                                   Deployment
 		plan, eval, errMsg, by, decidedAt   sql.NullString
 		subject, author, retriedBy, retried sql.NullString
-		retryOf                             sql.NullString
+		retryOf, liftedBy                   sql.NullString
 		waitSince, promoted                 sql.NullString
 		applied                             sql.NullInt64
 		cas                                 int64
@@ -557,11 +571,12 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan,
 		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
-		&retryOf, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
+		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	d.PlanDiff, d.EvalID, d.Error, d.DecidedBy = plan.String, eval.String, errMsg.String, by.String
 	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
+	d.WindowLiftedBy = liftedBy.String
 	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)
 	var err error
 	if d.DecidedAt, err = parseTime(decidedAt.String); err != nil {

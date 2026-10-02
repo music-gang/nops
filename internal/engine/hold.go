@@ -130,6 +130,16 @@ func holdFrom(pause *Hold, ws *WindowStatus) *Hold {
 	return ws.hold()
 }
 
+// holdOn is what holds d, a deployment of the job that is not started yet: the
+// hold, unless it is a closed sync window the person who asked for d lifted for
+// it (Deploy now). A pause is never lifted.
+func holdOn(h *Hold, d *store.Deployment) *Hold {
+	if h != nil && h.Kind == HoldWindow && d.WindowLiftedBy != "" {
+		return nil
+	}
+	return h
+}
+
 // holds indexes the pauses in force this cycle, by job. A job absent from it is
 // not paused.
 func holds(pauses []store.Pause) map[jobKey]*Hold {

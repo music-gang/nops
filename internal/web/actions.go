@@ -107,6 +107,34 @@ func (s *server) resume(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// deployNow is POST /jobs/{namespace}/{job}/deploy-now: deploy a job held by its
+// sync window now (Engine.DeployNow). It applies nothing itself: the deployment
+// it asks for is created by a detection cycle, like any other. The form's
+// "spec_hash" is the drift of the page the person saw. Engine.DeployNow has run
+// that cycle by the time it answers, so the person lands on the new deployment;
+// on the job's page when the cycle left the request to the loop.
+func (s *server) deployNow(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	ns, job := r.PathValue("namespace"), r.PathValue("job")
+	next, err := s.engine.DeployNow(r.Context(), ns, job, r.FormValue("spec_hash"), actor)
+	switch {
+	case err == nil && next != "":
+		http.Redirect(w, r, s.deploymentPath(next), http.StatusSeeOther)
+	case err == nil:
+		http.Redirect(w, r, s.jobPath(ns, job), http.StatusSeeOther)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This job does not exist.")
+	case errors.Is(err, engine.ErrNotDeployable):
+		s.conflict(w, r, "Nothing to deploy now", "This job can no longer be deployed outside its sync window: the window opened, a deployment started, the job is paused or blocked, or git has another spec for it now.")
+	default:
+		s.serverError(w, r, "deploy job now", err)
+	}
+}
+
 // conflict renders the 409 page of an action that found the job in another
 // state than the page it was sent from said.
 func (s *server) conflict(w http.ResponseWriter, r *http.Request, title, message string) {

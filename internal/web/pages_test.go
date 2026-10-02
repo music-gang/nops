@@ -130,23 +130,26 @@ type pauseCall struct{ namespace, job, actor, reason string }
 type resumeCall struct{ namespace, job, actor string }
 
 type fakeEngine struct {
-	approveErr   error
-	rejectErr    error
-	retryErr     error
-	retryNext    string          // what Retry answers: the deployment that retries; the one asked about if empty
-	retryable    map[string]bool // by deployment ID
-	promoteErr   error
-	pauseErr     error
-	resumeErr    error
-	pauseCalls   []pauseCall
-	resumeCalls  []resumeCall
-	promoteCalls []promoteCall
-	approveCalls []approveCall
-	rejectCalls  []rejectCall
-	retryCalls   []retryCall
-	observations []engine.Observation
-	orphans      []engine.Orphan
-	status       engine.Status
+	approveErr     error
+	rejectErr      error
+	retryErr       error
+	retryNext      string          // what Retry answers: the deployment that retries; the one asked about if empty
+	retryable      map[string]bool // by deployment ID
+	promoteErr     error
+	pauseErr       error
+	resumeErr      error
+	deployNowErr   error
+	deployNowNext  string // what DeployNow answers: the deployment it created, none if empty
+	pauseCalls     []pauseCall
+	resumeCalls    []resumeCall
+	deployNowCalls []deployNowCall
+	promoteCalls   []promoteCall
+	approveCalls   []approveCall
+	rejectCalls    []rejectCall
+	retryCalls     []retryCall
+	observations   []engine.Observation
+	orphans        []engine.Orphan
+	status         engine.Status
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -172,6 +175,13 @@ func (f *fakeEngine) Retry(ctx context.Context, id, actor string) (string, error
 
 func (f *fakeEngine) Retryable(d, latest *store.Deployment) bool {
 	return f.retryable[d.ID] && latest != nil && latest.ID == d.ID
+}
+
+type deployNowCall struct{ namespace, jobID, specHash, actor string }
+
+func (f *fakeEngine) DeployNow(ctx context.Context, namespace, jobID, specHash, actor string) (string, error) {
+	f.deployNowCalls = append(f.deployNowCalls, deployNowCall{namespace, jobID, specHash, actor})
+	return f.deployNowNext, f.deployNowErr
 }
 
 func (f *fakeEngine) Promote(ctx context.Context, id, actor string) error {

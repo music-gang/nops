@@ -175,7 +175,8 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 	// A hold gates the start: a deployment that was `detected` before the job was
 	// paused, or before its sync window closed, is not advanced. Detection puts
 	// it aside (see reconcileDeployment), and is asked to do it now. The window
-	// is the one the deployment froze, with its spec. A store error is not "not
+	// is the one the deployment froze, with its spec, unless a person lifted it for
+	// this deployment (Deploy now). A store error is not "not
 	// held": the deployment waits for the next cycle rather than start on a
 	// guess (invariant 7).
 	pause, err := e.pauseOf(ctx, d.Namespace, d.JobID)
@@ -183,7 +184,7 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 		log.ErrorContext(ctx, "read the job's pause", "error", err)
 		return
 	}
-	if hold := holdFrom(pause, e.windowStatus(meta.Parse(job.Meta))); hold != nil {
+	if hold := holdOn(holdFrom(pause, e.windowStatus(meta.Parse(job.Meta))), d); hold != nil {
 		log.DebugContext(ctx, "detected deployment of a held job left to detection", "reason", hold.Reason)
 		e.kickDetection()
 		return

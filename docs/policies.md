@@ -37,6 +37,9 @@ nops_sync_window_duration = "9h"          # and stays open until 18:00
   UTC by default.
 - Outside the window, Nops still shows the drift but starts no deployment: the
   job is **Held**. When the window opens, Nops plans again from git.
+- **Deploy now**, on the job's dashboard page, deploys the drift shown there
+  once, like any deployment, without waiting for the window. If git changes
+  first, the job stays held. It doesn't lift a pause or a block.
 - A deployment that already started finishes even if the window closes.
 - Under `approval`, Nops ignores the window: the approval is the gate.
 
