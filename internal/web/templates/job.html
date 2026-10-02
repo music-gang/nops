@@ -40,8 +40,17 @@
 {{end}}
 
 {{if .Held}}
-<section class="flash flash--warn">
-  <p><strong>Held:</strong> {{.Held}}. Drift is shown, but nops deploys this job on its own only inside its sync window. When it opens, nops plans again and deploys what git says then.</p>
+<section class="flash flash--warn{{if .DeployNow}} flash--action{{end}}">
+  <div>
+    <p><strong>Held:</strong> {{.Held}}. Drift is shown, but nops deploys this job on its own only inside its sync window. When it opens, nops plans again and deploys what git says then.</p>
+    {{if .DeployNowBy}}<p>{{.DeployNowBy}} asked to deploy it now: nops starts the deployment at its next detection cycle.</p>{{end}}
+  </div>
+  {{with .DeployNow}}
+  <form method="post" action="{{.Path}}">
+    <input type="hidden" name="spec_hash" value="{{.SpecHash}}">
+    <button type="submit" class="btn btn--sm">Deploy now</button>
+  </form>
+  {{end}}
 </section>
 {{end}}
 

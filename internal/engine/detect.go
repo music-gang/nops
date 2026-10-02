@@ -80,6 +80,16 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		return st, fmt.Errorf("list active pauses: %w", err)
 	}
 	held := holds(pauses)
+	// So is a Deploy now request: it was accepted, and one that cannot be read is
+	// not one that may be ignored (invariant 7).
+	lifts, err := e.store.WindowLifts(ctx)
+	if err != nil {
+		return st, fmt.Errorf("list window lifts: %w", err)
+	}
+	asked := make(map[jobKey]store.WindowLift, len(lifts))
+	for _, l := range lifts {
+		asked[jobKey{l.Namespace, l.JobID}] = l
+	}
 
 	seen := make(map[jobKey]bool, len(managed))
 	observations := make(map[jobKey]Observation, len(managed))
@@ -88,7 +98,11 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		seen[key] = true // classified as managed: never "removed from repo" this cycle
 
 		window := e.windowStatus(mf.cfg)
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], holdFrom(held[key], window), window)
+		var lift *store.WindowLift
+		if l, ok := asked[key]; ok {
+			lift = &l
+		}
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], held[key], window, lift)
 		if err != nil {
 			return st, err
 		}
@@ -107,6 +121,14 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	if unparsed == 0 {
 		if err := e.supersedeRemoved(ctx, seen); err != nil {
 			return st, err
+		}
+		// A request for a job that is gone must not wait for it to come back.
+		for key, l := range asked {
+			if !seen[key] {
+				if err := e.dropWindowLift(ctx, l, "the job is not in the repository"); err != nil {
+					return st, err
+				}
+			}
 		}
 	}
 	if err := e.gcHookRevisions(ctx); err != nil {
@@ -256,12 +278,13 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 }
 
 // reconcileJob computes the drift of one managed job and reconciles its
-// deployment. hooks are the hook jobs of the job's own namespace, by ID. hold is
-// what holds the job this cycle, nil if nothing does, and window where its sync
-// window stands (nil without one). ok is false when the job
+// deployment. hooks are the hook jobs of the job's own namespace, by ID. pause is
+// the person's pause on the job (nil if none), window where its sync window
+// stands (nil without one) and lift the Deploy now request waiting for it, if
+// any. ok is false when the job
 // was skipped because of a Nomad failure scoped to it (already logged): the
 // caller keeps no observation for it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, hold *Hold, window *WindowStatus) (obs Observation, ok bool, err error) {
+func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
 	jobID, ns := key.id, key.namespace
 	log := e.log.With("job", jobID, "namespace", ns, "commit", commit.sha)
@@ -275,6 +298,13 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	if err != nil {
 		log.ErrorContext(ctx, "freeze hooks", "error", err)
 		return Observation{}, false, nil
+	}
+
+	// A Deploy now request lifts the window, for the spec the person saw and no
+	// other, and never a pause: the hold it leaves is what holds the job this cycle.
+	hold, liftedBy := holdFrom(pause, window), ""
+	if lift != nil && hold != nil && hold.Kind == HoldWindow && lift.SpecHash == hash {
+		hold, liftedBy = nil, lift.RequestedBy
 	}
 
 	var (
@@ -321,12 +351,48 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob, hold)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob, hold, liftedBy)
 	if err != nil {
 		return obs, true, err
 	}
 	obs.BlockedBy, obs.BlockedReason = blockedBy, blockedReason
+	if lift != nil {
+		// What a deployment did not use up is dropped now, never kept for later.
+		if err := e.dropWindowLift(ctx, *lift, liftDropReason(*lift, hash, pause, window, obs)); err != nil {
+			return obs, true, err
+		}
+	}
 	return obs, true, nil
+}
+
+// dropWindowLift deletes a Deploy now request that no deployment used. A
+// request a deployment used up is already gone, and says nothing here.
+func (e *Engine) dropWindowLift(ctx context.Context, l store.WindowLift, reason string) error {
+	dropped, err := e.store.DropWindowLift(ctx, l.Namespace, l.JobID)
+	if err != nil {
+		return err
+	}
+	if dropped {
+		e.log.InfoContext(ctx, "deploy now request dropped", "job", l.JobID, "namespace", l.Namespace, "actor", l.RequestedBy, "reason", reason)
+	}
+	return nil
+}
+
+// liftDropReason says why a Deploy now request led to no deployment, for the log.
+func liftDropReason(l store.WindowLift, hash string, pause *Hold, window *WindowStatus, obs Observation) string {
+	switch {
+	case l.SpecHash != hash:
+		return "git has another spec than the one asked"
+	case pause != nil:
+		return "the job is paused"
+	case window == nil || window.Open:
+		return "the sync window is open or the job has none"
+	case obs.BlockedBy != "":
+		return "a failed or rejected deployment blocks the job"
+	case !obs.Drift:
+		return "there is nothing to deploy"
+	}
+	return "the job already has an active deployment"
 }
 
 // reconcileDeployment applies the state-machine rules of
@@ -344,9 +410,11 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 // detection plans again and what is applied is never a plan from before it. A
 // pending_approval deployment is left as it is (Approve refuses while the job
 // is paused), and so is one in pre_hook/applying/post_hook. A block is still
-// reported while the job is held.
+// reported while the job is held. liftedBy is who asked to deploy the job
+// outside its sync window, when hold is nil only because of it: the deployment
+// this creates records it.
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
-	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hold *Hold) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
 
 	jobID := key.id
 	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
@@ -379,7 +447,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 				if err := e.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
 					return "", "", err
 				}
-			case hold != nil && active.State == store.StateDetected && active.Policy == store.PolicyAuto:
+			case holdOn(hold, active) != nil && active.State == store.StateDetected && active.Policy == store.PolicyAuto:
 				if err := e.transition(ctx, log, active, store.StateSuperseded, hold.Reason); err != nil {
 					return "", "", err
 				}
@@ -433,7 +501,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	d := &store.Deployment{
 		JobID: jobID, Namespace: key.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
-		Hooks: frozen,
+		Hooks: frozen, WindowLiftedBy: liftedBy,
 	}
 	if retrying {
 		d.RetryOf = latest.ID

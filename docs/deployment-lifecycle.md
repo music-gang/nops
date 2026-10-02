@@ -58,7 +58,8 @@ While a job is held:
 - a deployment already running finishes.
 
 When the hold ends, Nops plans again from git. A blocked job stays blocked
-while held.
+while held. [Deploy now](policies.md#sync-window) lifts a closed sync window
+for one deployment.
 
 ## Schema
 
@@ -70,6 +71,7 @@ The migrations in `internal/store/migrations/` define the tables:
 | `deployment_hooks` | The hooks each deployment froze when it was created. |
 | `hook_runs` | One run of one hook of one deployment. |
 | `job_pauses` | Pauses and resumes. Each records who did it and why. |
+| `window_lifts` | Deploy now requests detection hasn't used yet. |
 | `events` | The audit log of every deployment. |
 
 A partial unique index on `deployments` allows one active deployment per job.

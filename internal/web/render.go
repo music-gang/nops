@@ -129,6 +129,9 @@ type deploymentCard struct {
 	StateClass string
 	Error      string
 	Retried    bool
+	// WindowLiftedBy is who asked to deploy the job outside its sync window, on
+	// the deployment that led to.
+	WindowLiftedBy string
 	// RetryOf is the deployment this one retries, RetryPath where the "Retry"
 	// button of a deployment that can be retried posts (set where a page shows it).
 	RetryOfPath string
@@ -157,34 +160,35 @@ type deploymentCard struct {
 
 func (s *server) card(d *store.Deployment) deploymentCard {
 	c := deploymentCard{
-		ID:           d.ID,
-		JobID:        d.JobID,
-		Namespace:    d.Namespace,
-		Title:        d.Namespace + "/" + d.JobID,
-		JobPath:      s.jobPath(d.Namespace, d.JobID),
-		Path:         s.deploymentPath(d.ID),
-		Policy:       d.Policy,
-		State:        d.State,
-		StateLabel:   stateLabel(d.State),
-		StateClass:   stateClass(d.State),
-		Error:        d.Error,
-		Retried:      !d.RetriedAt.IsZero(),
-		CommitSHA:    d.CommitSHA,
-		CommitShort:  shortCommit(d.CommitSHA),
-		CommitSubj:   d.CommitSubject,
-		CommitAuthor: d.CommitAuthor,
-		SpecHash:     d.SpecHash,
-		SpecShort:    short(12, d.SpecHash),
-		CASIndex:     d.CASIndex,
-		EvalID:       d.EvalID,
-		EvalShort:    short(8, d.EvalID),
-		Applied:      d.AppliedIndex != 0,
-		DecidedBy:    d.DecidedBy,
-		DecidedAt:    s.when(d.DecidedAt),
-		RetriedBy:    d.RetriedBy,
-		RetriedAt:    s.when(d.RetriedAt),
-		CreatedAt:    s.when(d.CreatedAt),
-		UpdatedAt:    s.when(d.UpdatedAt),
+		ID:             d.ID,
+		JobID:          d.JobID,
+		Namespace:      d.Namespace,
+		Title:          d.Namespace + "/" + d.JobID,
+		JobPath:        s.jobPath(d.Namespace, d.JobID),
+		Path:           s.deploymentPath(d.ID),
+		Policy:         d.Policy,
+		State:          d.State,
+		StateLabel:     stateLabel(d.State),
+		StateClass:     stateClass(d.State),
+		Error:          d.Error,
+		Retried:        !d.RetriedAt.IsZero(),
+		WindowLiftedBy: d.WindowLiftedBy,
+		CommitSHA:      d.CommitSHA,
+		CommitShort:    shortCommit(d.CommitSHA),
+		CommitSubj:     d.CommitSubject,
+		CommitAuthor:   d.CommitAuthor,
+		SpecHash:       d.SpecHash,
+		SpecShort:      short(12, d.SpecHash),
+		CASIndex:       d.CASIndex,
+		EvalID:         d.EvalID,
+		EvalShort:      short(8, d.EvalID),
+		Applied:        d.AppliedIndex != 0,
+		DecidedBy:      d.DecidedBy,
+		DecidedAt:      s.when(d.DecidedAt),
+		RetriedBy:      d.RetriedBy,
+		RetriedAt:      s.when(d.RetriedAt),
+		CreatedAt:      s.when(d.CreatedAt),
+		UpdatedAt:      s.when(d.UpdatedAt),
 	}
 	if d.RetryOf != "" {
 		c.RetryOfPath = s.deploymentPath(d.RetryOf)

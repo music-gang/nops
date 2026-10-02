@@ -82,6 +82,11 @@ type Store interface {
 	ResumeJob(ctx context.Context, namespace, jobID, actor string) error
 	ActivePauses(ctx context.Context) ([]store.Pause, error)
 	PauseOf(ctx context.Context, namespace, jobID string) (store.Pause, error)
+	// RequestWindowLift, WindowLifts and DropWindowLift are used by Deploy now
+	// (see docs/policies.md#sync-window).
+	RequestWindowLift(ctx context.Context, namespace, jobID, specHash, actor string) error
+	WindowLifts(ctx context.Context) ([]store.WindowLift, error)
+	DropWindowLift(ctx context.Context, namespace, jobID string) (bool, error)
 }
 
 // Hooks is what apply needs to run a deployment's hooks. *hooks.Runner
@@ -148,6 +153,11 @@ type Observation struct {
 	// its policy is not auto (docs/policies.md#sync-window). It is set whether
 	// or not the job drifts: a window is something a person wants to see.
 	Window *WindowStatus
+	// DeployNowBy is who asked to deploy the job outside its sync window, while
+	// that request waits for a detection cycle that has not run (or failed): the
+	// page says so rather than offer the button again. The next cycle that runs
+	// replaces the observation, and the request is a deployment or dropped.
+	DeployNowBy string
 }
 
 // HookRef is a hook a job declares, as the repository has it now.

@@ -285,6 +285,10 @@ type pauseView struct {
 	ResumePath string
 }
 
+// deployNowView is the "Deploy now" form: where it posts and the drift the page
+// shows, which the request carries.
+type deployNowView struct{ Path, SpecHash string }
+
 // windowView is a job's sync window as its page shows it: where it stands now
 // and the rule, both with the time zone it is read in, so it is never read in
 // another.
@@ -328,7 +332,9 @@ type jobData struct {
 	BlockedBy               string
 	RetryPath               string // where the "Retry" button of the blocking deployment posts, set when Blocked
 	Paused                  *pauseView
-	Held                    string // why a closed sync window holds a drifting job, "" otherwise
+	Held                    string         // why a closed sync window holds a drifting job, "" otherwise
+	DeployNow               *deployNowView // the "Deploy now" button of a held job, nil when it is not offered
+	DeployNowBy             string         // who asked, while the request waits for a detection cycle: no button then
 	Window                  *windowView
 	PausePath               string // where the "Pause" form posts, set when the job is in the repository and not paused
 	Drift                   bool
@@ -399,14 +405,22 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		if data.Blocked {
 			data.RetryPath = s.retryPath(obs.BlockedBy)
 		}
-		// A pause can be lifted here; a closed sync window cannot, it only
-		// opens, and a job it holds can still be paused.
+		// A pause can be lifted here; a closed sync window can be lifted for one
+		// deployment (Deploy now), and a job it holds can still be paused. What a
+		// Deploy now started is not held: the window closing again does not stop it.
+		running := latest != nil && latest.State.IsActive() && latest.WindowLiftedBy != ""
 		switch h := obs.Hold; {
 		case h != nil && h.Kind == engine.HoldPaused:
 			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since), ResumePath: s.jobPath(ns, id) + "/resume"}
-		case h != nil && obs.Drift:
+		case h != nil && obs.Drift && !running:
 			data.Held = h.Reason
 			data.PausePath = s.jobPath(ns, id) + "/pause"
+			switch {
+			case obs.DeployNowBy != "":
+				data.DeployNowBy = obs.DeployNowBy
+			case engine.DeployNowable(*obs, latest):
+				data.DeployNow = &deployNowView{Path: s.jobPath(ns, id) + "/deploy-now", SpecHash: obs.SpecHash}
+			}
 		default:
 			data.PausePath = s.jobPath(ns, id) + "/pause"
 		}
