@@ -73,6 +73,8 @@ type Event struct {
 	NomadURL      string `json:"nomad_url,omitempty"`
 	// RetryOf is the ID of the failed or rejected deployment this one retries.
 	RetryOf string `json:"retry_of,omitempty"`
+	// DeployedNowBy is who asked to deploy the job outside its sync window.
+	DeployedNowBy string `json:"deployed_now_by,omitempty"`
 	// Changes sums up the plan diff of a deployment waiting for approval, such
 	// as "2 groups, 3 tasks changed".
 	Changes string    `json:"changes,omitempty"`
@@ -156,6 +158,7 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment, phase string
 		CommitAuthor:  d.CommitAuthor,
 		NomadURL:      nomadx.UIJobURL(n.nomadUI, d.Namespace, d.JobID),
 		RetryOf:       d.RetryOf,
+		DeployedNowBy: d.WindowLiftedBy,
 		Time:          d.UpdatedAt.UTC(),
 		logo:          logoURL(n.publicURL),
 	}
