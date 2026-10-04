@@ -194,7 +194,7 @@ func TestWebhook(t *testing.T) {
 	New(Options{
 		Webhook: Endpoint{URL: srv.URL + "/hook", Token: "tok"}, PublicURL: publicURL + "/", Timeout: time.Second,
 		CommitURL: func(sha string) string { return commitBase + sha }, NomadUIURL: nomadUI,
-	}, log).Notify(context.Background(), withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf = "01J8ZW" }), "pre")
+	}, log).Notify(context.Background(), withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf, d.WindowLiftedBy = "01J8ZW", "bob" }), "pre")
 
 	reqs := srv.requests()
 	if len(reqs) != 1 || buf.Len() > 0 {
@@ -210,7 +210,7 @@ func TestWebhook(t *testing.T) {
 	}
 	want := Event{
 		DeploymentID: "01J8ZX", Job: "web", Namespace: "apps", State: "failed", Phase: "pre",
-		Policy: "approval", ApprovedBy: "alice", RetryOf: "01J8ZW",
+		Policy: "approval", ApprovedBy: "alice", RetryOf: "01J8ZW", DeployedNowBy: "bob",
 		Error: "pre-hook web-migrate failed: exit 1", Commit: commitSHA,
 		CommitSubject: "Bump web to 1.4.0", CommitAuthor: "Alice", CommitURL: commitLink,
 		URL: deploymentURL, NomadURL: nomadLink, Time: updated,
@@ -239,7 +239,7 @@ func TestWebhookWithoutTokenAndLinks(t *testing.T) {
 		t.Errorf("url = %v, want empty without a public URL", m["url"])
 	}
 	// What a notification has no value for is left out, not sent empty.
-	for _, k := range []string{"waiting", "phase", "policy", "approved_by", "commit_subject", "commit_author", "commit_url", "nomad_url", "retry_of", "changes"} {
+	for _, k := range []string{"waiting", "phase", "policy", "approved_by", "commit_subject", "commit_author", "commit_url", "nomad_url", "retry_of", "deployed_now_by", "changes"} {
 		if v, ok := m[k]; ok {
 			t.Errorf("payload has %q = %v, want the key left out", k, v)
 		}
@@ -329,7 +329,7 @@ func TestPreviewIsTheSameInEveryAdapter(t *testing.T) {
 
 func TestDiscord(t *testing.T) {
 	o, srvs := allAdapters(t)
-	d := withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf = "01J8ZW" })
+	d := withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf, d.WindowLiftedBy = "01J8ZW", "bob" })
 	r := notifyAll(t, o, srvs, d, "pre")["discord"]
 	if r.header.Get("Content-Type") != "application/json" {
 		t.Errorf("headers %v", r.header)
@@ -355,6 +355,7 @@ func TestDiscord(t *testing.T) {
 		{"Policy", "approval", true},
 		{"Approved by", "alice", true},
 		{"Retry of", "01J8ZW", true},
+		{"Deployed now by", "bob", true},
 		{"Links", "[Open in Nops](" + deploymentURL + ") · [Commit](" + commitLink + ") · [Open in Nomad](" + nomadLink + ")", false},
 	}
 	if len(e.Fields) != len(want) {
@@ -492,7 +493,7 @@ func TestSlackLimits(t *testing.T) {
 func TestNtfy(t *testing.T) {
 	o, srvs := allAdapters(t)
 	o.Ntfy.Token = "tk"
-	d := withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf = "01J8ZW" })
+	d := withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf, d.WindowLiftedBy = "01J8ZW", "bob" })
 	r := notifyAll(t, o, srvs, d, "pre")["ntfy"]
 	h := r.header
 	if h.Get("Title") != "web failed in the pre-hook" || h.Get("Priority") != "4" || h.Get("Tags") != "x" ||
@@ -507,7 +508,7 @@ func TestNtfy(t *testing.T) {
 	// The links are the buttons: the text has none.
 	want := "pre-hook web-migrate failed: exit 1\n" +
 		"Commit: 0123456789ab Bump web to 1.4.0 · Alice\n" +
-		"Namespace: apps · Policy: approval · Approved by: alice · Retry of: 01J8ZW"
+		"Namespace: apps · Policy: approval · Approved by: alice · Retry of: 01J8ZW · Deployed now by: bob"
 	if string(r.body) != want {
 		t.Errorf("body\n got %q\nwant %q", r.body, want)
 	}

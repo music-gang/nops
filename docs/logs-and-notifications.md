@@ -54,7 +54,8 @@ Turn on one or more adapters in [configuration](configuration.md#notifications):
 
 A notification waiting for a promotion also has `"waiting": "canary_promotion"`.
 One waiting for approval also has `changes`, such as `"2 groups, 3 tasks changed"`,
-and one for a retry has `retry_of`, the ID of the deployment it retries.
+one for a retry has `retry_of`, the ID of the deployment it retries, and one a
+person deployed outside its sync window has `deployed_now_by`, who asked.
 
 Nops tries each notification once, with no retry. A failed delivery logs a
 WARN and never stops a deployment. The log never contains the adapter URL,

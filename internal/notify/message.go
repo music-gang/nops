@@ -120,11 +120,11 @@ func shortCommit(sha string) string {
 type fact struct{ name, value string }
 
 // facts are the context of the deployment: where it runs, how it is applied,
-// who approved it and what it retries. A fact with no value is left out, but
-// the namespace.
+// who approved it, what it retries and who deployed it now. A fact with no
+// value is left out, but the namespace.
 func facts(e Event) []fact {
 	out := []fact{{"Namespace", orDash(e.Namespace)}}
-	for _, f := range []fact{{"Policy", e.Policy}, {"Approved by", e.ApprovedBy}, {"Retry of", e.RetryOf}} {
+	for _, f := range []fact{{"Policy", e.Policy}, {"Approved by", e.ApprovedBy}, {"Retry of", e.RetryOf}, {"Deployed now by", e.DeployedNowBy}} {
 		if f.value != "" {
 			out = append(out, f)
 		}
