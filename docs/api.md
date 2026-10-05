@@ -46,6 +46,7 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `POST /api/jobs/{namespace}/{job}/resume` | Resume a job. |
 | `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. Answers `{"deployment_id": "..."}`, empty when the next detection cycle starts it. |
 | `POST /api/fetch` | Ask for a git poll now. |
+| `GET /api/openapi.json` | The [OpenAPI](https://spec.openapis.org/oas/v3.1.0) description of these endpoints. |
 
 ## Errors
 
