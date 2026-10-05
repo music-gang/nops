@@ -309,17 +309,13 @@ func (v *value) String() string     { return v.s }
 func (v *value) Set(s string) error { v.s = s; return nil }
 func (v *value) IsBoolFlag() bool   { return v.boolean }
 
-// ErrVersion is what Load returns for -version: the caller prints the
-// version and exits, whatever else is set or missing.
-var ErrVersion = errors.New("version requested")
-
-// Load builds the configuration from the command-line arguments (without the
-// program name) and the environment, read through getenv. Usage and flag
-// errors are written to out. With -h it returns flag.ErrHelp, with -version
-// ErrVersion, before any option is validated. Every invalid
-// value is reported, each prefixed with where it came from.
+// Load builds the configuration from the command-line arguments (without
+// "nops serve") and the environment, read through getenv. Usage and flag errors are
+// written to out. With -h it returns flag.ErrHelp before any option is
+// validated. Every invalid value is reported, each prefixed with where it
+// came from.
 func Load(args []string, getenv func(string) string, out io.Writer) (*Config, error) {
-	fs := flag.NewFlagSet("nops", flag.ContinueOnError)
+	fs := flag.NewFlagSet("nops serve", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { usage(out) }
 	vals := make([]*value, len(options))
@@ -327,16 +323,11 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		vals[i] = &value{boolean: o.boolean}
 		fs.Var(vals[i], o.name, o.usage)
 	}
-	// Not in options: it is not a setting, so it has no NOPS_ variable.
-	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if *showVersion {
-		return nil, ErrVersion
-	}
 	if fs.NArg() > 0 {
-		return nil, fmt.Errorf("unexpected argument %q: nops takes only flags", fs.Arg(0))
+		return nil, fmt.Errorf("unexpected argument %q: nops serve takes only flags", fs.Arg(0))
 	}
 	set := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -512,11 +503,10 @@ func (c *Config) Nomad() *api.Config {
 }
 
 func usage(out io.Writer) {
-	fmt.Fprintln(out, "Usage: nops [flags]")
+	fmt.Fprintln(out, "Usage: nops serve [flags]")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Every flag can be set with its environment variable instead; the flag wins.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "  -version\n\tprint the version and exit")
 	for _, o := range options {
 		def := ""
 		if o.def != "" {

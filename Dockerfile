@@ -17,4 +17,8 @@ COPY $TARGETPLATFORM/nops /nops
 WORKDIR /home/nonroot
 USER nonroot:nonroot
 EXPOSE 8080
+# The image starts the server: "nops serve" is the one command that is not the
+# client of the API (docs/cli.md). A command given to docker run, such as
+# "approve" or "-version", replaces it.
 ENTRYPOINT ["/nops"]
+CMD ["serve"]

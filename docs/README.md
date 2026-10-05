@@ -21,6 +21,7 @@ repository according to a per-job policy. New here? Start with the
 - [Meta keys](meta-keys.md): every `nops_*` key.
 - [Dashboard](dashboard.md): pages, login, secret redaction.
 - [API](api.md): act on Nops from a script with a token.
+- [Command-line client](cli.md): inspect and act on Nops from a terminal.
 - [Logs and notifications](logs-and-notifications.md)
 - [Metrics](metrics.md)
 - [Glossary](glossary.md)

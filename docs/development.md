@@ -17,6 +17,7 @@ conventions.
 | `internal/notify` | `httptest` receivers for every adapter and every failure. |
 | `internal/gitwatch` | Tests against a local bare repository. |
 | `internal/web` | `httptest` for every page and state, and the login against a fake OIDC provider. |
+| `internal/cli` | `httptest` stubs of the API for every command, plus an integration test against the real server. |
 | `cmd/nops` | Covered by the integration smoke test. |
 | The docs | `go test ./...` checks the option and meta key tables against the code, and the test names and links in the pages. |
 | `scripts/release.sh` | `scripts/release_test.sh` and `shellcheck`. |

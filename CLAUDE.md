@@ -139,6 +139,7 @@ internal/meta/         parsing/validation of the nops_* meta keys
 internal/store/        SQLite (modernc.org/sqlite, no cgo), embedded SQL migrations
 internal/engine/       state machine, reconciler, recovery on restart
 internal/hooks/        dispatch, wait, timeout and stop of hook jobs
+internal/cli/          command-line client of the API (any command but `serve`)
 internal/web/          dashboard (net/http + html/template) + git webhook
 internal/notify/       notifications via a generic webhook
 internal/metrics/      /metrics for Prometheus, read from the store and the engine on each scrape

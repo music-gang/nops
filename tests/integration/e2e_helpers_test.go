@@ -133,7 +133,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	dbPath := filepath.Join(t.TempDir(), "nops.db")
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
 
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, "serve")
 	cmd.Env = append(os.Environ(),
 		"NOPS_NOMAD_ADDR="+addr,
 		"NOPS_NOMAD_NAMESPACES=default",

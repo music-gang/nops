@@ -11,7 +11,7 @@ about fifteen minutes.
   the README's [Nomad compatibility](../README.md#nomad-compatibility).
 - **git**, and a clone of this repository for the example:
   `git clone https://github.com/music-gang/nops`.
-- **Nops**: the `linux/amd64` binary from the
+- **Nops**: the binary for your system from the
   [Releases](https://github.com/music-gang/nops/releases) page, or
   `go install github.com/music-gang/nops/cmd/nops@latest`. The container
   image can't read the local repository this tutorial uses.
@@ -62,7 +62,7 @@ docker run --rm httpd:2.4-alpine htpasswd -nbB admin change-me > users
 ## 4. Start Nops
 
 ```sh
-nops -git-url "file://$PWD/nops-jobs" -auth-mode basic -users-file users -git-poll-interval 10s
+nops serve -git-url "file://$PWD/nops-jobs" -auth-mode basic -users-file users -git-poll-interval 10s
 ```
 
 Nops finds that `web` is in git but not in Nomad, and logs

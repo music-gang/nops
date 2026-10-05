@@ -1,7 +1,8 @@
 # Configuration
 
-Every option of Nops. To run Nops on a cluster, see
-[running Nops](running-nops.md).
+Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
+[running Nops](running-nops.md). The options of the client are in
+[command-line client](cli.md).
 
 ## Rules
 
@@ -14,7 +15,7 @@ Every option of Nops. To run Nops on a cluster, see
   job don't change what Nops manages.
 - Durations use Go syntax (`90s`, `5m`, `1h`) and must be positive.
 - Nops reports every invalid option at once and refuses to start.
-- `nops -h` lists every flag. `nops -version` prints the version.
+- `nops serve -h` lists every flag. `nops -version` prints the version.
 
 ### Secrets
 

@@ -8,7 +8,7 @@ are in [philosophy](philosophy.md).
 
 | Package | Role |
 |---|---|
-| `cmd/nops` | Wires everything together and runs the loops and the dashboard. |
+| `cmd/nops` | Runs the server (`nops serve`): wires everything together and runs the loops and the dashboard. Any other command goes to `internal/cli`. |
 | `internal/config` | Flags and environment variables. |
 | `internal/gitwatch` | Keeps the repository in memory and polls it. |
 | `internal/nomadx` | Nomad client: parse, plan, CAS register, dispatch. |
@@ -16,6 +16,7 @@ are in [philosophy](philosophy.md).
 | `internal/store` | SQLite, the only place state lives. |
 | `internal/engine` | Detection and apply: the state machine. |
 | `internal/hooks` | Runs a hook job and waits for its outcome. |
+| `internal/cli` | The command-line client: calls the API. |
 | `internal/web` | The dashboard, the login, and the git webhook. |
 | `internal/metrics` | `/metrics`. Each scrape reads the store and the engine. |
 | `internal/notify` | Notification adapters. |
