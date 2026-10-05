@@ -9,6 +9,8 @@ Requests go under `/api/` and carry the token:
 curl -H "Authorization: Bearer $NOPS_API_TOKEN" https://nops.example.com/api/jobs
 ```
 
+From a terminal, the [command-line client](cli.md) does the same.
+
 The API does what its owner can do on the dashboard, with the same rules. Nops
 records the owner as the [actor](glossary.md#deployment-lifecycle). It works
 with both [login modes](dashboard.md#authentication) and never contacts the

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/nomad/api"
+
+	"github.com/music-gang/nops/internal/cli"
 )
 
 const repo = "https://git.example.com/ops/jobs.git"
@@ -785,22 +787,36 @@ func TestLoadArguments(t *testing.T) {
 	}
 }
 
-// -version needs nothing else set, wins over invalid options and has no
-// environment variable.
-func TestLoadVersion(t *testing.T) {
-	if _, err := Load([]string{"-version"}, rawEnvOf(nil), io.Discard); !errors.Is(err, ErrVersion) {
-		t.Errorf("-version with nothing set: err = %v, want ErrVersion", err)
-	}
-	if _, err := Load([]string{"-version", "-apply-timeout=0s"}, rawEnvOf(nil), io.Discard); !errors.Is(err, ErrVersion) {
-		t.Errorf("-version with an invalid option: err = %v, want ErrVersion", err)
-	}
-	if _, err := Load(nil, envOf(map[string]string{"NOPS_GIT_URL": repo, "NOPS_VERSION": "true"}), io.Discard); err != nil {
-		t.Errorf("NOPS_VERSION: err = %v, want a normal load", err)
+// The server's flags are those of "nops serve": -version belongs to the root
+// command, so Load does not know it, and the usage says how to start it.
+func TestLoadIsTheServeCommand(t *testing.T) {
+	if _, err := Load([]string{"-version"}, rawEnvOf(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "not defined") {
+		t.Errorf("-version: err = %v, want an undefined flag", err)
 	}
 	var out strings.Builder
 	_, _ = Load([]string{"-h"}, rawEnvOf(nil), &out)
-	if !strings.Contains(out.String(), "-version") {
-		t.Error("usage does not list -version")
+	if !strings.HasPrefix(out.String(), "Usage: nops serve [flags]") {
+		t.Errorf("usage starts %q, want it to name nops serve", out.String())
+	}
+}
+
+// TestNoOptionTakesAClientVariable keeps the client's variables to the client:
+// the server reads each flag as NOPS_<FLAG>, so a flag named like one of them
+// would be set by the environment of whoever runs the client.
+func TestNoOptionTakesAClientVariable(t *testing.T) {
+	for _, o := range options {
+		for _, v := range cli.Variables {
+			if o.env() == v {
+				t.Errorf("option -%s reads %s, which the client reads too", o.name, o.env())
+			}
+		}
+	}
+	for _, sv := range secretValues {
+		for _, v := range cli.Variables {
+			if sv.envVar == v {
+				t.Errorf("the secret variable %s is one of the client's", v)
+			}
+		}
 	}
 }
 

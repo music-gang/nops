@@ -1,6 +1,7 @@
 // Command nops is a semi-automatic GitOps controller for HashiCorp Nomad:
 // see docs/README.md for what it is and docs/architecture.md for how the
-// pieces below fit together. This file only wires them.
+// pieces below fit together. "nops serve" runs the server, and this file wires
+// it; every other command is the client of the API (internal/cli).
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/music-gang/nops/internal/cli"
 	"github.com/music-gang/nops/internal/config"
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
@@ -41,13 +43,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := config.Load(os.Args[1:], os.Getenv, os.Stderr)
+	if len(os.Args) < 2 || os.Args[1] != "serve" {
+		os.Exit(cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr))
+	}
+
+	cfg, err := config.Load(os.Args[2:], os.Getenv, os.Stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			os.Exit(0)
-		}
-		if errors.Is(err, config.ErrVersion) {
-			fmt.Println(version.String())
 			os.Exit(0)
 		}
 		// Load only writes flag-parse errors and -h usage to os.Stderr

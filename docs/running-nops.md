@@ -5,7 +5,8 @@ How to run Nops on a cluster. To try it on one machine first, see
 
 ## Getting it
 
-Each release publishes an image and a `linux/amd64` binary:
+Each release publishes a `linux/amd64` image, and binaries for Linux and
+macOS on amd64 and arm64:
 
 ```sh
 docker run --rm ghcr.io/music-gang/nops:0.4 -version
@@ -16,8 +17,9 @@ page. Image tags for release `vX.Y.Z` are `X.Y.Z`, `X.Y` and `latest`.
 
 ## As a Nomad job
 
-The image runs as uid 65532: make the database volume writable by that user.
-This group reads its secrets from Nomad Variables:
+The image runs `nops serve`; a task that sets `args` starts them with
+`"serve"`. It runs as uid 65532: make the database volume writable by that
+user. This group reads its secrets from Nomad Variables:
 
 ```hcl
 group "nops" {
