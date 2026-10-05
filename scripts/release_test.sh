@@ -101,6 +101,26 @@ no gt-lower semver_gt v0.1.0 v0.1.1
 no gt-rc-under-final semver_gt v0.2.0-rc.1 v0.2.0
 no gt-rc-order-reverse semver_gt v0.2.0-rc.2 v0.2.0-rc.10
 
+# minor_of
+check minor-of-final 0.6 "$(minor_of v0.6.2)"
+check minor-of-rc 0.7 "$(minor_of v0.7.0-rc.1)"
+check minor-of-major 1.0 "$(minor_of v1.0.0)"
+
+# stale_image_tags
+page='docker run --rm ghcr.io/music-gang/nops:0.6 -version
+      image = "ghcr.io/music-gang/nops:0.6"
+Pin a minor or an exact version.'
+check stale-current '' "$(printf '%s\n' "$page" | stale_image_tags 0.6)"
+check stale-old-minor '      image = "ghcr.io/music-gang/nops:0.4"' \
+  "$(printf '%s\n' "$page" | sed 's/0\.6"/0.4"/' | stale_image_tags 0.6)"
+check stale-exact 'run ghcr.io/music-gang/nops:0.6.0 -version' \
+  "$(printf 'run ghcr.io/music-gang/nops:0.6.0 -version\n' | stale_image_tags 0.6)"
+check stale-new-minor 'run ghcr.io/music-gang/nops:0.6 -version' \
+  "$(printf 'run ghcr.io/music-gang/nops:0.6 -version\n' | stale_image_tags 0.7)"
+check stale-no-final-newline 'ghcr.io/music-gang/nops:0.5' \
+  "$(printf 'ghcr.io/music-gang/nops:0.5' | stale_image_tags 0.6)"
+check stale-other-image '' "$(printf 'ghcr.io/other/app:0.1\n' | stale_image_tags 0.6)"
+
 if [ "$failed" = 0 ]; then
   echo "release_test: ok"
 fi
