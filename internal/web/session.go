@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -88,13 +89,22 @@ func UserFrom(ctx context.Context) (string, bool) {
 
 // Require lets a request through only with a valid session, and puts the user
 // in its context. Without one, a GET is sent to the login and anything else
-// gets 401. A request that changes state and comes from another origin is
+// gets 401. An htmx request (every click, form and refresh of the dashboard is
+// one) gets a 401 with an HX-Redirect instead: htmx loads the login as a full
+// page, where a redirect would be followed by the XHR and a 401 swapped
+// nowhere. A request that changes state and comes from another origin is
 // refused before anything else (http.CrossOriginProtection, with the
 // SameSite=Lax cookie): there is no CSRF token to carry through the pages.
 func (s *session) Require(next http.Handler) http.Handler {
 	return s.xorigin.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := s.currentUser(r)
 		if !ok {
+			if r.Header.Get("HX-Request") == "true" {
+				noStore(w)
+				w.Header().Set("HX-Redirect", s.base+loginPath+"?next="+url.QueryEscape(s.htmxNext(r)))
+				http.Error(w, "login required", http.StatusUnauthorized)
+				return
+			}
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				http.Redirect(w, r, s.base+loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 				return
@@ -104,6 +114,35 @@ func (s *session) Require(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
 	}))
+}
+
+// htmxNext is where the login brings back an htmx request without a session:
+// the page clicked for a boosted link, else the page in the browser (a refresh
+// or a form is not worth replaying, and the page shown is where the user is).
+// The browser's URL is kept as a path only, through safeNext.
+func (s *session) htmxNext(r *http.Request) string {
+	if r.Header.Get("HX-Boosted") == "true" && r.Method == http.MethodGet {
+		return r.URL.RequestURI()
+	}
+	cur, err := url.Parse(r.Header.Get("HX-Current-URL"))
+	if err != nil {
+		return "/"
+	}
+	path := cur.EscapedPath()
+	if s.base != "" {
+		rest, ok := strings.CutPrefix(path, s.base)
+		if !ok || (rest != "" && rest[0] != '/') {
+			return "/"
+		}
+		path = rest
+	}
+	if path == "" {
+		path = "/"
+	}
+	if cur.RawQuery != "" {
+		path += "?" + cur.RawQuery
+	}
+	return safeNext(path)
 }
 
 // start issues a fresh session cookie for actor: the last step of a
