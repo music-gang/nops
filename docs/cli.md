@@ -43,5 +43,5 @@ newer diff is refused as on the dashboard.
 ## Output
 
 Text by default. `-json` prints the answer of the API, for a script. The diff
-and the question go to the error output, so a pipe gets only the answer. A command that fails exits with 1 and prints
-the message of the API.
+and the question go to the error output, so a pipe gets only the answer. A
+command that fails exits with 1 and prints the message of the API.

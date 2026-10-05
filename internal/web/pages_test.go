@@ -289,6 +289,13 @@ func newTestServerWithNomad(t *testing.T, st Store, en *fakeEngine, secret strin
 // is opened at (empty: no links into it).
 func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string) *testServer {
 	t.Helper()
+	return newTestServerLogin(t, st, en, secret, nomad, nomadUI, nil)
+}
+
+// newTestServerLogin is newTestServerOptions with the login the server runs
+// (nil: ts.auth, OpenID Connect allowing alice).
+func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string, login Authenticator) *testServer {
+	t.Helper()
 	now := testNow
 	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}, clock: &now}
 	log := slog.New(slog.NewTextHandler(ts.logs, nil))
@@ -300,8 +307,11 @@ func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string,
 	}
 	t.Cleanup(func() { tokens.Close() })
 	ts.tokens = tokens
+	if login == nil {
+		login = ts.auth
+	}
 	h, err := New(Options{
-		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Tokens: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
+		Auth: login, Store: st, Engine: en, Git: ts.git, Tokens: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
 		Now:       func() time.Time { return *ts.clock },

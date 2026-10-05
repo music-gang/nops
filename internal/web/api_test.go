@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,6 +108,40 @@ func TestAPIRequiresAValidToken(t *testing.T) {
 	if rec := ts.api("GET", "/api/jobs", expiring, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("a token after its expiry: status %d, want 401", rec.Code)
 	}
+}
+
+// A token stays valid after its owner leaves the allowlist or the users file
+// (docs/api.md#tokens): the API reads the token, never the login.
+func TestAPITokenOutlivesItsOwnersLogin(t *testing.T) {
+	resumeAsAlice := func(t *testing.T, ts *testServer, token string) {
+		t.Helper()
+		if rec := ts.api("POST", "/api/jobs/default/web/resume", token, ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("status %d, want 204: %s", rec.Code, rec.Body)
+		}
+		if calls := ts.engine.resumeCalls; len(calls) != 1 || calls[0].actor != "alice" {
+			t.Errorf("resume calls = %+v, want one as alice", calls)
+		}
+	}
+
+	t.Run("allowlist", func(t *testing.T) {
+		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+		token := apiToken(t, ts, "alice", time.Time{})
+		ts.auth.opts.AllowedUsers = []string{"bob"} // alice is no longer listed
+		resumeAsAlice(t, ts, token)
+	})
+
+	t.Run("users file", func(t *testing.T) {
+		basic, err := NewBasicAuth(BasicAuthOptions{
+			UsersFile: writeUsersFile(t, "bob:"+bcryptHash(t, "s3cret")+"\n"), // no alice
+			PublicURL: "http://nops.test",
+			Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ts := newTestServerLogin(t, &fakeStore{}, &fakeEngine{}, "", nil, "", basic)
+		resumeAsAlice(t, ts, apiToken(t, ts, "alice", time.Time{}))
+	})
 }
 
 // A login session opens the dashboard and a token opens the API: neither

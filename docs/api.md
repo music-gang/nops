@@ -44,7 +44,7 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `POST /api/deployments/{id}/retry` | Retry a failed or rejected deployment. Answers `{"deployment_id": "..."}`. |
 | `POST /api/jobs/{namespace}/{job}/pause` | [Pause](policies.md#pausing-a-job) a job. Optional body: `{"reason": "..."}`. |
 | `POST /api/jobs/{namespace}/{job}/resume` | Resume a job. |
-| `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. |
+| `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. Answers `{"deployment_id": "..."}`, empty when the next detection cycle starts it. |
 | `POST /api/fetch` | Ask for a git poll now. |
 
 ## Errors
