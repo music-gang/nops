@@ -144,15 +144,18 @@ A release is a signed `vX.Y.Z` tag on `main`. Before `v1`, a minor release
 may break things and a patch never does.
 
 1. Make sure `main` is green and the [doc audit](#doc-audit) is done.
-2. Run `scripts/release.sh`. It lists the commits since the last tag,
+2. For a minor or major release, move the image tag in
+   [running-nops.md](running-nops.md) to the new `X.Y` in a pull request
+   first: the script refuses to tag without it.
+3. Run `scripts/release.sh`. It lists the commits since the last tag,
    suggests a version, then signs and pushes the tag. `--dry-run` only shows
    the suggestion.
-3. Ship risky changes as a release candidate first (`v0.2.0-rc.1`).
-4. Check the result:
+4. Ship risky changes as a release candidate first (`v0.2.0-rc.1`).
+5. Check the result:
    `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version`.
-5. If the release breaks something, add *Upgrade notes* to the GitHub
+6. If the release breaks something, add *Upgrade notes* to the GitHub
    release.
-6. Never move or delete a tag: fix forward with a patch release.
+7. Never move or delete a tag: fix forward with a patch release.
 
 The `release` workflow builds the binary and the image with goreleaser,
 publishes them to the GitHub release and `ghcr.io/music-gang/nops`, and

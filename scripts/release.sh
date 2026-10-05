@@ -140,6 +140,25 @@ EOF
   [[ $apre > $bpre ]]
 }
 
+# minor_of <version>: X.Y of vX.Y.Z, prerelease ignored.
+minor_of() {
+  local core=${1#v}
+  core=${core%%-*}
+  echo "${core%.*}"
+}
+
+# stale_image_tags <X.Y>: reads a page on stdin, prints the lines whose
+# ghcr.io/music-gang/nops image tag is not X.Y.
+stale_image_tags() {
+  local want=$1 line
+  local re='ghcr\.io/music-gang/nops:([0-9A-Za-z.-]+)'
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ $line =~ $re ]] && [ "${BASH_REMATCH[1]}" != "$want" ]; then
+      echo "$line"
+    fi
+  done
+}
+
 # ---- flow --------------------------------------------------------------------
 
 die() {
@@ -224,6 +243,22 @@ choose_version() {
       *) echo "type 1-5" >&2 ;;
     esac
   done
+}
+
+# check_image_tag <last> <tag> <sha>: a new minor (or major) release needs the
+# image tag in docs/running-nops.md on <sha> to be its X.Y. A patch is covered
+# by the minor tag, and a release candidate gets no X.Y tag.
+check_image_tag() {
+  local last=$1 tag=$2 sha=$3 want stale
+  case $tag in *-*) return 0 ;; esac
+  want=$(minor_of "$tag")
+  [ "$want" != "$(minor_of "$last")" ] || return 0
+  stale=$(git show "$sha:docs/running-nops.md" | stale_image_tags "$want") ||
+    die "could not read docs/running-nops.md on $sha"
+  if [ -n "$stale" ]; then
+    echo "$stale" >&2
+    problem "docs/running-nops.md does not show image tag $want: move it in a pull request first"
+  fi
 }
 
 usage() {
@@ -313,6 +348,7 @@ main() {
   if [ "$dry_run" = 1 ]; then
     tag=$suggested
     echo "Suggested version: $tag ($kind)"
+    check_image_tag "$last" "$tag" "$sha"
     echo
     echo "Dry run: nothing was tagged. A release would run:"
     echo "  git tag -s $tag -m $tag $sha"
@@ -325,6 +361,7 @@ main() {
     [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
     die "$tag already exists (tags are never moved or recreated: pick another version)"
   fi
+  check_image_tag "$last" "$tag" "$sha"
 
   echo
   echo "Tag $tag on $sha"

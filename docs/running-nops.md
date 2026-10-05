@@ -9,7 +9,7 @@ Each release publishes a `linux/amd64` image, and binaries for Linux and
 macOS on amd64 and arm64:
 
 ```sh
-docker run --rm ghcr.io/music-gang/nops:0.4 -version
+docker run --rm ghcr.io/music-gang/nops:0.6 -version
 ```
 
 The binary is on the [Releases](https://github.com/music-gang/nops/releases)
@@ -47,7 +47,7 @@ group "nops" {
     driver = "docker"
 
     config {
-      image = "ghcr.io/music-gang/nops:0.4"
+      image = "ghcr.io/music-gang/nops:0.6"
       ports = ["http"]
     }
 
@@ -157,5 +157,5 @@ anything else.
 - Read the [release notes](https://github.com/music-gang/nops/releases) of every
   version between yours and the new one. A release that breaks something
   says what to change in its *Upgrade notes*.
-- Pin a minor (`0.4`) or an exact version, never `latest`: before `v1`, a new
+- Pin a minor (`X.Y`) or an exact version, never `latest`: before `v1`, a new
   minor may break the configuration or the database.
