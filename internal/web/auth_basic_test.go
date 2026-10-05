@@ -209,6 +209,14 @@ func TestBasicAuthRequireRedirectsToLogin(t *testing.T) {
 	}
 }
 
+func TestBasicAuthRequireAnswersHTMXWithAnHXRedirect(t *testing.T) {
+	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
+	rec := ba.do("GET", "/page", nil, nil, "HX-Request", "true", "HX-Current-URL", "http://nops.test/jobs")
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/auth/login?next=%2Fjobs" {
+		t.Errorf("status %d, HX-Redirect %q", rec.Code, rec.Header().Get("HX-Redirect"))
+	}
+}
+
 func TestBasicAuthLoginFormRenders(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
 	rec := ba.do("GET", "/auth/login?next="+url.QueryEscape("/deployments/d1"), nil, nil)

@@ -623,6 +623,61 @@ func TestSessionValidity(t *testing.T) {
 	}
 }
 
+// An htmx request without a session gets an HX-Redirect to the login, with a
+// status that is no redirect: the XHR would follow one before htmx reads it.
+// next is the page in the browser, or the page clicked for a boosted link.
+func TestHTMXWithoutASessionRedirectsToTheLogin(t *testing.T) {
+	const shown = "http://nops.test/jobs?state=drift"
+	tests := []struct {
+		name    string
+		base    string
+		method  string
+		target  string
+		headers []string
+		want    string
+	}{
+		{"refresh", "", "GET", "/page", []string{"HX-Current-URL", shown}, "/auth/login?next=%2Fjobs%3Fstate%3Ddrift"},
+		{"form", "", "POST", "/act", []string{"HX-Current-URL", shown}, "/auth/login?next=%2Fjobs%3Fstate%3Ddrift"},
+		{"boosted link", "", "GET", "/page?x=1", []string{"HX-Boosted", "true", "HX-Current-URL", shown}, "/auth/login?next=%2Fpage%3Fx%3D1"},
+		{"no current URL", "", "GET", "/page", nil, "/auth/login?next=%2F"},
+		{"unparseable current URL", "", "GET", "/page", []string{"HX-Current-URL", "http://[::1"}, "/auth/login?next=%2F"},
+		{"current URL off the site", "", "GET", "/page", []string{"HX-Current-URL", "http://nops.test//evil.example.com"}, "/auth/login?next=%2F"},
+		{"base path", "/nops", "GET", "/page", []string{"HX-Current-URL", "http://nops.test/nops/jobs?state=drift"}, "/nops/auth/login?next=%2Fjobs%3Fstate%3Ddrift"},
+		{"base path root", "/nops", "GET", "/page", []string{"HX-Current-URL", "http://nops.test/nops"}, "/nops/auth/login?next=%2F"},
+		{"outside the base path", "/nops", "GET", "/page", []string{"HX-Current-URL", "http://nops.test/nopsy/jobs"}, "/nops/auth/login?next=%2F"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newApp(t, func(o *AuthOptions) { o.BasePath = tt.base })
+			rec := a.do(tt.method, tt.target, nil, append([]string{"HX-Request", "true"}, tt.headers...)...)
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status %d, want 401", rec.Code)
+			}
+			if got := rec.Header().Get("HX-Redirect"); got != tt.want {
+				t.Errorf("HX-Redirect = %q, want %q", got, tt.want)
+			}
+			if loc := rec.Header().Get("Location"); loc != "" {
+				t.Errorf("Location = %q, want none", loc)
+			}
+		})
+	}
+}
+
+func TestHTMXWithAnExpiredSessionRedirectsToTheLogin(t *testing.T) {
+	a := newApp(t)
+	sess := a.loggedIn(alice())
+	headers := []string{"HX-Request", "true", "HX-Current-URL", "http://nops.test/history"}
+
+	if rec := a.do("GET", "/page", []*http.Cookie{sess}, headers...); rec.Code != http.StatusOK {
+		t.Fatalf("with a session: status %d, want 200", rec.Code)
+	}
+	a.clock.advance(sessionTTL + time.Minute)
+	rec := a.do("GET", "/page", []*http.Cookie{sess}, headers...)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/auth/login?next=%2Fhistory" {
+		t.Errorf("after the expiry: status %d, HX-Redirect %q", rec.Code, rec.Header().Get("HX-Redirect"))
+	}
+}
+
 func TestLogout(t *testing.T) {
 	a := newApp(t)
 	sess := a.loggedIn(alice())
