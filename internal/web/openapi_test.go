@@ -1,15 +1,23 @@
 package web
 
 import (
+	"bytes"
+	"embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // openAPI is the part of openapi.json the tests read.
@@ -222,4 +230,266 @@ func TestAPIDocsTableMatchesOpenAPI(t *testing.T) {
 		rows = append(rows, string(m[1]))
 	}
 	sameSet(t, "the rows of docs/api.md and the operations of openapi.json", rows, spec.operations())
+}
+
+// oasSchemas are the JSON Schemas of OpenAPI 3.1 that validate a description,
+// as the OpenAPI Initiative publishes them: the tests run without a network.
+//
+//go:embed testdata/oas3.1/*.json
+var oasSchemas embed.FS
+
+// specURL is where the tests place openapi.json for the schema compiler.
+const specURL = "https://nops.test/openapi.json"
+
+// newCompiler makes a compiler that knows openapi.json, so a JSON pointer into
+// it names a schema and its $refs resolve.
+func newCompiler(doc []byte) (*jsonschema.Compiler, error) {
+	c := jsonschema.NewCompiler()
+	c.AssertFormat()
+	parsed, err := jsonschema.UnmarshalJSON(bytes.NewReader(doc))
+	if err != nil {
+		return nil, err
+	}
+	if err := c.AddResource(specURL, parsed); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// validateOpenAPI checks a description against the OpenAPI 3.1 schema.
+func validateOpenAPI(doc []byte) error {
+	c := jsonschema.NewCompiler()
+	for name, url := range map[string]string{
+		"schema.json":       "https://spec.openapis.org/oas/3.1/schema/2022-10-07",
+		"schema-base.json":  "https://spec.openapis.org/oas/3.1/schema-base/2022-10-07",
+		"dialect-base.json": "https://spec.openapis.org/oas/3.1/dialect/base",
+		"meta-base.json":    "https://spec.openapis.org/oas/3.1/meta/base",
+	} {
+		raw, err := oasSchemas.ReadFile("testdata/oas3.1/" + name)
+		if err != nil {
+			return err
+		}
+		parsed, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if err := c.AddResource(url, parsed); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	schema, err := c.Compile("https://spec.openapis.org/oas/3.1/schema-base/2022-10-07")
+	if err != nil {
+		return err
+	}
+	parsed, err := jsonschema.UnmarshalJSON(bytes.NewReader(doc))
+	if err != nil {
+		return err
+	}
+	return schema.Validate(parsed)
+}
+
+// The file is a valid OpenAPI 3.1 document, and the check notices one that is
+// not.
+func TestOpenAPIIsValid(t *testing.T) {
+	if err := validateOpenAPI(openAPIFile); err != nil {
+		t.Fatalf("openapi.json is not valid OpenAPI 3.1:\n%v", err)
+	}
+
+	for name, broken := range map[string]func(spec map[string]any){
+		"responses is not an object": func(spec map[string]any) {
+			spec["paths"].(map[string]any)["/api/jobs"].(map[string]any)["get"].(map[string]any)["responses"] = "none"
+		},
+		"a path does not start with a slash": func(spec map[string]any) {
+			paths := spec["paths"].(map[string]any)
+			paths["api/jobs"] = paths["/api/jobs"]
+			delete(paths, "/api/jobs")
+		},
+		"a schema has a keyword of the wrong type": func(spec map[string]any) {
+			spec["components"].(map[string]any)["schemas"].(map[string]any)["Error"].(map[string]any)["required"] = "error"
+		},
+		"there is no info": func(spec map[string]any) { delete(spec, "info") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var spec map[string]any
+			if err := json.Unmarshal(openAPIFile, &spec); err != nil {
+				t.Fatal(err)
+			}
+			broken(spec)
+			doc, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if validateOpenAPI(doc) == nil {
+				t.Error("the check accepts it")
+			}
+		})
+	}
+}
+
+// answerChecker checks an answer of the API against openapi.json.
+type answerChecker struct {
+	raw      map[string]any
+	paths    []pathTemplate
+	compiler *jsonschema.Compiler
+	schemas  map[string]*jsonschema.Schema
+}
+
+// pathTemplate is a path of the description with {parameters}.
+type pathTemplate struct {
+	path string
+	re   *regexp.Regexp
+}
+
+func newAnswerChecker(doc []byte) (*answerChecker, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(doc, &raw); err != nil {
+		return nil, err
+	}
+	c, err := newCompiler(doc)
+	if err != nil {
+		return nil, err
+	}
+	a := &answerChecker{raw: raw, compiler: c, schemas: map[string]*jsonschema.Schema{}}
+	param := regexp.MustCompile(`\\\{[^/]*?\\\}`)
+	for path := range raw["paths"].(map[string]any) {
+		re := param.ReplaceAllString(regexp.QuoteMeta(path), `[^/]+`)
+		a.paths = append(a.paths, pathTemplate{path, regexp.MustCompile("^" + re + "$")})
+	}
+	return a, nil
+}
+
+var answers = sync.OnceValues(func() (*answerChecker, error) { return newAnswerChecker(openAPIFile) })
+
+// pointer is the JSON pointer of a path inside openapi.json, as a fragment.
+func pointer(tokens ...string) string {
+	var parts []string
+	for _, tok := range tokens {
+		tok = strings.ReplaceAll(strings.ReplaceAll(tok, "~", "~0"), "/", "~1")
+		parts = append(parts, url.PathEscape(tok))
+	}
+	return "#/" + strings.Join(parts, "/")
+}
+
+// check compares an answer with the operation it is for: its status is one
+// the operation lists, and its body is the one of that status, an object that
+// matches the schema or nothing. A request to a path the description does not
+// have is not checked: TestOpenAPIDescribesEveryRoute covers the paths.
+func (a *answerChecker) check(method, target string, rec *httptest.ResponseRecorder) error {
+	reqURL, err := url.Parse(target)
+	if err != nil {
+		return err
+	}
+	var path string
+	for _, p := range a.paths {
+		if p.re.MatchString(reqURL.Path) {
+			path = p.path
+			break
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	item, _ := a.raw["paths"].(map[string]any)[path].(map[string]any)
+	operation, ok := item[strings.ToLower(method)].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	status := fmt.Sprint(rec.Code)
+	responses, _ := operation["responses"].(map[string]any)
+	response, ok := responses[status].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s %s answered %d: the description lists %v", method, path, rec.Code, keys(responses))
+	}
+	where := []string{"paths", path, strings.ToLower(method), "responses", status}
+	if ref, ok := response["$ref"].(string); ok {
+		where = strings.Split(strings.TrimPrefix(ref, "#/"), "/")
+		response, _ = a.raw["components"].(map[string]any)["responses"].(map[string]any)[where[len(where)-1]].(map[string]any)
+	}
+
+	content, _ := response["content"].(map[string]any)
+	if len(content) == 0 {
+		if rec.Body.Len() != 0 {
+			return fmt.Errorf("%s %s answered %d with a body, the description has none: %s", method, path, rec.Code, rec.Body)
+		}
+		return nil
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		return fmt.Errorf("%s %s answered %d with Content-Type %q, the description has application/json", method, path, rec.Code, ct)
+	}
+	key := strings.Join(where, "/")
+	schema, ok := a.schemas[key]
+	if !ok {
+		schema, err = a.compiler.Compile(specURL + pointer(append(where, "content", "application/json", "schema")...))
+		if err != nil {
+			return fmt.Errorf("the schema of %s %s %d: %w", method, path, rec.Code, err)
+		}
+		a.schemas[key] = schema
+	}
+	body, err := jsonschema.UnmarshalJSON(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		return fmt.Errorf("%s %s answered %d with a body that is not JSON: %w", method, path, rec.Code, err)
+	}
+	if err := schema.Validate(body); err != nil {
+		return fmt.Errorf("%s %s answered %d with a body the description does not match: %w\n%s", method, path, rec.Code, err, rec.Body)
+	}
+	return nil
+}
+
+func keys(m map[string]any) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The check of an answer fails on a status the operation does not list, on a
+// body where the description has none, and on one that does not match.
+func TestOpenAPIAnswerCheck(t *testing.T) {
+	a, err := answers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := func(code int, contentType, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		if contentType != "" {
+			rec.Header().Set("Content-Type", contentType)
+		}
+		rec.WriteHeader(code)
+		rec.WriteString(body)
+		return rec
+	}
+	const j = "application/json"
+	for _, tc := range []struct {
+		name           string
+		method, target string
+		rec            *httptest.ResponseRecorder
+		ok             bool
+	}{
+		{"a listed status with its body", "GET", "/api/jobs", answer(200, j, `{"jobs":[]}`), true},
+		{"a shared response", "GET", "/api/jobs/default/web", answer(404, j, `{"error":"no"}`), true},
+		{"no body where there is none", "POST", "/api/deployments/d1/reject", answer(204, "", ""), true},
+		{"a path the description does not have", "GET", "/api/nothing", answer(404, j, `{}`), true},
+		{"a status the operation does not list", "GET", "/api/jobs", answer(409, j, `{"error":"x"}`), false},
+		{"a body where there is none", "POST", "/api/deployments/d1/reject", answer(204, j, `{}`), false},
+		{"no body where there is one", "GET", "/api/jobs", answer(200, j, ``), false},
+		{"a field that is missing", "GET", "/api/jobs", answer(200, j, `{}`), false},
+		{"a field of another type", "GET", "/api/jobs", answer(200, j, `{"jobs":{}}`), false},
+		{"a field inside a $ref", "GET", "/api/jobs", answer(200, j, `{"jobs":[{"namespace":"default"}]}`), false},
+		{"a date that is not one", "GET", "/api/jobs", answer(200, j, `{"jobs":[{"namespace":"d","job":"w","policy":"auto","sync":"sync","drift":false,"hold":{"kind":"k","reason":"r","since":"yesterday"}}]}`), false},
+		{"a content type that is not JSON", "GET", "/api/jobs", answer(200, "text/plain", `{"jobs":[]}`), false},
+		{"an error without its message", "GET", "/api/jobs/default/web", answer(404, j, `{}`), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := a.check(tc.method, tc.target, tc.rec)
+			if tc.ok && err != nil {
+				t.Errorf("rejected: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
 }

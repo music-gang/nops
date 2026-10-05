@@ -11,6 +11,7 @@ require (
 	github.com/hashicorp/nomad/api v0.0.0-20260923095306-73804ff45659
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/prometheus/client_golang v1.24.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/crypto v0.57.0
 	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.59.0
@@ -52,6 +53,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	modernc.org/libc v1.75.7 // indirect
