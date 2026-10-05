@@ -153,13 +153,12 @@ may break things and a patch never does.
 4. Ship risky changes as a release candidate first (`v0.2.0-rc.1`).
 5. Check the result:
    `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version`.
-6. If the release breaks something, add *Upgrade notes* to the GitHub
-   release.
-7. Never move or delete a tag: fix forward with a patch release.
+6. Never move or delete a tag: fix forward with a patch release.
 
 The `release` workflow builds the binary and the image with goreleaser,
 publishes them to the GitHub release and `ghcr.io/music-gang/nops`, and
-writes the release notes from the commit subjects. Image tags for `vX.Y.Z`
+writes the release notes from the commit subjects, with *Upgrade notes* on
+top, made from the `BREAKING CHANGE:` footers. Image tags for `vX.Y.Z`
 are `X.Y.Z`, `X.Y` and `latest`. The image is distroless with the binary
 only. The version comes from the tag, set at build time with
 `-ldflags -X github.com/music-gang/nops/internal/version.version=<tag>`.
@@ -186,7 +185,9 @@ style:
   most. It becomes a line of the release notes, so write it for someone
   running Nops.
 - **Body:** wrapped at 72 characters, plain text. Say what changed and why.
-- **Breaking change:** `!` after the scope and a `BREAKING CHANGE:` footer.
+- **Breaking change:** `!` after the scope and a `BREAKING CHANGE:` footer
+  that says what changed and what to do. It becomes an item of the
+  release's *Upgrade notes*.
 
 ## The dashboard's code
 
