@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,32 +22,59 @@ import (
 // rules and the same actor. There is no cookie here and so nothing for another
 // site to ride on, which is why this does not use the cross-origin check.
 
+// openAPIFile is the OpenAPI description of the API.
+//
+//go:embed openapi.json
+var openAPIFile []byte
+
 // maxAPIBody is the most a request body may hold: the largest field is a pause
 // reason of 500 bytes.
 const maxAPIBody = 64 << 10
 
-func (s *server) apiRoutes(mux *http.ServeMux) {
-	api := func(h http.HandlerFunc) http.Handler { return s.requireToken(h) }
+// apiEndpoint is a route of the API, as the mux takes it ("GET /api/jobs").
+// openapi.json describes each one, and a test keeps the two equal.
+type apiEndpoint struct {
+	pattern string
+	handler http.HandlerFunc
+}
 
-	mux.Handle("GET /api/jobs", api(s.apiListJobs))
-	mux.Handle("GET /api/jobs/{namespace}/{job}", api(s.apiGetJob))
-	mux.Handle("GET /api/deployments", api(s.apiListDeployments))
-	mux.Handle("GET /api/deployments/{id}", api(s.apiGetDeployment))
-	mux.Handle("POST /api/deployments/{id}/approve", api(s.apiApprove))
-	mux.Handle("POST /api/deployments/{id}/reject", api(s.apiReject))
-	mux.Handle("POST /api/deployments/{id}/promote", api(s.apiPromote))
-	mux.Handle("POST /api/deployments/{id}/retry", api(s.apiRetry))
-	mux.Handle("POST /api/jobs/{namespace}/{job}/pause", api(s.apiPause))
-	mux.Handle("POST /api/jobs/{namespace}/{job}/resume", api(s.apiResume))
-	mux.Handle("POST /api/jobs/{namespace}/{job}/deploy-now", api(s.apiDeployNow))
+func (s *server) apiEndpoints() []apiEndpoint {
+	endpoints := []apiEndpoint{
+		{"GET /api/openapi.json", s.apiOpenAPI},
+		{"GET /api/jobs", s.apiListJobs},
+		{"GET /api/jobs/{namespace}/{job}", s.apiGetJob},
+		{"GET /api/deployments", s.apiListDeployments},
+		{"GET /api/deployments/{id}", s.apiGetDeployment},
+		{"POST /api/deployments/{id}/approve", s.apiApprove},
+		{"POST /api/deployments/{id}/reject", s.apiReject},
+		{"POST /api/deployments/{id}/promote", s.apiPromote},
+		{"POST /api/deployments/{id}/retry", s.apiRetry},
+		{"POST /api/jobs/{namespace}/{job}/pause", s.apiPause},
+		{"POST /api/jobs/{namespace}/{job}/resume", s.apiResume},
+		{"POST /api/jobs/{namespace}/{job}/deploy-now", s.apiDeployNow},
+	}
 	if s.trigger != nil {
-		mux.Handle("POST /api/fetch", api(s.apiFetch))
+		endpoints = append(endpoints, apiEndpoint{"POST /api/fetch", s.apiFetch})
+	}
+	return endpoints
+}
+
+func (s *server) apiRoutes(mux *http.ServeMux) {
+	for _, e := range s.apiEndpoints() {
+		mux.Handle(e.pattern, s.requireToken(e.handler))
 	}
 	// Anything else under /api/ is a JSON 404, behind the token like the rest:
 	// whoever has none learns nothing about which paths exist.
-	mux.Handle("/api/", api(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/", s.requireToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "no such endpoint")
-	}))
+	})))
+}
+
+// apiOpenAPI serves the OpenAPI description of the API: a file with no secret,
+// behind the token like the rest.
+func (s *server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(openAPIFile)
 }
 
 // requireToken lets a request through only with a valid bearer token, and puts
@@ -460,10 +488,13 @@ func (s *server) apiRetry(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// pauseBody is the optional body of a pause.
+type pauseBody struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 func (s *server) apiPause(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		Reason string `json:"reason"`
-	}
+	var b pauseBody
 	if !readBody(w, r, &b) {
 		return
 	}

@@ -1,0 +1,394 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Nops API",
+    "version": "1",
+    "license": { "name": "Apache 2.0", "identifier": "Apache-2.0" },
+    "description": "Read jobs and deployments, and act on them. A token stands for its owner: it does what they can do on the dashboard, with the same rules."
+  },
+  "servers": [{ "url": ".." }],
+  "security": [{ "bearer": [] }],
+  "paths": {
+    "/api/openapi.json": {
+      "get": {
+        "summary": "This description",
+        "operationId": "getOpenAPI",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI description of the API.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "summary": "Every managed job, orphans included",
+        "operationId": "listJobs",
+        "responses": {
+          "200": {
+            "description": "The jobs, by namespace and name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["jobs"],
+                  "properties": { "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/jobs/{namespace}/{job}": {
+      "get": {
+        "summary": "One job with its drift, hold, and deployments",
+        "operationId": "getJob",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments": {
+      "get": {
+        "summary": "The active deployments and the latest finished ones, newest first",
+        "operationId": "listDeployments",
+        "responses": {
+          "200": {
+            "description": "The deployments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["deployments"],
+                  "properties": {
+                    "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments/{id}": {
+      "get": {
+        "summary": "One deployment with its redacted diff, hook runs, and events",
+        "operationId": "getDeployment",
+        "parameters": [{ "$ref": "#/components/parameters/DeploymentID" }],
+        "responses": {
+          "200": {
+            "description": "The deployment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments/{id}/approve": {
+      "post": {
+        "summary": "Approve a deployment",
+        "operationId": "approveDeployment",
+        "parameters": [{ "$ref": "#/components/parameters/DeploymentID" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SpecHash" } } }
+        },
+        "responses": {
+          "204": { "description": "Approved." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments/{id}/reject": {
+      "post": {
+        "summary": "Reject a deployment",
+        "operationId": "rejectDeployment",
+        "parameters": [{ "$ref": "#/components/parameters/DeploymentID" }],
+        "responses": {
+          "204": { "description": "Rejected." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments/{id}/promote": {
+      "post": {
+        "summary": "Promote the canaries of a deployment that waits for it",
+        "operationId": "promoteDeployment",
+        "parameters": [{ "$ref": "#/components/parameters/DeploymentID" }],
+        "responses": {
+          "204": { "description": "Promoted." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/deployments/{id}/retry": {
+      "post": {
+        "summary": "Retry a failed or rejected deployment",
+        "operationId": "retryDeployment",
+        "parameters": [{ "$ref": "#/components/parameters/DeploymentID" }],
+        "responses": {
+          "200": {
+            "description": "The new deployment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentID" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/jobs/{namespace}/{job}/pause": {
+      "post": {
+        "summary": "Pause a job",
+        "operationId": "pauseJob",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pause" } } }
+        },
+        "responses": {
+          "204": { "description": "Paused." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/jobs/{namespace}/{job}/resume": {
+      "post": {
+        "summary": "Resume a paused job",
+        "operationId": "resumeJob",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "responses": {
+          "204": { "description": "Resumed." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/jobs/{namespace}/{job}/deploy-now": {
+      "post": {
+        "summary": "Deploy a job outside its sync window",
+        "operationId": "deployJobNow",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SpecHash" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The deployment the request led to. Its id is empty when the next detection cycle starts it.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentID" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/fetch": {
+      "post": {
+        "summary": "Ask for a git poll now",
+        "operationId": "fetchGit",
+        "responses": {
+          "202": { "description": "The poll is asked for; it runs on its own." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": { "type": "http", "scheme": "bearer", "description": "A token from the dashboard's Tokens page." }
+    },
+    "parameters": {
+      "Namespace": { "name": "namespace", "in": "path", "required": true, "schema": { "type": "string" } },
+      "Job": { "name": "job", "in": "path", "required": true, "schema": { "type": "string" } },
+      "DeploymentID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request is not what the endpoint takes.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthorized": {
+        "description": "No valid token: it is missing, unknown, expired, or revoked.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotFound": {
+        "description": "The job or deployment does not exist.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Conflict": {
+        "description": "The state moved since you read it.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ServerError": {
+        "description": "Nops hit an error and logged it.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      },
+      "SpecHash": {
+        "type": "object",
+        "required": ["spec_hash"],
+        "properties": { "spec_hash": { "type": "string", "description": "The spec hash you read." } }
+      },
+      "Pause": {
+        "type": "object",
+        "properties": { "reason": { "type": "string", "maxLength": 500, "description": "At most 500 bytes." } }
+      },
+      "DeploymentID": {
+        "type": "object",
+        "required": ["deployment_id"],
+        "properties": { "deployment_id": { "type": "string" } }
+      },
+      "Hold": {
+        "type": "object",
+        "required": ["kind", "reason"],
+        "properties": {
+          "kind": { "type": "string" },
+          "reason": { "type": "string" },
+          "by": { "type": "string" },
+          "since": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Deployment": {
+        "type": "object",
+        "required": ["id", "namespace", "job", "state", "policy", "spec_hash", "commit_sha", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "namespace": { "type": "string" },
+          "job": { "type": "string" },
+          "state": { "type": "string" },
+          "policy": { "type": "string", "enum": ["auto", "approval", "none"] },
+          "spec_hash": { "type": "string" },
+          "commit_sha": { "type": "string" },
+          "commit_subject": { "type": "string" },
+          "commit_author": { "type": "string" },
+          "error": { "type": "string" },
+          "decided_by": { "type": "string" },
+          "decided_at": { "type": "string", "format": "date-time" },
+          "retry_of": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "required": ["namespace", "job", "policy", "sync", "drift"],
+        "properties": {
+          "namespace": { "type": "string" },
+          "job": { "type": "string" },
+          "policy": { "type": "string", "enum": ["auto", "approval", "none"] },
+          "sync": {
+            "type": "string",
+            "description": "The sync state of the job: invalid, paused, blocked, orphan, pending, deploying, held, drift, or sync. Empty for a job gone from git and from Nomad."
+          },
+          "drift": { "type": "boolean" },
+          "spec_hash": { "type": "string", "description": "What a deployment of the job would have now: the hash Deploy now asks for." },
+          "blocked_by": { "type": "string" },
+          "hold": { "$ref": "#/components/schemas/Hold" },
+          "last_deployment": { "$ref": "#/components/schemas/Deployment" }
+        }
+      },
+      "Issue": {
+        "type": "object",
+        "required": ["severity", "key", "message"],
+        "properties": {
+          "severity": { "type": "string" },
+          "key": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      },
+      "JobDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Job" },
+          {
+            "type": "object",
+            "required": ["deployments"],
+            "properties": {
+              "file": { "type": "string" },
+              "diff": { "type": "object", "description": "The redacted plan diff of the drift, as Nomad's JSON. Absent without drift." },
+              "issues": { "type": "array", "items": { "$ref": "#/components/schemas/Issue" } },
+              "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+            }
+          }
+        ]
+      },
+      "Event": {
+        "type": "object",
+        "required": ["time", "from", "to", "actor"],
+        "properties": {
+          "time": { "type": "string", "format": "date-time" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "actor": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      },
+      "HookRun": {
+        "type": "object",
+        "required": ["phase", "job", "state"],
+        "properties": {
+          "phase": { "type": "string" },
+          "job": { "type": "string" },
+          "state": { "type": "string" },
+          "error": { "type": "string" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "finished_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DeploymentDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Deployment" },
+          {
+            "type": "object",
+            "required": ["events", "hook_runs"],
+            "properties": {
+              "diff": { "type": "object", "description": "The redacted plan diff, as Nomad's JSON. Absent when there is none." },
+              "events": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } },
+              "hook_runs": { "type": "array", "items": { "$ref": "#/components/schemas/HookRun" } }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
