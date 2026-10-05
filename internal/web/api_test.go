@@ -46,7 +46,21 @@ func (ts *testServer) api(method, target, token, body string) *httptest.Response
 	}
 	rec := httptest.NewRecorder()
 	ts.h.ServeHTTP(rec, req)
+	checkAgainstOpenAPI(ts.t, method, target, rec)
 	return rec
+}
+
+// checkAgainstOpenAPI fails the test when the answer is not one the
+// description of the operation holds.
+func checkAgainstOpenAPI(t *testing.T, method, target string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	a, err := answers()
+	if err != nil {
+		t.Fatalf("openapi.json: %v", err)
+	}
+	if err := a.check(method, target, rec); err != nil {
+		t.Errorf("not what openapi.json describes: %v", err)
+	}
 }
 
 // apiErrorOf reads the {"error": ...} a response carries.
