@@ -53,7 +53,8 @@ during an incident. While a job is paused:
 - a deployment already running finishes.
 
 **Resume** releases the job, and Nops plans again from git. Any logged-in
-user can pause and resume, and Nops records who did it.
+user can pause and resume, from the dashboard or the [API](api.md), and Nops
+records who did it.
 
 ## Approval
 

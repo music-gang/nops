@@ -187,7 +187,7 @@ func TestFetchNowRefusesCrossOrigin(t *testing.T) {
 // Without a Trigger there is nothing to call: the route is not served.
 func TestFetchNowNotServedWithoutTrigger(t *testing.T) {
 	a := newTestAuth(t)
-	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}

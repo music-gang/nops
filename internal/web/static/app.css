@@ -139,6 +139,8 @@ time { white-space: nowrap; }
 
 .app-header__actor { display: flex; align-items: center; gap: 12px; color: var(--header-fg-muted); white-space: nowrap; }
 .app-header__logout { margin: 0; }
+.app-header__link { color: var(--header-fg-muted); }
+.app-header__link:hover, .app-header__link.is-active { color: var(--header-fg); }
 
 .btn-link {
   padding: 0;

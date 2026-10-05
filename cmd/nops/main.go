@@ -126,7 +126,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Tokens: st, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})

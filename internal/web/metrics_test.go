@@ -17,7 +17,7 @@ var stubMetrics = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) 
 func newMetricsTestServer(t *testing.T, basePath string, metrics http.Handler) http.Handler {
 	t.Helper()
 	h, err := New(Options{
-		Auth: newTestAuth(t), Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{},
+		Auth: newTestAuth(t), Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{},
 		Metrics: metrics, BasePath: basePath,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
