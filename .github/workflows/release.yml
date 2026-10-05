@@ -32,6 +32,24 @@ jobs:
             echo "$GITHUB_REF_NAME is not on main: releases are cut from main only"
             exit 1
           fi
+      # The BREAKING CHANGE footers since the last final tag, the same text
+      # scripts/release.sh shows before the tag. goreleaser puts it above the
+      # changelog.
+      - name: Upgrade notes
+        id: notes
+        run: |
+          . scripts/release.sh
+          if last=$(last_release "$GITHUB_SHA^") && [ -n "$last" ]; then
+            range="$last..$GITHUB_SHA"
+          else
+            range="$GITHUB_SHA"
+          fi
+          file="$RUNNER_TEMP/upgrade-notes.md"
+          git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes >"$file"
+          if [ -s "$file" ]; then
+            cat "$file"
+            echo "args=--release-header $file" >>"$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -68,6 +86,6 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: ${{ env.GORELEASER_VERSION }}
-          args: release --clean
+          args: release --clean ${{ steps.notes.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

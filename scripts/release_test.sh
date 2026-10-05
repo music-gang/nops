@@ -121,6 +121,64 @@ check stale-no-final-newline 'ghcr.io/music-gang/nops:0.5' \
   "$(printf 'ghcr.io/music-gang/nops:0.5' | stale_image_tags 0.6)"
 check stale-other-image '' "$(printf 'ghcr.io/other/app:0.1\n' | stale_image_tags 0.6)"
 
+# upgrade_notes <record>...: the notes of these `%h<TAB>%s<NL>%b` records.
+notes() {
+  local r
+  for r in "$@"; do printf '%s\0' "$r"; done | upgrade_notes 2>/dev/null
+}
+tab=$(printf '\t')
+serve="a068300${tab}feat(cli)!: run the server as nops serve (#126)
+The nops binary has a client.
+
+BREAKING CHANGE: the server runs as \"nops serve\": put \"serve\" before its
+flags. The image runs it with no arguments.
+
+Closes #118
+"
+
+check notes-none '' "$(notes "abc${tab}feat(web): add a page (#1)
+BREAKING CHANGE: not a breaking commit")"
+check notes-empty '' "$(notes)"
+check notes-footer '## Upgrade notes
+
+- the server runs as "nops serve": put "serve" before its flags. The image runs it with no arguments. (#126)' \
+  "$(notes "$serve")"
+check notes-dash-spelling '## Upgrade notes
+
+- rename -x to -y (#2)' \
+  "$(notes "b${tab}fix(config)!: rename a flag (#2)
+
+BREAKING-CHANGE: rename -x to -y")"
+check notes-order '## Upgrade notes
+
+- first (#1)
+- second (#2)' \
+  "$(notes "a${tab}feat!: a (#1)
+
+BREAKING CHANGE: first" "b${tab}fix!: b (#2)
+
+BREAKING CHANGE: second")"
+check notes-no-number '## Upgrade notes
+
+- drop a column' \
+  "$(notes "a${tab}fix!: drop a column
+
+BREAKING CHANGE: drop a column")"
+check notes-no-footer '## Upgrade notes
+
+- feat(web)!: rename a page (#3)' \
+  "$(notes "a${tab}feat(web)!: rename a page (#3)
+The body has no footer.")"
+check notes-no-body '## Upgrade notes
+
+- feat!: a (#4)' "$(notes "a${tab}feat!: a (#4)")"
+check notes-final-record-no-nul '## Upgrade notes
+
+- x (#5)' \
+  "$(printf 'a\tfeat!: a (#5)\n\nBREAKING CHANGE: x' | upgrade_notes)"
+check notes-warning 'warning: a feat!: a (#4) has no BREAKING CHANGE footer: its subject is the note, edit the release' \
+  "$(printf 'a\tfeat!: a (#4)\n\0' | upgrade_notes 2>&1 >/dev/null)"
+
 if [ "$failed" = 0 ]; then
   echo "release_test: ok"
 fi

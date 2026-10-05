@@ -159,6 +159,61 @@ stale_image_tags() {
   done
 }
 
+# last_release <sha>: the last final tag reachable from <sha>; nothing when
+# there is none.
+last_release() {
+  git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "$1" 2>/dev/null || true
+}
+
+# upgrade_notes: reads `git log -z --format='%h%x09%s%n%b'` on stdin and prints
+# the *Upgrade notes* of the release: one item per breaking commit, made from
+# its BREAKING CHANGE footer (up to the first blank line) and the pull request
+# number of its subject. A breaking commit without a footer gets its subject
+# and a warning on stderr. Prints nothing when no commit breaks.
+upgrade_notes() {
+  local record header hash subject body line text found count=0
+  local footer='^BREAKING[ -]CHANGE:[[:space:]]*(.*)$'
+  local pr='\(#([0-9]+)\)$'
+  while IFS= read -r -d '' record || [ -n "$record" ]; do
+    header=${record%%$'\n'*}
+    hash=${header%%$'\t'*}
+    subject=${header#*$'\t'}
+    [ "$(classify "$subject")" = breaking ] || continue
+
+    body=''
+    case $record in *$'\n'*) body=${record#*$'\n'} ;; esac
+    text='' found=0
+    while IFS= read -r line; do
+      if [ $found = 0 ]; then
+        if [[ $line =~ $footer ]]; then
+          found=1
+          text=${BASH_REMATCH[1]}
+        fi
+      elif [ -z "${line//[[:space:]]/}" ]; then
+        break
+      else
+        line=${line#"${line%%[![:space:]]*}"}
+        text="$text $line"
+      fi
+    done <<EOF
+$body
+EOF
+
+    if [ -z "$text" ]; then
+      echo "warning: $hash $subject has no BREAKING CHANGE footer: its subject is the note, edit the release" >&2
+      text=$subject
+    elif [[ $subject =~ $pr ]]; then
+      text="$text (#${BASH_REMATCH[1]})"
+    fi
+
+    if [ $count = 0 ]; then
+      printf '## Upgrade notes\n\n'
+    fi
+    printf -- '- %s\n' "$text"
+    count=$((count + 1))
+  done
+}
+
 # ---- flow --------------------------------------------------------------------
 
 die() {
@@ -293,7 +348,7 @@ main() {
   sha=$(git rev-parse origin/main)
 
   # The last final tag reachable from origin/main; v0.0.0 when there is none.
-  last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "$sha" 2>/dev/null || true)
+  last=$(last_release "$sha")
   if [ -n "$last" ]; then
     range="$last..$sha"
   else
@@ -319,6 +374,16 @@ main() {
   print_group "Changes" change "$commits"
   print_group "Other (not in the changelog)" other "$commits"
   echo
+
+  # The workflow writes the same text on the release, above the changelog.
+  local notes
+  notes=$(git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes)
+  if [ -n "$notes" ]; then
+    echo "The release will start with:"
+    echo
+    echo "$notes"
+    echo
+  fi
 
   # CI on the commit, and open PRs (a warning only: the maintainer may leave one out).
   local ci
