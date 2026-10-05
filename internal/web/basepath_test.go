@@ -38,7 +38,7 @@ func newBasePathTestServer(t *testing.T) (http.Handler, *Auth) {
 		t.Fatal(err)
 	}
 	h, err := New(Options{
-		Auth: auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{},
+		Auth: auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{},
 		BasePath: "/nops",
 		Now:      func() time.Time { return testNow },
 		Log:      log,

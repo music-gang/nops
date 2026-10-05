@@ -20,6 +20,7 @@ repository according to a per-job policy. New here? Start with the
 - [Configuration](configuration.md): every option.
 - [Meta keys](meta-keys.md): every `nops_*` key.
 - [Dashboard](dashboard.md): pages, login, secret redaction.
+- [API](api.md): act on Nops from a script with a token.
 - [Logs and notifications](logs-and-notifications.md)
 - [Metrics](metrics.md)
 - [Glossary](glossary.md)

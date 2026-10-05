@@ -1,4 +1,5 @@
-// Package web serves the dashboard and the git webhook. Authentication is
+// Package web serves the dashboard, the JSON API (api.go, authenticated by the
+// tokens of tokens.go) and the git webhook. Authentication is
 // session.go (shared session/cookie/actor mechanics), auth.go (OpenID
 // Connect) and auth_basic.go (local users); this file wires the pages, the
 // diff renderer and the webhook behind whichever Authenticator it is given.
@@ -70,6 +71,16 @@ type Engine interface {
 	Status() engine.Status
 }
 
+// Tokens is what the API tokens need from SQLite: the Tokens page lists,
+// creates and revokes them, and /api/ looks the owner of one up. *store.Store
+// implements it.
+type Tokens interface {
+	CreateToken(ctx context.Context, owner, name, hash string, expiresAt time.Time) (store.Token, error)
+	Tokens(ctx context.Context) ([]store.Token, error)
+	RevokeToken(ctx context.Context, id string) error
+	TokenOwner(ctx context.Context, hash string) (string, error)
+}
+
 // Git is what the dashboard shows about the repository nops reads: the
 // commit it is on and how the last poll went. *gitwatch.Watcher implements it.
 type Git interface {
@@ -99,6 +110,7 @@ type Options struct {
 	Store  Store
 	Engine Engine
 	Git    Git
+	Tokens Tokens
 
 	// NomadUIURL is where a person opens Nomad in a browser (-nomad-ui-url), the
 	// base the dashboard's "Open in Nomad" links are built on. Optional: empty
@@ -153,6 +165,7 @@ type server struct {
 	store     Store
 	engine    Engine
 	git       Git
+	tokens    Tokens
 	nomad     Nomad  // nil: no Nomad panel
 	nomadUI   string // "": no links into the Nomad UI
 	panels    panelCache
@@ -173,8 +186,8 @@ type server struct {
 // once, so a broken one fails loud at startup rather than on the first
 // request.
 func New(o Options) (http.Handler, error) {
-	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Log == nil {
-		return nil, errors.New("web: Auth, Store, Engine, Git and Log are required")
+	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Tokens == nil || o.Log == nil {
+		return nil, errors.New("web: Auth, Store, Engine, Git, Tokens and Log are required")
 	}
 	if o.WebhookSecret != "" && o.Trigger == nil {
 		return nil, errors.New("web: Trigger is required when WebhookSecret is set")
@@ -195,6 +208,7 @@ func New(o Options) (http.Handler, error) {
 		store:     o.Store,
 		engine:    o.Engine,
 		git:       o.Git,
+		tokens:    o.Tokens,
 		nomad:     o.Nomad,
 		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
 		trigger:   o.Trigger,
@@ -277,6 +291,11 @@ func (s *server) routes() *http.ServeMux {
 	if s.trigger != nil {
 		mux.Handle("POST /fetch", s.auth.Require(http.HandlerFunc(s.fetchNow)))
 	}
+	mux.Handle("GET /tokens", s.auth.Require(http.HandlerFunc(s.tokensPage)))
+	mux.Handle("POST /tokens", s.auth.Require(http.HandlerFunc(s.createToken)))
+	mux.Handle("POST /tokens/{id}/revoke", s.auth.Require(http.HandlerFunc(s.revokeToken)))
+
+	s.apiRoutes(mux)
 
 	return mux
 }

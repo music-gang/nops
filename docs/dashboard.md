@@ -21,12 +21,15 @@ retry, pause, and resume deployments. Every page needs a
   *Approve* and *Reject* buttons. *Promote* appears when Nomad waits for you
   to promote canaries.
 - **Activity** (`/history`): every deployment, newest first, grouped by day.
+- **Tokens** (`/tokens`): every [API token](api.md#tokens). Create yours with
+  an expiry, copy it once, and revoke any.
 
 Pages refresh themselves. Approving checks the spec
 hash you reviewed: if the diff changed since you loaded the page, Nops refuses
 and shows the new one.
 
-`/healthz` and [`/metrics`](metrics.md) need no login.
+`/healthz` and [`/metrics`](metrics.md) need no login, and the
+[`/api/`](api.md) takes a token instead.
 
 ### Sync state of a job
 

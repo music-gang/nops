@@ -2,12 +2,14 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -257,6 +259,19 @@ type testServer struct {
 	engine *fakeEngine
 	git    *fakeGit
 	clock  *time.Time // what the server's clock reads: a test moves it
+	tokens *store.Store
+}
+
+// noTokens is the Tokens of a test that never calls the API: it knows none.
+type noTokens struct{}
+
+func (noTokens) CreateToken(context.Context, string, string, string, time.Time) (store.Token, error) {
+	return store.Token{}, errors.New("noTokens: not expected")
+}
+func (noTokens) Tokens(context.Context) ([]store.Token, error) { return nil, nil }
+func (noTokens) RevokeToken(context.Context, string) error     { return store.ErrNotFound }
+func (noTokens) TokenOwner(context.Context, string) (string, error) {
+	return "", store.ErrNotFound
 }
 
 func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testServer {
@@ -277,8 +292,16 @@ func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string,
 	now := testNow
 	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}, clock: &now}
 	log := slog.New(slog.NewTextHandler(ts.logs, nil))
+	// Real SQLite on the server's clock: what the tokens tests read back is what
+	// the store keeps.
+	tokens, err := store.Open(filepath.Join(t.TempDir(), "nops.db"), store.WithClock(func() time.Time { return *ts.clock }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tokens.Close() })
+	ts.tokens = tokens
 	h, err := New(Options{
-		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
+		Auth: ts.auth, Store: st, Engine: en, Git: ts.git, Tokens: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
 		Now:       func() time.Time { return *ts.clock },
@@ -422,7 +445,7 @@ func TestVersionFooter(t *testing.T) {
 		}
 	}
 
-	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,6 +32,7 @@
     </nav>
     <div class="app-header__actor">
       {{if .Actor}}
+      <a class="app-header__link{{if eq .Nav "tokens"}} is-active{{end}}" href="{{.Base}}/tokens">Tokens</a>
       <span class="app-header__actor-name">{{.Actor}}</span>
       <form method="post" action="{{.Base}}/auth/logout" class="app-header__logout">
         <button type="submit" class="btn-link">Log out</button>

@@ -37,8 +37,9 @@ disagrees with this one, this page wins. Code-only terms are in
 | **state** | Where a deployment or a hook run is: see [deployment lifecycle](deployment-lifecycle.md). |
 | **active deployment** | One not in a terminal state. A job has at most one. |
 | **terminal state** | `completed`, `failed`, `rejected` or `superseded`. |
-| **approve / reject** | A logged-in person's decision on a deployment in `pending_approval`. |
+| **approve / reject** | A person's decision on a deployment in `pending_approval`. They take it on the dashboard or through the [API](api.md). |
 | **actor** | Who did something: a user name, or `nops` for Nops itself. |
+| **API token** | A secret that lets a script act as the person who created it ([API](api.md)). |
 | **allowlist** | The users and groups allowed to log in with OIDC. |
 | **supersede** | Replace a deployment that hasn't started applying with a newer one. |
 | **revalidation** | Re-checking every pending deployment on each detection cycle. |

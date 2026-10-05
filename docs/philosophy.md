@@ -17,9 +17,9 @@ No change may break these rules. The tests that try to break them are in
    *Why:* time passes between detection and apply, especially while a
    deployment waits for approval. Nops never overwrites a manual change.
 
-3. **Never auto-apply under policy `approval`.** Only a logged-in person moves
-   a deployment past `pending_approval`, and the approval is valid only for
-   the spec they saw. *Why:* that's the point of the policy.
+3. **Never auto-apply under policy `approval`.** Only a person, logged in or
+   with their [API token](api.md), moves a deployment past
+   `pending_approval`, and the approval is valid only for the spec they saw. *Why:* that's the point of the policy.
 
 4. **Git is the source of truth for Nops's behaviour.** Policy and hooks come
    from the HCL in git, never from the live job. An invalid meta key means
