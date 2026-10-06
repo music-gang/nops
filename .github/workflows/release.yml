@@ -2,7 +2,8 @@ name: release
 
 # A vX.Y.Z tag pushed on a commit of main publishes the release: the image on
 # ghcr.io/music-gang/nops and the binary, checksums and changelog on the
-# GitHub Release. How to cut one: docs/development.md#releasing.
+# GitHub Release, and a final one (not an -rc) the docs site on GitHub Pages.
+# How to cut one: docs/development.md#releasing.
 on:
   push:
     tags: ["v*.*.*"]
@@ -89,3 +90,15 @@ jobs:
           args: release --clean ${{ steps.notes.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The site describes the latest final release: a release candidate does not
+  # publish it.
+  docs:
+    name: docs
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml

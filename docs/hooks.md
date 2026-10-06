@@ -42,16 +42,16 @@ in another namespace counts as missing.
   hook. All allocations complete means success.
 - **Fail fast.** Turn off Nomad's retries, Nops decides them:
 
-  ```hcl
-  restart {
-    attempts = 0
-    mode     = "fail"
-  }
-  reschedule {
-    attempts  = 0
-    unlimited = false
-  }
-  ```
+    ```hcl
+    restart {
+      attempts = 0
+      mode     = "fail"
+    }
+    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+    ```
 
 - **Be idempotent.** After a crash, Nops can dispatch a hook again for the
   same deployment, and two deployments can run the same hook at once.

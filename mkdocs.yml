@@ -1,0 +1,85 @@
+# The docs site: docs/development.md#commands. The pages are the Markdown
+# of the repository as it is; scripts/mkdocs/hooks.py adapts it for the site.
+site_name: Nops
+site_description: A semi-automatic GitOps controller for HashiCorp Nomad.
+site_url: https://music-gang.github.io/nops/
+repo_url: https://github.com/music-gang/nops
+repo_name: music-gang/nops
+
+docs_dir: docs
+# docs/README.md is the index on GitHub, the menu replaces it; the root README
+# is the home page (the hook). The archive is history, not part of the site.
+exclude_docs: |
+  /README.md
+  /archive/
+  docs_test.go
+watch:
+  - README.md
+hooks:
+  - scripts/mkdocs/hooks.py
+
+theme:
+  name: material
+  logo: assets/logo.webp
+  favicon: assets/logo.webp
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      # The anchors GitHub makes, so the links of the pages work on both.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+# A broken link, a missing anchor or a page left out of the menu fails
+# `mkdocs build --strict`.
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
+
+nav:
+  - Home: index.md
+  - Tutorial:
+      - getting-started.md
+  - How-to guides:
+      - running-nops.md
+      - hooks.md
+  - Reference:
+      - configuration.md
+      - meta-keys.md
+      - dashboard.md
+      - api.md
+      - cli.md
+      - logs-and-notifications.md
+      - metrics.md
+      - glossary.md
+  - Explanation:
+      - policies.md
+      - philosophy.md
+      - architecture.md
+      - deployment-lifecycle.md
+  - Contributing:
+      - Contributing guide: https://github.com/music-gang/nops/blob/main/CONTRIBUTING.md
+      - development.md

@@ -94,6 +94,7 @@ failing test first.
 | First steps | `getting-started.md` |
 | Term | `glossary.md` |
 | Invariant | `philosophy.md` |
+| Doc page | `nav` in `mkdocs.yml` |
 | Build or release | [Releasing](#releasing) |
 | Nomad version | `ci.yml` and the README |
 
@@ -103,6 +104,10 @@ failing test first.
 go test -race -cover ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest -tags integration ./...
 vale sync && vale docs README.md CONTRIBUTING.md
+
+# the docs site, previewed on http://127.0.0.1:8000
+pip install -r scripts/mkdocs/requirements.txt
+mkdocs serve
 
 # integration: a dev agent with ACLs, in another terminal
 printf 'acl {\n  enabled = true\n}\n' > agent.hcl
@@ -128,7 +133,7 @@ go test -tags integration -race -count=1 ./tests/integration/...
 | Check | Runs |
 |---|---|
 | `test` | `gofmt`, `go mod tidy`, build, `go vet`, `go test -race` |
-| `lint` | `staticcheck`, `shellcheck`, the script tests, `goreleaser check`, Vale |
+| `lint` | `staticcheck`, `shellcheck`, the script tests, `goreleaser check`, Vale, the docs site build |
 | `integration` | The integration tests against a Nomad dev agent |
 | `pr-title` | The pull request title is a Conventional Commit |
 
@@ -158,7 +163,8 @@ may break things and a patch never does.
 The `release` workflow builds the binary and the image with goreleaser,
 publishes them to the GitHub release and `ghcr.io/music-gang/nops`, and
 writes the release notes from the commit subjects, with *Upgrade notes* on
-top, made from the `BREAKING CHANGE:` footers. Image tags for `vX.Y.Z`
+top, made from the `BREAKING CHANGE:` footers. A final release also
+publishes the docs site. Image tags for `vX.Y.Z`
 are `X.Y.Z`, `X.Y` and `latest`. The image is distroless with the binary
 only. The version comes from the tag, set at build time with
 `-ldflags -X github.com/music-gang/nops/internal/version.version=<tag>`.

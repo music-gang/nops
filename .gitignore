@@ -5,3 +5,8 @@
 /dist/
 # Downloaded by `vale sync`.
 /.vale/Google/
+# The docs site, built by `mkdocs build`.
+/site/
+__pycache__/
+# Editor settings.
+/.vscode/

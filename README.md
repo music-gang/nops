@@ -29,11 +29,11 @@ minutes on one machine.
    **deployment**.
 3. The job's policy decides what happens next:
 
-   | Policy | Behaviour |
-   |---|---|
-   | `auto` | Nops deploys the change. |
-   | `approval` | The deployment waits in the dashboard until someone approves or rejects it. |
-   | `none` | Nops shows the drift and deploys nothing. The default. |
+    | Policy | Behaviour |
+    |---|---|
+    | `auto` | Nops deploys the change. |
+    | `approval` | The deployment waits in the dashboard until someone approves or rejects it. |
+    | `none` | Nops shows the drift and deploys nothing. The default. |
 
 4. Nops registers the job only if nobody changed it since the plan.
 
