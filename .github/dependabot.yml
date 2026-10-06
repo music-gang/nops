@@ -16,6 +16,19 @@ updates:
       prefix: ci
       include: scope
 
+  # The docs site. mkdocs 2 drops the plugin and theme system Material is
+  # built on: stay on 1.x.
+  - package-ecosystem: pip
+    directory: /scripts/mkdocs
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    ignore:
+      - dependency-name: mkdocs
+        versions: [">=2"]
+
   # The distroless base of the release image, pinned by digest in the
   # Dockerfile. A new Debian release (static-debian13 -> 14) is a different
   # image name: that bump is by hand (docs/development.md#releasing).

@@ -1,0 +1,4 @@
+# The docs site (docs/development.md#commands). Dependabot moves these pins,
+# except mkdocs 2: it drops the plugin and theme system Material is built on.
+mkdocs==1.6.1
+mkdocs-material==9.7.7
