@@ -9,15 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/secret"
 	"github.com/music-gang/nops/internal/store"
 )
 
 // maxTokenName is the longest name a token takes, in bytes.
 const maxTokenName = 100
-
-// tokenPrefix starts every token, so a secret scanner and a person can tell
-// one from any other string.
-const tokenPrefix = "nops_"
 
 // expiryChoice is one answer to "when does it expire" on the Tokens page: a
 // fixed list, so there is nothing to validate beyond membership. A zero Days
@@ -40,7 +37,7 @@ const defaultExpiry = "90"
 
 // newToken makes the secret of a token: 256 random bits, which is why a plain
 // SHA-256 of it is enough to keep (hashToken).
-func newToken() string { return tokenPrefix + randomToken() }
+func newToken() string { return secret.New() }
 
 // hashToken is what the store keeps of a token: nobody who reads the
 // database can use it to call the API.

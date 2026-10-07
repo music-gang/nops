@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/music-gang/nops/internal/secret"
 )
 
 // commands is every command of the client, in the order the usage lists them.
@@ -22,6 +24,12 @@ var commands = []command{
 	{name: "resume", arg: "<job>", help: "resume a paused job", run: action(http.MethodPost, jobAction("resume"), "resumed")},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
+	{name: "secret generate", offline: true, help: "print a new random secret, offline", run: runSecretGenerate},
+}
+
+func runSecretGenerate(k *call) error {
+	_, err := fmt.Fprintln(k.out, secret.New())
+	return err
 }
 
 func deploymentAction(verb string) func(*call) string {

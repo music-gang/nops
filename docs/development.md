@@ -13,6 +13,7 @@ conventions.
 | `internal/store` | Tests against real SQLite in `t.TempDir()`. |
 | `internal/hooks` | Unit tests with a fake Nomad and real SQLite, plus integration tests. |
 | `internal/redact` | Unit tests on hand-built and real plan diffs: no secret reaches the database or the HTML. |
+| `internal/secret` | Unit tests on the format and the randomness of a secret. |
 | `internal/metrics` | Every metric against fakes. |
 | `internal/notify` | `httptest` receivers for every adapter and every failure. |
 | `internal/gitwatch` | Tests against a local bare repository. |
