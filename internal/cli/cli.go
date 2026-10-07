@@ -1,7 +1,8 @@
-// Package cli is the command-line client of the API (docs/cli.md): every
-// command of the nops binary except "serve", which main runs. It reads the URL
-// and the token from its flags or from the environment, calls the API of
-// docs/api.md, and prints text, or the API's own JSON with -json.
+// Package cli is the command line of Nops (docs/cli.md): every command of the
+// nops binary except "serve", which main runs. Most are a client of the API:
+// they read the URL and the token from their flags or from the environment,
+// call the API of docs/api.md, and print text, or the API's own JSON with
+// -json. An offline command needs neither.
 package cli
 
 import (
@@ -54,12 +55,14 @@ type call struct {
 }
 
 type command struct {
-	name string
+	name string // one word, or two ("secret generate")
 	arg  string // the placeholder of the argument it takes: "", "<id>" or "<job>"
 	help string
 	yes  bool // takes -yes
 	why  bool // takes -reason
-	run  func(*call) error
+	// offline runs without the API: no -addr, no token and no -json.
+	offline bool
+	run     func(*call) error
 }
 
 // takesJob is whether the command names a job, and so takes -namespace.
@@ -84,14 +87,18 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 		fmt.Fprintf(stderr, "nops: unknown flag %s: the flags of the server go after \"nops serve\"\n", name)
 		return exitUsage
 	}
-	cmd := find(args[0])
+	cmd, rest := find(args)
 	if cmd == nil {
+		if subs := subcommands(args[0]); len(subs) > 0 {
+			fmt.Fprintf(stderr, "nops: %s takes a subcommand: %s\n", args[0], strings.Join(subs, ", "))
+			return exitUsage
+		}
 		fmt.Fprintf(stderr, "nops: unknown command %q\n\n", args[0])
 		usage(stderr)
 		return exitUsage
 	}
 
-	err := cmd.exec(ctx, args[1:], getenv, stdin, stdout, stderr)
+	err := cmd.exec(ctx, rest, getenv, stdin, stdout, stderr)
 	var ue usageError
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
@@ -110,9 +117,11 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	k := &call{ctx: ctx, in: bufio.NewReader(stdin), out: stdout, errOut: stderr}
 	fs := flag.NewFlagSet("nops "+c.name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&s.addr, "addr", "", "URL of Nops (NOPS_ADDR)")
-	fs.StringVar(&s.tokenFile, "token-file", "", "file holding the API token (NOPS_TOKEN_FILE, or NOPS_TOKEN)")
-	fs.BoolVar(&k.asJSON, "json", false, "print the answer of the API as JSON")
+	if !c.offline {
+		fs.StringVar(&s.addr, "addr", "", "URL of Nops (NOPS_ADDR)")
+		fs.StringVar(&s.tokenFile, "token-file", "", "file holding the API token (NOPS_TOKEN_FILE, or NOPS_TOKEN)")
+		fs.BoolVar(&k.asJSON, "json", false, "print the answer of the API as JSON")
+	}
 	if c.takesJob() {
 		fs.StringVar(&s.namespace, "namespace", "", `namespace of the job (NOPS_NAMESPACE, default "default")`)
 	}
@@ -153,21 +162,38 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	}
 	k.namespace = first(s.namespace, getenv("NOPS_NAMESPACE"), "default")
 
-	cl, err := newClient(s, getenv)
-	if err != nil {
-		return err
+	if !c.offline {
+		cl, err := newClient(s, getenv)
+		if err != nil {
+			return err
+		}
+		k.client = cl
 	}
-	k.client = cl
 	return c.run(k)
 }
 
-func find(name string) *command {
+// find is the command args start with, matched on its one or two words, and
+// the arguments after them.
+func find(args []string) (*command, []string) {
 	for i := range commands {
-		if commands[i].name == name {
-			return &commands[i]
+		words := strings.Fields(commands[i].name)
+		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == commands[i].name {
+			return &commands[i], args[len(words):]
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+// subcommands are the second words of the commands whose first word is group,
+// such as "generate" for "secret", or none if group is not one.
+func subcommands(group string) []string {
+	var subs []string
+	for _, c := range commands {
+		if words := strings.Fields(c.name); len(words) == 2 && words[0] == group {
+			subs = append(subs, words[1])
+		}
+	}
+	return subs
 }
 
 func usage(w io.Writer) {
@@ -175,8 +201,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "       nops serve [flags]")
 	fmt.Fprintln(w, "       nops -version")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "serve runs the server. The other commands call its API: set NOPS_ADDR and")
-	fmt.Fprintln(w, "NOPS_TOKEN_FILE (or NOPS_TOKEN). \"nops <command> -h\" lists their flags.")
+	fmt.Fprintln(w, "serve runs the server. The other commands call its API, except the ones that")
+	fmt.Fprintln(w, "say they run offline: set NOPS_ADDR and NOPS_TOKEN_FILE (or NOPS_TOKEN).")
+	fmt.Fprintln(w, "\"nops <command> -h\" lists their flags.")
 	fmt.Fprintln(w)
 	for _, c := range commands {
 		fmt.Fprintf(w, "  %-22s %s\n", strings.TrimRight(c.name+" "+c.arg, " "), c.help)

@@ -16,11 +16,12 @@ are in [philosophy](philosophy.md).
 | `internal/store` | SQLite, the only place state lives. |
 | `internal/engine` | Detection and apply: the state machine. |
 | `internal/hooks` | Runs a hook job and waits for its outcome. |
-| `internal/cli` | The command-line client: calls the API. |
+| `internal/cli` | The command line: a client of the API, and a few offline utilities. |
 | `internal/web` | The dashboard, the login, and the git webhook. |
 | `internal/metrics` | `/metrics`. Each scrape reads the store and the engine. |
 | `internal/notify` | Notification adapters. |
 | `internal/redact` | Removes secrets from the plan diff. |
+| `internal/secret` | Generates random secrets. |
 | `internal/version` | The build's version. |
 
 ## Loops

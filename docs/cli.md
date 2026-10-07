@@ -36,6 +36,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops resume <job>` | Resume a job. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
+| `nops secret generate` | Print a new random secret for a file Nops reads, such as the [metrics token](metrics.md#scraping). It runs offline: it needs no `-addr` and no token. |
 
 `approve` and `deploy-now` send the spec hash of the diff they showed, so a
 newer diff is refused as on the dashboard.

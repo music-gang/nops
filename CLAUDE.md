@@ -144,6 +144,7 @@ internal/web/          dashboard (net/http + html/template) + git webhook
 internal/notify/       notifications via a generic webhook
 internal/metrics/      /metrics for Prometheus, read from the store and the engine on each scrape
 internal/redact/       removal of secret values from the plan diff
+internal/secret/       generation of random secrets
 internal/version/      the build's version (release tag via -ldflags -X)
 tests/integration/     tests against nomad agent -dev (build tag `integration`)
 examples/              example HCL jobs and hooks

@@ -15,7 +15,7 @@ policies, and drift. They never hold specs or secrets.
 Generate a random token into the file:
 
 ```sh
-openssl rand -hex 32 > nops-metrics-token
+nops secret generate > nops-metrics-token
 ```
 
 ```yaml

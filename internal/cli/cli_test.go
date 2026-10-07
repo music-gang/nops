@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -410,5 +411,44 @@ func TestWriteDiffOfNoChanges(t *testing.T) {
 	var b bytes.Buffer
 	if err := writeDiff(&b, nil); err != nil || b.String() != "No changes.\n" {
 		t.Errorf("writeDiff(nil) = %q, %v", b.String(), err)
+	}
+}
+
+func TestSecretGenerateRunsOffline(t *testing.T) {
+	// No NOPS_ADDR and no token: it must not look for either.
+	code, out, errOut := run(t, nil, "", "secret", "generate")
+	if code != 0 || errOut != "" {
+		t.Fatalf("exit %d, stderr %q, want 0 and nothing", code, errOut)
+	}
+	if !regexp.MustCompile(`^nops_[A-Za-z0-9_-]{43}\n$`).MatchString(out) {
+		t.Errorf("stdout %q, want a nops_ secret and a newline", out)
+	}
+	if _, again, _ := run(t, nil, "", "secret", "generate"); again == out {
+		t.Error("two runs printed the same secret")
+	}
+	if code, _, _ := run(t, nil, "", "secret", "generate", "-h"); code != 0 {
+		t.Errorf("-h: exit %d, want 0", code)
+	}
+}
+
+func TestAGroupNamesItsSubcommands(t *testing.T) {
+	for _, args := range [][]string{{"secret"}, {"secret", "frobnicate"}} {
+		code, _, errOut := run(t, nil, "", args...)
+		if code != 2 || !strings.Contains(errOut, "secret takes a subcommand: generate") {
+			t.Errorf("%v: exit %d, stderr %q, want the subcommands listed", args, code, errOut)
+		}
+	}
+}
+
+func TestSecretGenerateTakesNoAPIFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"secret", "generate", "extra"},
+		{"secret", "generate", "-addr", "http://x"},
+		{"secret", "generate", "-json"},
+		{"secret"},
+	} {
+		if code, out, _ := run(t, nil, "", args...); code != 2 || out != "" {
+			t.Errorf("%v: exit %d, stdout %q, want 2 and nothing", args, code, out)
+		}
 	}
 }
