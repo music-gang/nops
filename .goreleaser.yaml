@@ -26,9 +26,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# The release notes are built from the subjects of the commits since the
-# previous tag, which the maintainer writes by hand at squash time for someone
-# running Nops. One line per change, its subject only (the PR number is in it,
+# The release notes are built from the subjects of the commits since the last
+# final release (the workflow sets GORELEASER_PREVIOUS_TAG, so a release
+# candidate's commits are in the final release too), which the maintainer
+# writes by hand at squash time for someone running Nops. One line per change, its subject only (the PR number is in it,
 # and GitHub links it); docs, ci, chore, build, test and style are left out.
 changelog:
   use: git
