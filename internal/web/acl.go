@@ -160,3 +160,27 @@ func (s *server) createToken(ctx context.Context, sub *subject, in newToken) (st
 	s.log.InfoContext(ctx, "token created", "token", t.AccessorID, "name", t.Name, "type", t.Type, "actor", sub.actor, "accessor_id", sub.accessorID)
 	return t, sec, nil
 }
+
+// checkRevocation says whether rev names one person or one token.
+func checkRevocation(rev store.Revocation) error {
+	if !rev.Valid() {
+		return invalidf("name one person by identity, or one creator by identity or by accessor ID")
+	}
+	return nil
+}
+
+// revokeTokens revokes in one action the tokens rev names, and returns their
+// accessor IDs.
+func (s *server) revokeTokens(ctx context.Context, sub *subject, rev store.Revocation) ([]string, error) {
+	if err := checkRevocation(rev); err != nil {
+		return nil, err
+	}
+	ids, err := s.access.RevokeACLTokens(ctx, rev, auditOf(sub))
+	if err != nil {
+		return nil, err
+	}
+	s.log.InfoContext(ctx, "tokens revoked", "count", len(ids), "sessions_of", rev.SessionsOf,
+		"creator_identity", rev.CreatorIdentity, "creator_accessor_id", rev.CreatorAccessorID,
+		"actor", sub.actor, "accessor_id", sub.accessorID)
+	return ids, nil
+}

@@ -23,6 +23,8 @@ type aclFlags struct {
 	expires     string
 
 	authMethod, selector, bindType, bindName string
+
+	creator, creatorIdentity string
 }
 
 // stringList is a flag that can be given more than once.
@@ -44,6 +46,11 @@ func tokenFlags(fs *flag.FlagSet, k *call) {
 	fs.StringVar(&k.flags.kind, "type", "client", "client, or management for a token that can do everything")
 	fs.Var(&k.flags.policies, "policy", "ACL policy a client token carries (repeat it for more)")
 	fs.StringVar(&k.flags.expires, "expires", "", "how long it lasts, such as 720h (default: it never expires)")
+}
+
+func revokeCreatedFlags(fs *flag.FlagSet, k *call) {
+	fs.StringVar(&k.flags.creator, "creator", "", "accessor ID of the token that created them, bootstrap for the bootstrap token")
+	fs.StringVar(&k.flags.creatorIdentity, "creator-identity", "", "identity of the person who created them")
 }
 
 func bindingRuleFlags(fs *flag.FlagSet, k *call) {
@@ -88,15 +95,17 @@ func (b bindingRule) binds() string {
 }
 
 type aclToken struct {
-	AccessorID  string     `json:"accessor_id"`
-	Name        string     `json:"name"`
-	Type        string     `json:"type"`
-	Origin      string     `json:"origin"`
-	Policies    []string   `json:"policies"`
-	CreatedAt   time.Time  `json:"created_at"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatorName string     `json:"creator_name"`
-	Secret      string     `json:"secret"`
+	AccessorID      string     `json:"accessor_id"`
+	Name            string     `json:"name"`
+	Type            string     `json:"type"`
+	Origin          string     `json:"origin"`
+	Identity        string     `json:"identity"`
+	Policies        []string   `json:"policies"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	CreatorName     string     `json:"creator_name"`
+	CreatorIdentity string     `json:"creator_identity"`
+	Secret          string     `json:"secret"`
 }
 
 // show prints the answer as JSON with -json, and as text otherwise.
@@ -298,9 +307,62 @@ func runTokenSelf(k *call) error {
 func writeToken(w io.Writer, t aclToken) {
 	fmt.Fprintf(w, "Accessor ID:  %s\nName:         %s\nType:         %s\nACL policies: %s\nCreated:      %s\nExpires:      %s\n",
 		t.AccessorID, t.Name, t.Type, dash(strings.Join(t.Policies, ", ")), stamp(t.CreatedAt), expiry(t))
-	if t.CreatorName != "" {
+	if t.Identity != "" {
+		fmt.Fprintf(w, "Identity:     %s\n", t.Identity)
+	}
+	if t.CreatorName != "" && t.CreatorIdentity != "" && t.CreatorIdentity != t.Identity {
+		fmt.Fprintf(w, "Created by:   %s (%s)\n", t.CreatorName, t.CreatorIdentity)
+	} else if t.CreatorName != "" {
 		fmt.Fprintf(w, "Created by:   %s\n", t.CreatorName)
 	}
+}
+
+// runRevokeSessions revokes every session of the person named by identity.
+func runRevokeSessions(k *call) error {
+	if err := k.confirm(fmt.Sprintf("Revoke every session of %s?", k.arg)); err != nil {
+		return err
+	}
+	return revokeTokens(k, "/api/acl/tokens/revoke-sessions", map[string]string{"identity": k.arg})
+}
+
+// runRevokeCreated revokes every token a person or a token created, and the
+// tokens those created.
+func runRevokeCreated(k *call) error {
+	if (k.flags.creator == "") == (k.flags.creatorIdentity == "") {
+		return usageErrorf("set one of -creator and -creator-identity")
+	}
+	body, who := map[string]string{"creator_accessor_id": k.flags.creator}, k.flags.creator
+	if k.flags.creatorIdentity != "" {
+		body, who = map[string]string{"creator_identity": k.flags.creatorIdentity}, k.flags.creatorIdentity
+	}
+	if err := k.confirm(fmt.Sprintf("Revoke every token %s created, and the tokens those created?", who)); err != nil {
+		return err
+	}
+	return revokeTokens(k, "/api/acl/tokens/revoke-created", body)
+}
+
+// revokeTokens asks the API for a revocation in one action and prints what it
+// revoked.
+func revokeTokens(k *call, path string, body map[string]string) error {
+	raw, err := k.client.do(k.ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		Revoked []string `json:"revoked"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return fmt.Errorf("the answer is not what the API sends: %w", err)
+	}
+	show(k, raw, func(w io.Writer) {
+		if len(r.Revoked) == 0 {
+			fmt.Fprintln(w, "No token to revoke.")
+		}
+		for _, id := range r.Revoked {
+			fmt.Fprintln(w, "revoked", id)
+		}
+	})
+	return nil
 }
 
 // runTokenCreate prints the secret on stdout, the only time Nops has it; the

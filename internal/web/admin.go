@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,9 +45,24 @@ type selfView struct {
 	Creator    string
 }
 
+// tokenRow is a token of the list, with whom its links to revoke in one action
+// name: the person of a session, or the creator of a created token.
 type tokenRow struct {
 	selfView
-	Expired bool
+	Identity, CreatorIdentity, CreatorAccessorID string
+}
+
+// revokeView is the confirmation a revocation in one action asks for: what it
+// names, and the tokens it would revoke.
+type revokeView struct {
+	store.Revocation
+	Tokens []tokenRow
+}
+
+// revocationOf reads a revocation in one action from the fields of a query or
+// a form.
+func revocationOf(v url.Values) store.Revocation {
+	return store.Revocation{SessionsOf: v.Get("sessions_of"), CreatorIdentity: v.Get("creator_identity"), CreatorAccessorID: v.Get("creator")}
 }
 
 type policyRow struct {
@@ -116,6 +132,7 @@ type adminData struct {
 	Expiry   []expiryChoice
 	Default  string
 	Created  *createdToken
+	Revoke   *revokeView // the tokens a revocation in one action would revoke, to confirm
 
 	// SessionSecret is the secret of the session token of this request, to copy
 	// into the command line. Empty for any other token.
@@ -168,7 +185,12 @@ func (s *server) tokenView(t store.ACLToken) selfView {
 	}
 }
 
-// adminView builds the page for the subject of the request.
+func (s *server) tokenRow(t store.ACLToken) tokenRow {
+	return tokenRow{selfView: s.tokenView(t), Identity: t.Identity, CreatorIdentity: t.CreatorIdentity, CreatorAccessorID: t.CreatorAccessorID}
+}
+
+// adminView builds the page for the subject of the request. A query that names
+// a revocation in one action adds what it would revoke, and revokes nothing.
 func (s *server) adminView(r *http.Request) (adminData, error) {
 	sub := subjectOf(r.Context())
 	data := adminData{
@@ -186,13 +208,25 @@ func (s *server) adminView(r *http.Request) (adminData, error) {
 	if err != nil {
 		return data, err
 	}
-	now := s.now()
 	for _, t := range tokens {
 		if t.Origin == store.OriginLogin && !data.Sessions {
 			data.HiddenSessions++
 			continue
 		}
-		data.Tokens = append(data.Tokens, tokenRow{selfView: s.tokenView(t), Expired: !t.ExpiresAt.IsZero() && !now.Before(t.ExpiresAt)})
+		data.Tokens = append(data.Tokens, s.tokenRow(t))
+	}
+	if rev := revocationOf(r.URL.Query()); rev != (store.Revocation{}) {
+		if err := checkRevocation(rev); err != nil {
+			return data, err
+		}
+		taken, err := s.access.TokensToRevoke(ctx, rev)
+		if err != nil {
+			return data, err
+		}
+		data.Revoke = &revokeView{Revocation: rev}
+		for _, t := range taken {
+			data.Revoke.Tokens = append(data.Revoke.Tokens, s.tokenRow(t))
+		}
 	}
 	policies, err := s.access.ACLPolicies(ctx)
 	if err != nil {
@@ -225,11 +259,15 @@ func (s *server) adminView(r *http.Request) (adminData, error) {
 // adminPage is GET /admin.
 func (s *server) adminPage(w http.ResponseWriter, r *http.Request) {
 	data, err := s.adminView(r)
-	if err != nil {
+	var bad invalidInput
+	switch {
+	case errors.As(err, &bad):
+		s.badRequest(w, r, "Check what to revoke", bad.Error()+".")
+	case err != nil:
 		s.serverError(w, r, "build the administration page", err)
-		return
+	default:
+		s.render(w, r, "admin", data)
 	}
-	s.render(w, r, "admin", data)
 }
 
 // policyPage is GET /admin/policies/{name}: edit an ACL policy.
@@ -407,6 +445,25 @@ func (s *server) revokeTokenForm(w http.ResponseWriter, r *http.Request) {
 		s.notFoundMessage(w, r, "This token does not exist: someone revoked it already.")
 	default:
 		s.serverError(w, r, "revoke a token", err)
+	}
+}
+
+// revokeTokensForm is POST /admin/tokens/revoke: the revocation in one action
+// that the administration page showed and someone confirmed.
+func (s *server) revokeTokensForm(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.badRequest(w, r, "Check the form", "The form could not be read.")
+		return
+	}
+	_, err := s.revokeTokens(r.Context(), subjectOf(r.Context()), revocationOf(r.PostForm))
+	var bad invalidInput
+	switch {
+	case errors.As(err, &bad):
+		s.badRequest(w, r, "Check what to revoke", bad.Error()+".")
+	case err != nil:
+		s.serverError(w, r, "revoke tokens", err)
+	default:
+		http.Redirect(w, r, s.basePath+"/admin", http.StatusSeeOther)
 	}
 }
 

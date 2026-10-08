@@ -414,6 +414,43 @@
         }
       }
     },
+    "/api/acl/tokens/revoke-sessions": {
+      "post": {
+        "summary": "Revoke every session of a person",
+        "operationId": "revokeACLSessions",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["identity"], "properties": { "identity": { "type": "string", "description": "The identity of one of the person's sessions." } } } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Revoked" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/tokens/revoke-created": {
+      "post": {
+        "summary": "Revoke every token a person or a token created, and the tokens those created",
+        "operationId": "revokeACLTokensCreated",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "Set one of the two.", "properties": {
+            "creator_identity": { "type": "string", "description": "The identity of a person." },
+            "creator_accessor_id": { "type": "string", "description": "The accessor ID of a token, bootstrap for the bootstrap token." }
+          } } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Revoked" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/acl/tokens/{accessor_id}": {
       "get": {
         "summary": "One token",
@@ -509,6 +546,10 @@
       "ServerError": {
         "description": "Nops hit an error and logged it.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Revoked": {
+        "description": "The accessor IDs of the tokens revoked, newest first; none is not an error.",
+        "content": { "application/json": { "schema": { "type": "object", "required": ["revoked"], "properties": { "revoked": { "type": "array", "items": { "type": "string" } } } } } }
       }
     },
     "schemas": {

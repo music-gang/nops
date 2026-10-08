@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -357,6 +358,8 @@ func TestOnlyAManagementTokenAdministers(t *testing.T) {
 		{"POST", "/api/acl/tokens", `{"name":"x"}`},
 		{"GET", "/api/acl/tokens/abc", ""},
 		{"DELETE", "/api/acl/tokens/abc", ""},
+		{"POST", "/api/acl/tokens/revoke-sessions", `{"identity":"basic:x"}`},
+		{"POST", "/api/acl/tokens/revoke-created", `{"creator_accessor_id":"bootstrap"}`},
 		{"PUT", "/api/acl/policies/x", `{"rules":"namespace \"*\" { policy = \"read\" }"}`},
 		{"DELETE", "/api/acl/policies/p", ""},
 		{"GET", "/api/acl/changes", ""},
@@ -466,6 +469,9 @@ func TestTokensExpireAndAreRevoked(t *testing.T) {
 	if rec := s.api("GET", "/api/acl/token/self", tok, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("after it expires: status %d, want 401", rec.Code)
 	}
+	if rec := s.api("GET", "/api/acl/tokens", s.boot, ""); strings.Contains(rec.Body.String(), `"short"`) {
+		t.Errorf("after it expires: still listed: %s", rec.Body)
+	}
 
 	keep := s.token(tokenBody{Name: "keep", Type: store.TokenManagement})
 	var self apiACLToken
@@ -527,7 +533,7 @@ func TestAdministrationPage(t *testing.T) {
 	mustNotContain(t, page, "New token", "New ACL policy", "Latest changes")
 	for _, c := range []struct{ method, target string }{
 		{"POST", "/admin/tokens"}, {"POST", "/admin/policies"}, {"GET", "/admin/policies/readers"},
-		{"POST", "/admin/policies/readers/delete"}, {"POST", "/admin/tokens/abc/revoke"},
+		{"POST", "/admin/policies/readers/delete"}, {"POST", "/admin/tokens/abc/revoke"}, {"POST", "/admin/tokens/revoke"},
 	} {
 		if rec := client.page(c.method, c.target, url.Values{}); rec.Code != http.StatusForbidden {
 			t.Errorf("%s %s as a client token: status %d, want 403", c.method, c.target, rec.Code)
@@ -794,4 +800,90 @@ func TestBindingRulesAreForManagementOnTheDashboard(t *testing.T) {
 		}
 	}
 	mustNotContain(t, client.get("/admin"), "New binding rule")
+}
+
+func TestRevokeInOneActionFromTheAPI(t *testing.T) {
+	s := newACLServer(t, &fakeStore{}, &fakeEngine{})
+	m := s.token(tokenBody{Name: "m", Type: store.TokenManagement})
+	var mSelf apiACLToken
+	if err := json.Unmarshal(s.api("GET", "/api/acl/token/self", m, "").Body.Bytes(), &mSelf); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(tokenBody{Name: "t", Type: store.TokenManagement})
+	if rec := s.api("POST", "/api/acl/tokens", m, string(body)); rec.Code != http.StatusCreated {
+		t.Fatalf("m creates t: status %d", rec.Code)
+	}
+	revoke := func(path, body string) (int, []string) {
+		t.Helper()
+		rec := s.api("POST", path, s.boot, body)
+		var out struct {
+			Revoked []string `json:"revoked"`
+		}
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Revoked == nil {
+				t.Fatalf("%s: body %s, want a list", path, rec.Body)
+			}
+		}
+		return rec.Code, out.Revoked
+	}
+
+	for _, bad := range []string{`{}`, `{"creator_identity":"basic:a","creator_accessor_id":"x"}`} {
+		if code, _ := revoke("/api/acl/tokens/revoke-created", bad); code != http.StatusBadRequest {
+			t.Errorf("revoke-created %s: status %d, want 400", bad, code)
+		}
+	}
+	if code, _ := revoke("/api/acl/tokens/revoke-sessions", `{}`); code != http.StatusBadRequest {
+		t.Errorf("revoke-sessions without an identity: status %d, want 400", code)
+	}
+	if code, ids := revoke("/api/acl/tokens/revoke-sessions", `{"identity":"basic:nobody"}`); code != http.StatusOK || len(ids) != 0 {
+		t.Errorf("the sessions of nobody: %d %v, want 200 and none", code, ids)
+	}
+	// What the bootstrap token created, and what those created.
+	if code, ids := revoke("/api/acl/tokens/revoke-created", `{"creator_accessor_id":"bootstrap"}`); code != http.StatusOK || len(ids) != 2 || !slices.Contains(ids, mSelf.AccessorID) {
+		t.Errorf("revoke-created bootstrap: %d %v, want m and t", code, ids)
+	}
+	if rec := s.api("GET", "/api/acl/tokens", s.boot, ""); strings.Contains(rec.Body.String(), `"name"`) {
+		t.Errorf("tokens left: %s", rec.Body)
+	}
+}
+
+func TestAdministrationConfirmsARevocationInOneAction(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := ts.page("POST", "/admin/tokens", url.Values{"name": {"ci"}, "type": {"management"}, "expires": {"30"}}); rec.Code != http.StatusOK {
+		t.Fatalf("create: status %d", rec.Code)
+	}
+	created := func() int {
+		all, _ := ts.tokens.ACLTokens(t.Context())
+		n := 0
+		for _, tok := range all {
+			if tok.Origin == store.OriginCreated {
+				n++
+			}
+		}
+		return n
+	}
+
+	mustContain(t, ts.get("/admin"), "Revoke all they created", "/admin?creator_identity=test%3acarol")
+	mustContain(t, ts.get("/admin?sessions=1"), "Revoke their sessions", "/admin?sessions_of=test%3acarol")
+	mustContain(t, ts.get("/admin?sessions_of=test:carol"), "Revoke every session of", "This revokes 1 token:")
+	// Asking shows what would go and revokes nothing.
+	page := ts.get("/admin?creator_identity=test:carol")
+	mustContain(t, page, "Revoke every token", "This revokes 1 token", "Revoke 1 token", `name="creator_identity" value="test:carol"`, "Cancel")
+	if created() != 1 {
+		t.Fatal("the preview revoked the token")
+	}
+	mustContain(t, ts.get("/admin?creator=nobody"), "No token to revoke")
+	if rec := ts.page("GET", "/admin?sessions_of=a&creator=b", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("two subjects: status %d, want 400", rec.Code)
+	}
+
+	if rec := ts.page("POST", "/admin/tokens/revoke", url.Values{"creator_identity": {"test:carol"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("confirm: status %d, body %s", rec.Code, rec.Body)
+	}
+	if created() != 0 {
+		t.Error("the confirmed revocation left the token")
+	}
+	if rec := ts.page("POST", "/admin/tokens/revoke", url.Values{}); rec.Code != http.StatusBadRequest {
+		t.Errorf("nothing named: status %d, want 400", rec.Code)
+	}
 }

@@ -131,8 +131,8 @@ func (s *server) Done(w http.ResponseWriter, r *http.Request, p Person, next str
 		}
 	}
 
-	if _, err := s.access.DeleteExpiredSessions(ctx); err != nil {
-		s.log.WarnContext(ctx, "login: delete the expired sessions", "error", err) // they stay unusable; the next login tries again
+	if _, err := s.access.DeleteExpiredTokens(ctx); err != nil {
+		s.log.WarnContext(ctx, "login: delete the expired tokens", "error", err) // they stay unusable; the next login tries again
 	}
 	t := store.ACLToken{
 		Name: p.Username, Type: store.TokenClient, Policies: granted.Policies, ACL: s.aclOn,

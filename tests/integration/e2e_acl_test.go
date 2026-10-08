@@ -129,6 +129,19 @@ func TestE2EACLBootstrapTokenAdministersAndClientTokenIsLimited(t *testing.T) {
 	if !decided {
 		t.Errorf("no event for the decision in %+v", events)
 	}
+
+	// A person removed, a bootstrap token leaked: each is one action.
+	if out, errOut, err := nops(bootstrap, "acl", "token", "delete-sessions", "-yes", "basic:"+e2eUser); err != nil || !strings.Contains(out, "revoked ") {
+		t.Fatalf("acl token delete-sessions: %v, stdout %q\n%s", err, out, errOut)
+	}
+	if out, errOut, err := nops(bootstrap, "acl", "token", "delete-created", "-yes", "-creator", "bootstrap"); err != nil || !strings.Contains(out, "revoked ") {
+		t.Fatalf("acl token delete-created: %v, stdout %q\n%s", err, out, errOut)
+	}
+	for name, tok := range map[string]string{"the session": session, "the client token": client} {
+		if _, errOut, err := nops(tok, "acl", "token", "self"); err == nil || !strings.Contains(errOut, "401") {
+			t.Errorf("%s after the revocation: err %v, stderr %q, want a 401", name, err, errOut)
+		}
+	}
 }
 
 // TestE2EACLRefusesToStartWithoutABootstrapToken: -acl is not a switch to flip

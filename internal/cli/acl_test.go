@@ -173,8 +173,8 @@ func TestACLGroupsNameTheirSubcommands(t *testing.T) {
 		{[]string{"acl", "frobnicate"}, "acl takes a subcommand: policy, binding-rule, token"},
 		{[]string{"acl", "policy"}, "acl policy takes a subcommand: list, info, apply, delete"},
 		{[]string{"acl", "binding-rule"}, "acl binding-rule takes a subcommand: list, info, create, update, delete"},
-		{[]string{"acl", "token"}, "acl token takes a subcommand: list, info, create, delete, self"},
-		{[]string{"acl", "token", "frobnicate"}, "acl token takes a subcommand: list, info, create, delete, self"},
+		{[]string{"acl", "token"}, "acl token takes a subcommand: list, info, create, delete, delete-sessions, delete-created, self"},
+		{[]string{"acl", "token", "frobnicate"}, "acl token takes a subcommand: list, info, create, delete, delete-sessions, delete-created, self"},
 	} {
 		code, _, errOut := run(t, nil, "", tt.args...)
 		if code != 2 || !strings.Contains(errOut, tt.want) {
@@ -223,5 +223,49 @@ func TestBindingRuleRefusedByTheServerShowsWhy(t *testing.T) {
 	code, out, errOut := run(t, envFor(addr), "", "acl", "binding-rule", "create", "-auth-method", "oidc", "-bind-type", "management", "-selector", "value.nope == 1")
 	if code != 1 || out != "" || !strings.Contains(errOut, "is not a claim") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+}
+
+func TestTokenRevocationsInOneActionAskAndPrintWhatWent(t *testing.T) {
+	s, addr := newStub(t, map[string]answer{
+		"POST /api/acl/tokens/revoke-sessions": {200, `{"revoked":["01A","01B"]}`},
+		"POST /api/acl/tokens/revoke-created":  {200, `{"revoked":[]}`},
+	})
+	code, out, errOut := run(t, envFor(addr), "y\n", "acl", "token", "delete-sessions", "basic:alice")
+	if code != 0 || out != "revoked 01A\nrevoked 01B\n" || !strings.Contains(errOut, "Revoke every session of basic:alice?") {
+		t.Fatalf("delete-sessions: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if got := s.seen[0].body; got != `{"identity":"basic:alice"}` {
+		t.Errorf("body = %s", got)
+	}
+
+	s.seen = nil
+	if code, _, errOut := run(t, envFor(addr), "", "acl", "token", "delete-created", "-creator", "bootstrap"); code != 1 || !strings.Contains(errOut, "aborted") || len(s.seen) != 0 {
+		t.Errorf("no answer: exit %d, stderr %q, %d requests; want nothing sent", code, errOut, len(s.seen))
+	}
+	code, out, _ = run(t, envFor(addr), "", "acl", "token", "delete-created", "-yes", "-creator", "bootstrap")
+	if code != 0 || out != "No token to revoke.\n" || s.seen[0].body != `{"creator_accessor_id":"bootstrap"}` {
+		t.Errorf("-creator: exit %d, stdout %q, requests %+v", code, out, s.seen)
+	}
+	s.seen = nil
+	if code, _, _ := run(t, envFor(addr), "", "acl", "token", "delete-created", "-yes", "-creator-identity", "basic:alice"); code != 0 || s.seen[0].body != `{"creator_identity":"basic:alice"}` {
+		t.Errorf("-creator-identity: exit %d, requests %+v", code, s.seen)
+	}
+	for _, args := range [][]string{{}, {"-creator", "x", "-creator-identity", "y"}} {
+		if code, _, errOut := run(t, envFor(addr), "", append([]string{"acl", "token", "delete-created", "-yes"}, args...)...); code != 2 || !strings.Contains(errOut, "set one of") {
+			t.Errorf("delete-created %v: exit %d, stderr %q, want a usage error", args, code, errOut)
+		}
+	}
+}
+
+func TestTokenInfoShowsWhoToRevoke(t *testing.T) {
+	session := `{"accessor_id":"01SES","name":"alice","type":"client","origin":"login","identity":"basic:alice","policies":[],"created_at":"2026-10-05T10:00:00Z","creator_name":"alice","creator_identity":"basic:alice"}`
+	created := `{"accessor_id":"01CI","name":"ci","type":"management","origin":"created","policies":[],"created_at":"2026-10-05T10:00:00Z","creator_accessor_id":"01SES","creator_name":"alice","creator_identity":"basic:alice"}`
+	_, addr := newStub(t, map[string]answer{"GET /api/acl/tokens/01SES": {200, session}, "GET /api/acl/tokens/01CI": {200, created}})
+	if _, out, _ := run(t, envFor(addr), "", "acl", "token", "info", "01SES"); !strings.Contains(out, "Identity:     basic:alice") || !strings.Contains(out, "Created by:   alice\n") {
+		t.Errorf("a session: %q", out)
+	}
+	if _, out, _ := run(t, envFor(addr), "", "acl", "token", "info", "01CI"); !strings.Contains(out, "Created by:   alice (basic:alice)") {
+		t.Errorf("a created token: %q", out)
 	}
 }
