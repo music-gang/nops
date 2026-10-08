@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -29,23 +30,28 @@ type BasicAuthOptions struct {
 	// lines starting with "#" are ignored). Generate a line with, for
 	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users--auth-modebasic).
 	UsersFile string
-	Log       *slog.Logger
+	// GroupsFile, optional, holds one "group: user1 user2" per line, in
+	// Apache's AuthGroupFile format. Every member must be in UsersFile.
+	GroupsFile string
+	Log        *slog.Logger
 }
 
 // BasicAuth is the local-users auth method: no external identity provider, an
 // operator-maintained file of usernames and bcrypt hashes instead. It
 // implements Authenticator. See docs/dashboard.md#local-users--auth-modebasic.
 type BasicAuth struct {
-	users   map[string]string // username -> bcrypt hash
-	dummy   string            // see timingSafetyPassword
+	users   map[string]string   // username -> bcrypt hash
+	groups  map[string][]string // username -> sorted groups
+	dummy   string              // see timingSafetyPassword
 	xorigin *http.CrossOriginProtection
 	host    LoginHost
 	log     *slog.Logger
 }
 
-// NewBasicAuth creates the local-users login. The users file is read once,
-// like every other nops secret: a bad path, a malformed line or a hash that
-// does not parse as bcrypt is a startup error naming the line.
+// NewBasicAuth creates the local-users login. The users file and the groups
+// file are read once, like every other nops secret: a bad path, a malformed
+// line, a hash that does not parse as bcrypt or a group member that is not a
+// user is a startup error naming the line.
 func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if o.UsersFile == "" {
 		return nil, errors.New("web: UsersFile is required")
@@ -57,6 +63,12 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if len(users) == 0 {
 		return nil, fmt.Errorf("web: %s holds no user", o.UsersFile)
 	}
+	var groups map[string][]string
+	if o.GroupsFile != "" {
+		if groups, err = parseGroupsFile(o.GroupsFile, users); err != nil {
+			return nil, fmt.Errorf("web: %w", err)
+		}
+	}
 	dummy, err := bcrypt.GenerateFromPassword([]byte(timingSafetyPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
@@ -65,7 +77,7 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &BasicAuth{users: users, dummy: string(dummy), xorigin: http.NewCrossOriginProtection(), log: log}, nil
+	return &BasicAuth{users: users, groups: groups, dummy: string(dummy), xorigin: http.NewCrossOriginProtection(), log: log}, nil
 }
 
 // parseUsersFile reads "username:bcrypt-hash" lines. A username may not
@@ -104,6 +116,47 @@ func parseUsersFile(path string) (map[string]string, error) {
 	return users, nil
 }
 
+// parseGroupsFile reads "group: user1 user2" lines and returns the groups of
+// each user, sorted. A group may repeat, its members adding up, as in Apache.
+// A member that is not in users is an error: a stale line would otherwise
+// give a new user with an old name the group's access without a word.
+func parseGroupsFile(path string, users map[string]string) (map[string][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	groups := make(map[string][]string)
+	sc := bufio.NewScanner(f)
+	for n := 1; sc.Scan(); n++ {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		group, rest, ok := strings.Cut(line, ":")
+		group = strings.TrimSpace(group)
+		members := strings.Fields(rest)
+		if !ok || group == "" || len(members) == 0 {
+			return nil, fmt.Errorf(`%s:%d: expected "group: user1 user2"`, path, n)
+		}
+		for _, m := range members {
+			if _, known := users[m]; !known {
+				return nil, fmt.Errorf("%s:%d: %s: member of %s is not in the users file", path, n, m, group)
+			}
+			groups[m] = append(groups[m], group)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	for u, g := range groups {
+		slices.Sort(g)
+		groups[u] = slices.Compact(g)
+	}
+	return groups, nil
+}
+
 // Method implements Authenticator.
 func (b *BasicAuth) Method() string { return "basic" }
 
@@ -114,8 +167,8 @@ func (b *BasicAuth) Register(mux *http.ServeMux, host LoginHost) {
 	mux.Handle("POST "+basicPath, b.xorigin.Handler(http.HandlerFunc(b.login)))
 }
 
-// login checks the submitted credentials and, on success, hands the username to
-// the server as the only claim there is.
+// login checks the submitted credentials and, on success, hands the username
+// and the groups of the groups file to the server as the claims.
 func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if err := r.ParseForm(); err != nil {
@@ -138,6 +191,6 @@ func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 	b.host.Done(w, r, Person{
 		Identity: "basic:" + username,
 		Username: username,
-		Claims:   acl.Claims{Username: username},
+		Claims:   acl.Claims{Username: username, Groups: b.groups[username]},
 	}, next)
 }

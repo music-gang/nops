@@ -92,6 +92,7 @@ Limit who can log in at the identity provider, or with
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-users-file` | `NOPS_USERS_FILE` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users--auth-modebasic). |
+| `-groups-file` | `NOPS_GROUPS_FILE` | none | File of [`group: user1 user2` lines](dashboard.md#local-users--auth-modebasic). |
 
 ## Access control
 

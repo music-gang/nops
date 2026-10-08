@@ -144,6 +144,7 @@ func TestLoadEveryOption(t *testing.T) {
 	bootstrap := secret.New()
 	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
+	groupsFile := writeFile(t, "groups", "ops: alice\n")
 
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
@@ -249,6 +250,7 @@ func TestLoadEveryOption(t *testing.T) {
 	basicWant := commonWant
 	basicWant.AuthMode = "basic"
 	basicWant.UsersFile = usersFile
+	basicWant.GroupsFile = groupsFile
 
 	variants := []struct {
 		name   string
@@ -263,6 +265,7 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-client-id":          "nops-dashboard",
 				"oidc-client-secret-file": oidcSecret,
 				"users-file":              "",
+				"groups-file":             "",
 			},
 			want: oidcWant,
 		},
@@ -274,6 +277,7 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-client-id":          "",
 				"oidc-client-secret-file": "",
 				"users-file":              usersFile,
+				"groups-file":             groupsFile,
 			},
 			want: basicWant,
 		},
@@ -719,6 +723,11 @@ func TestLoadAuthMode(t *testing.T) {
 			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
 			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
 		}, "-users-file is only used with -auth-mode=basic"},
+		{"oidc with groups-file set", map[string]string{
+			"NOPS_AUTH_MODE": "oidc", "NOPS_GROUPS_FILE": usersFile,
+			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
+			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
+		}, "-groups-file is only used with -auth-mode=basic"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

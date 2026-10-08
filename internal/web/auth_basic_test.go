@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,9 +63,16 @@ func newBasicAppAt(t *testing.T, usersContent, basePath string) *basicApp {
 // newBasicAppWith also says whether the ACL is on.
 func newBasicAppWith(t *testing.T, usersContent, basePath string, aclOn bool) *basicApp {
 	t.Helper()
+	return newBasicAppFrom(t, BasicAuthOptions{UsersFile: writeUsersFile(t, usersContent)}, basePath, aclOn)
+}
+
+// newBasicAppFrom takes the options of the login, a logger aside.
+func newBasicAppFrom(t *testing.T, o BasicAuthOptions, basePath string, aclOn bool) *basicApp {
+	t.Helper()
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewTextHandler(logs, nil))
-	auth, err := NewBasicAuth(BasicAuthOptions{UsersFile: writeUsersFile(t, usersContent), Log: log})
+	o.Log = log
+	auth, err := NewBasicAuth(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +151,69 @@ func TestParseUsersFileIgnoresBlankLinesAndComments(t *testing.T) {
 	}
 	if len(users) != 1 || users["alice"] != hash {
 		t.Errorf("users = %+v", users)
+	}
+}
+
+func writeGroupsFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "groups")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestParseGroupsFile(t *testing.T) {
+	users := map[string]string{"alice": "h", "bob": "h", "carol": "h"}
+
+	tests := []struct {
+		name    string
+		content string
+		want    map[string][]string
+		wantErr string
+	}{
+		{"one group", "ops: alice bob\n", map[string][]string{"alice": {"ops"}, "bob": {"ops"}}, ""},
+		{"blank lines and comments", "\n# a comment\n  \nops: alice\n# trailing\n", map[string][]string{"alice": {"ops"}}, ""},
+		{"a group on two lines adds up", "ops: alice\nops: bob alice\n", map[string][]string{"alice": {"ops"}, "bob": {"ops"}}, ""},
+		{"groups of a user are sorted", "ops: alice\ndev: alice\n", map[string][]string{"alice": {"dev", "ops"}}, ""},
+		{"extra spaces", "  ops :  alice   bob  \n", map[string][]string{"alice": {"ops"}, "bob": {"ops"}}, ""},
+		{"nobody in a group", "", map[string][]string{}, ""},
+		{"no colon", "ops alice\n", nil, `groups:1: expected "group: user1 user2"`},
+		{"no members", "ops:\n", nil, `groups:1: expected "group: user1 user2"`},
+		{"no group name", ": alice\n", nil, `groups:1: expected "group: user1 user2"`},
+		{"unknown member", "ops: alice\ndev: dave\n", nil, "groups:2: dave: member of dev is not in the users file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeGroupsFile(t, tt.content)
+			got, err := parseGroupsFile(path, users)
+			if tt.wantErr != "" {
+				if err == nil || !strings.HasSuffix(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one ending %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("groups = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := parseGroupsFile("/does/not/exist", users); err == nil {
+		t.Error("a missing groups file: want an error")
+	}
+}
+
+func TestNewBasicAuthRefusesAGroupsFileWithAnUnknownMember(t *testing.T) {
+	_, err := NewBasicAuth(BasicAuthOptions{
+		UsersFile:  writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\n"),
+		GroupsFile: writeGroupsFile(t, "ops: bob\n"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "bob") {
+		t.Errorf("err = %v, want one naming bob", err)
 	}
 }
 
