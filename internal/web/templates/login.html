@@ -14,7 +14,7 @@
   <h1 class="login__title">Sign in to Nops</h1>
   {{if .Error}}<p class="login__error">{{.Error}}</p>{{end}}
   {{if eq .Method "basic"}}
-  <form class="login__form" method="post" action="{{.Base}}/auth/basic">
+  <form class="login__box" method="post" action="{{.Base}}/auth/basic">
     <input type="hidden" name="next" value="{{.Next}}">
     <label class="login__field">Username
       <input type="text" name="username" autocomplete="username" autofocus required>
@@ -25,14 +25,15 @@
     <button type="submit" class="btn btn--primary">Log in</button>
   </form>
   {{else}}
-  <p class="login__form"><a class="btn btn--primary" href="{{.Base}}/auth/oidc?next={{.Next | urlquery}}">Log in with your identity provider</a></p>
+  <div class="login__box"><a class="btn btn--primary" href="{{.Base}}/auth/oidc?next={{.Next | urlquery}}">Log in with your identity provider</a></div>
   {{end}}
-  <form class="login__form" method="post" action="{{.Base}}/auth/token">
+  <p class="login__or"><span>or</span></p>
+  <form class="login__box" method="post" action="{{.Base}}/auth/token">
     <input type="hidden" name="next" value="{{.Next}}">
-    <label class="login__field">Or paste a token
+    <label class="login__field">Token
       <input type="password" name="token" autocomplete="off" required>
     </label>
-    <button type="submit" class="btn">Use token</button>
+    <button type="submit" class="btn">Use a token</button>
   </form>
 </main>
 </body>

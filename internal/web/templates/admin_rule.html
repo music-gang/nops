@@ -1,26 +1,115 @@
+{{define "admin_rules"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <h2 class="subhead__title">Binding rules</h2>
+    <p class="subhead__desc">What a login gets: Nops adds up every rule that matches, and a login that no rule matches fails.</p>
+  </div>
+  <a class="btn btn--primary" href="{{.Base}}/admin/binding-rules/new">New binding rule</a>
+</div>
+
+<div class="box">
+  {{if .Rules}}
+  <table class="table">
+    <thead>
+      <tr><th>Binding rule</th><th class="col-type">Auth method</th><th class="hide-sm">Selector</th><th>Binds</th><th class="hide-sm col-when">Modified</th></tr>
+    </thead>
+    <tbody>
+      {{range .Rules}}
+      <tr>
+        <td class="cell-ellipsis"><a href="{{$.Base}}/admin/binding-rules/{{.ID}}/edit">{{if .Description}}{{.Description}}{{else}}<span class="mono">{{.ID}}</span>{{end}}</a></td>
+        <td><span class="label">{{.AuthMethod}}</span></td>
+        <td class="hide-sm cell-ellipsis mono" title="{{.Selector}}">{{if .Selector}}{{.Selector}}{{else}}<span class="muted">every login</span>{{end}}</td>
+        <td class="cell-ellipsis">{{.Binds}}</td>
+        <td class="hide-sm muted">{{template "time" .Modified}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="blankslate">
+    <p class="blankslate__title">No binding rule yet</p>
+    <p class="muted">{{if .ACLOn}}No login gets a token.{{else}}The ACL is off, so every login gets full control.{{end}}</p>
+    <a class="btn btn--primary" href="{{.Base}}/admin/binding-rules/new">New binding rule</a>
+  </div>
+  {{end}}
+</div>
+{{template "admin_close" .}}
+{{end}}
+
 {{define "admin_rule"}}
-{{template "chrome_head" .}}
-<div class="pagehead">
-  <h1 class="pagehead__title">Binding rule {{.Form.ID}}</h1>
-  <p class="pagehead__text"><a href="{{.Base}}/admin">Back to Administration</a></p>
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <p class="crumbs"><a href="{{.Base}}/admin/binding-rules">Binding rules</a></p>
+    <h2 class="subhead__title">{{if .Form.Existing}}{{if .Form.Description}}{{.Form.Description}}{{else}}<span class="mono">{{.Form.ID}}</span>{{end}}{{else}}New binding rule{{end}}</h2>
+  </div>
 </div>
 
 {{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
 
-<section class="box">
-  <form class="box__body" method="post" action="{{.Base}}/admin/binding-rules">
-    <input type="hidden" name="id" value="{{.Form.ID}}">
-    <input type="text" name="description" maxlength="200" value="{{.Form.Description}}" placeholder="Description" aria-label="Description" class="input">
-    <select name="auth_method" aria-label="Auth method" class="input">
+{{if .Delete}}
+<section class="box box--danger">
+  <header class="box__header"><h3 class="box__title">Delete the binding rule {{if .Form.Description}}“{{.Form.Description}}”{{else}}<span class="mono">{{.Form.ID}}</span>{{end}}?</h3></header>
+  <div class="box__body">
+    <p>From the next login, the people it matches no longer get what it binds. Their sessions keep it until they end.</p>
+    <form method="post" action="{{.Base}}/admin/binding-rules/{{.Form.ID}}/delete" class="form__actions">
+      <button type="submit" class="btn btn--danger-solid">Delete</button>
+      <a href="{{.Base}}/admin/binding-rules/{{.Form.ID}}/edit" class="btn">Cancel</a>
+    </form>
+  </div>
+</section>
+{{else}}
+<form class="form" method="post" action="{{.Base}}/admin/binding-rules">
+  <input type="hidden" name="id" value="{{.Form.ID}}">
+
+  <div class="field">
+    <label class="field__label" for="rule-description">Description <span class="field__optional">optional</span></label>
+    <input type="text" id="rule-description" name="description" maxlength="200" value="{{.Form.Description}}" class="input">
+    <p class="field__caption">What the rule is for, for example “ops get everything”.</p>
+  </div>
+
+  <div class="field">
+    <label class="field__label" for="rule-method">Auth method</label>
+    <select id="rule-method" name="auth_method" class="input input--auto">
       {{range .Methods}}<option value="{{.}}"{{if eq . $.Form.AuthMethod}} selected{{end}}>{{.}}</option>{{end}}
     </select>
-    <input type="text" name="selector" maxlength="1024" value="{{.Form.Selector}}" placeholder="Selector; empty matches every login" aria-label="Selector" class="input mono">
-    <select name="bind" aria-label="Binds" class="input">
-      <option value="management"{{if eq .Form.Bind "management"}} selected{{end}}>binds management: everything</option>
-      {{range .Policies}}<option value="policy:{{.Name}}"{{if eq $.Form.Bind (printf "policy:%s" .Name)}} selected{{end}}>binds ACL policy {{.Name}}</option>{{end}}
+    <p class="field__caption">The logins it applies to.</p>
+  </div>
+
+  <div class="field">
+    <label class="field__label" for="rule-selector">Selector <span class="field__optional">optional</span></label>
+    <input type="text" id="rule-selector" name="selector" maxlength="1024" value="{{.Form.Selector}}" class="input input--wide mono" spellcheck="false" placeholder='"ops" in list.groups'>
+    <p class="field__caption">A go-bexpr expression on the claims of the login, like <span class="mono">list.groups</span> or <span class="mono">value.username</span>. Empty matches every login of the auth method. See <a href="https://github.com/music-gang/nops/blob/main/docs/acl.md#binding-rules">binding rules</a>.</p>
+  </div>
+
+  <div class="field">
+    <label class="field__label" for="rule-bind">Binds</label>
+    <select id="rule-bind" name="bind" class="input input--auto">
+      <option value="management"{{if eq .Form.Bind "management"}} selected{{end}}>management: everything</option>
+      {{range .Policies}}<option value="policy:{{.Name}}"{{if eq $.Form.Bind (printf "policy:%s" .Name)}} selected{{end}}>ACL policy {{.Name}}</option>{{end}}
     </select>
-    <button type="submit" class="btn btn--sm">Save binding rule</button>
-  </form>
+    <p class="field__caption">What a login it matches gets.</p>
+  </div>
+
+  <div class="form__actions">
+    <button type="submit" class="btn btn--primary">Save binding rule</button>
+    <a class="btn" href="{{.Base}}/admin/binding-rules">Cancel</a>
+  </div>
+</form>
+
+{{if .Form.Existing}}
+<section class="box box--danger danger-zone">
+  <header class="box__header"><h3 class="box__title">Danger zone</h3></header>
+  <div class="danger-row">
+    <div>
+      <p><strong>Delete this binding rule</strong></p>
+      <p class="muted">The people it matches no longer get what it binds, from their next login.</p>
+    </div>
+    <a class="btn btn--danger" href="{{.Base}}/admin/binding-rules/{{.Form.ID}}/edit?delete=1">Delete…</a>
+  </div>
 </section>
-{{template "chrome_foot" .}}
+{{end}}
+{{end}}
+{{template "admin_close" .}}
 {{end}}

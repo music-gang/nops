@@ -1,24 +1,104 @@
+{{define "admin_policies"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <h2 class="subhead__title">ACL policies</h2>
+    <p class="subhead__desc">What a token may do, namespace by namespace.</p>
+  </div>
+  <a class="btn btn--primary" href="{{.Base}}/admin/policies/new">New ACL policy</a>
+</div>
+
+<div class="box">
+  {{if .Policies}}
+  <table class="table">
+    <thead>
+      <tr><th class="col-name">ACL policy</th><th>Description</th><th class="hide-sm col-when">Modified</th></tr>
+    </thead>
+    <tbody>
+      {{range .Policies}}
+      <tr>
+        <td class="cell-ellipsis"><a class="mono" href="{{$.Base}}/admin/policies/{{.Name}}/edit" title="{{.Name}}">{{.Name}}</a></td>
+        <td class="cell-ellipsis" title="{{.Description}}">{{if .Description}}{{.Description}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="hide-sm muted">{{template "time" .Modified}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="blankslate">
+    <p class="blankslate__title">No ACL policy yet</p>
+    <p class="muted">A client token can do nothing until an ACL policy grants it something.</p>
+    <a class="btn btn--primary" href="{{.Base}}/admin/policies/new">New ACL policy</a>
+  </div>
+  {{end}}
+</div>
+{{template "admin_close" .}}
+{{end}}
+
 {{define "admin_policy"}}
-{{template "chrome_head" .}}
-<div class="pagehead">
-  <h1 class="pagehead__title">{{if .Form.Existing}}ACL policy {{.Form.Name}}{{else}}New ACL policy{{end}}</h1>
-  <p class="pagehead__text"><a href="{{.Base}}/admin">Back to Administration</a></p>
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <p class="crumbs"><a href="{{.Base}}/admin/policies">ACL policies</a></p>
+    <h2 class="subhead__title">{{if .Form.Existing}}<span class="mono">{{.Form.Name}}</span>{{else}}New ACL policy{{end}}</h2>
+  </div>
 </div>
 
 {{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
 
-<section class="box">
-  <form class="box__body" method="post" action="{{.Base}}/admin/policies">
-    {{if .Form.Existing}}
-    <input type="hidden" name="name" value="{{.Form.Name}}">
-    <input type="hidden" name="existing" value="true">
-    {{else}}
-    <input type="text" name="name" maxlength="128" required value="{{.Form.Name}}" placeholder="Name" aria-label="Name of the ACL policy" class="input">
-    {{end}}
-    <input type="text" name="description" maxlength="200" value="{{.Form.Description}}" placeholder="Description" aria-label="Description" class="input">
-    <textarea name="rules" rows="14" required aria-label="Rules" class="input mono">{{.Form.Rules}}</textarea>
-    <button type="submit" class="btn btn--sm">Save ACL policy</button>
-  </form>
+{{if .Delete}}
+<section class="box box--danger">
+  <header class="box__header"><h3 class="box__title">Delete the ACL policy <span class="mono">{{.Form.Name}}</span>?</h3></header>
+  <div class="box__body">
+    <p>Every token that carries it loses what it grants, and a binding rule that binds it grants nothing.</p>
+    <form method="post" action="{{.Base}}/admin/policies/{{.Form.Name}}/delete" class="form__actions">
+      <button type="submit" class="btn btn--danger-solid">Delete</button>
+      <a href="{{.Base}}/admin/policies/{{.Form.Name}}/edit" class="btn">Cancel</a>
+    </form>
+  </div>
 </section>
-{{template "chrome_foot" .}}
+{{else}}
+<form class="form" method="post" action="{{.Base}}/admin/policies">
+  {{if .Form.Existing}}
+  <input type="hidden" name="name" value="{{.Form.Name}}">
+  <input type="hidden" name="existing" value="true">
+  {{else}}
+  <div class="field">
+    <label class="field__label" for="policy-name">Name</label>
+    <input type="text" id="policy-name" name="name" maxlength="128" required value="{{.Form.Name}}" class="input mono">
+    <p class="field__caption">Letters, digits and -, for example “readers”. It cannot change later.</p>
+  </div>
+  {{end}}
+
+  <div class="field">
+    <label class="field__label" for="policy-description">Description <span class="field__optional">optional</span></label>
+    <input type="text" id="policy-description" name="description" maxlength="200" value="{{.Form.Description}}" class="input">
+  </div>
+
+  <div class="field">
+    <label class="field__label" for="policy-rules">Rules</label>
+    <textarea id="policy-rules" name="rules" rows="14" required class="input input--wide mono" spellcheck="false" data-editor="hcl" placeholder='namespace "*" {&#10;  policy = "read"&#10;}'>{{.Form.Rules}}</textarea>
+    <p class="field__caption">HCL, as in Nomad: a <span class="mono">namespace</span> block per namespace or glob. See <a href="https://github.com/music-gang/nops/blob/main/docs/acl.md#acl-policies">ACL policies</a>.</p>
+  </div>
+
+  <div class="form__actions">
+    <button type="submit" class="btn btn--primary">Save ACL policy</button>
+    <a class="btn" href="{{.Base}}/admin/policies">Cancel</a>
+  </div>
+</form>
+
+{{if .Form.Existing}}
+<section class="box box--danger danger-zone">
+  <header class="box__header"><h3 class="box__title">Danger zone</h3></header>
+  <div class="danger-row">
+    <div>
+      <p><strong>Delete this ACL policy</strong></p>
+      <p class="muted">Every token that carries it loses what it grants.</p>
+    </div>
+    <a class="btn btn--danger" href="{{.Base}}/admin/policies/{{.Form.Name}}/edit?delete=1">Delete…</a>
+  </div>
+</section>
+{{end}}
+{{end}}
+{{template "admin_close" .}}
 {{end}}
