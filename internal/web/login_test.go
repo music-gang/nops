@@ -432,3 +432,35 @@ func TestBasicLoginsGetWhatTheRulesBind(t *testing.T) {
 		t.Errorf("bob: status %d, session %v, want 403 and no session", rec.Code, cookie(rec, sessionCookie))
 	}
 }
+
+func TestBasicGroupsReachTheRules(t *testing.T) {
+	hash := bcryptHash(t, "s3cret")
+	ba := newBasicAppFrom(t, BasicAuthOptions{
+		UsersFile:  writeUsersFile(t, "alice:"+hash+"\nbob:"+hash+"\n"),
+		GroupsFile: writeGroupsFile(t, "ops: alice\n"),
+	}, "", true)
+	if err := ba.store.PutACLPolicy(t.Context(), store.ACLPolicy{Name: "readers", Rules: `namespace "*" { policy = "read" }`}, store.Audit{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ba.store.PutBindingRule(t.Context(), store.BindingRule{
+		AuthMethod: "basic", Selector: `"ops" in list.groups`, BindType: acl.BindPolicy, BindName: "readers",
+	}, store.Audit{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := ba.login("alice", "s3cret")
+	sess := cookie(rec, sessionCookie)
+	if rec.Code != http.StatusFound || sess == nil {
+		t.Fatalf("alice: status %d, session %v", rec.Code, sess)
+	}
+	tok, err := ba.store.ACLTokenBySecret(t.Context(), hashToken(sess.Value), true)
+	if err != nil || !slices.Equal(tok.Policies, []string{"readers"}) {
+		t.Errorf("token = %+v, %v, want one with readers", tok, err)
+	}
+
+	// bob is a user, but in no group.
+	rec = ba.login("bob", "s3cret")
+	if rec.Code != http.StatusForbidden || cookie(rec, sessionCookie) != nil {
+		t.Errorf("bob: status %d, session %v, want 403 and no session", rec.Code, cookie(rec, sessionCookie))
+	}
+}

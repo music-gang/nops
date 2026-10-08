@@ -102,7 +102,7 @@ not read and every login succeeds.
 |---|---|
 | `value.username` | The username, with either auth method. |
 | `value.sub` | The `sub` of an OIDC login, which the provider never reassigns. |
-| `list.groups` | The groups of an OIDC login. |
+| `list.groups` | The groups of an OIDC login, or of a local user in the groups file. |
 
 The selector is a [go-bexpr](https://github.com/hashicorp/go-bexpr)
 expression, as in Nomad's. An empty one matches every login of the auth
