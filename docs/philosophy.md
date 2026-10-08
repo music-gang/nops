@@ -1,7 +1,9 @@
 # Philosophy and invariants
 
 Nops is a GitOps controller for a self-hosted Nomad cluster for personal use.
-It stays small: a feature that only exists to scale doesn't get built.
+It grows with the need: a feature is built when the cluster needs it, never
+for a scale it doesn't have yet. Each choice is the right one, not just the
+simplest, and stays simple enough to grow.
 
 ## Invariants
 
