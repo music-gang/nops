@@ -80,7 +80,7 @@ A login gives you a [session token](acl.md#binding-rules) that lasts 12
 hours, restarts included. Logging out revokes it. The login page also takes a
 token you paste, such as the bootstrap token: the browser keeps it until it
 closes, and logging out forgets it without revoking it. Changes to the binding
-rules or the users file take effect at the next login.
+rules, the users file or the groups file take effect at the next login.
 
 ## Local users (`-auth-mode=basic`)
 
@@ -91,9 +91,13 @@ with:
 htpasswd -nB alice
 ```
 
-Nops reads the file at startup: restart it after you change a user. There is
-no rate limit on failed logins, so put a rate-limiting proxy in front if the
-dashboard is reachable from untrusted networks.
+`-groups-file`, optional, holds one `group: user1 user2` line per group, in
+Apache's `AuthGroupFile` format, for [binding rules](acl.md#binding-rules) on
+`list.groups`. Each member must be in the users file.
+
+Nops reads both files at startup: restart it after you change a user or a
+group. There is no rate limit on failed logins, so put a rate-limiting proxy
+in front if the dashboard is reachable from untrusted networks.
 
 ## Secret redaction
 

@@ -71,6 +71,10 @@ type Config struct {
 	// (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
 	UsersFile string
 
+	// GroupsFile is the optional "group: user1 user2" file of the local-users
+	// login (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
+	GroupsFile string
+
 	// WebhookSecret authenticates the git forge's push webhook
 	// (docs/running-nops.md#the-git-webhook): its HMAC for GitHub and Gitea, its
 	// literal value for GitLab's token header. Empty disables the endpoint.
@@ -220,6 +224,8 @@ var options = []option{
 		}},
 	{name: "users-file", usage: "file holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
 		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
+	{name: "groups-file", usage: "file holding \"group: user1 user2\" lines, the groups of the local users for binding rules (optional, only with -auth-mode=basic)",
+		set: func(c *Config, v string) (err error) { c.GroupsFile, err = readableFile(v); return }},
 
 	{name: "webhook-secret-file", usage: "file holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
 		set: func(c *Config, v string) (err error) {
@@ -502,6 +508,9 @@ func (c *Config) check() []error {
 		}
 		if c.UsersFile != "" {
 			errs = append(errs, errors.New("-users-file is only used with -auth-mode=basic"))
+		}
+		if c.GroupsFile != "" {
+			errs = append(errs, errors.New("-groups-file is only used with -auth-mode=basic"))
 		}
 	case "basic":
 		if c.UsersFile == "" {
