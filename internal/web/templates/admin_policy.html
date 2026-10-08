@@ -1,0 +1,24 @@
+{{define "admin_policy"}}
+{{template "chrome_head" .}}
+<div class="pagehead">
+  <h1 class="pagehead__title">{{if .Form.Existing}}ACL policy {{.Form.Name}}{{else}}New ACL policy{{end}}</h1>
+  <p class="pagehead__text"><a href="{{.Base}}/admin">Back to Administration</a></p>
+</div>
+
+{{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
+
+<section class="box">
+  <form class="box__body" method="post" action="{{.Base}}/admin/policies">
+    {{if .Form.Existing}}
+    <input type="hidden" name="name" value="{{.Form.Name}}">
+    <input type="hidden" name="existing" value="true">
+    {{else}}
+    <input type="text" name="name" maxlength="128" required value="{{.Form.Name}}" placeholder="Name" aria-label="Name of the ACL policy" class="input">
+    {{end}}
+    <input type="text" name="description" maxlength="200" value="{{.Form.Description}}" placeholder="Description" aria-label="Description" class="input">
+    <textarea name="rules" rows="14" required aria-label="Rules" class="input mono">{{.Form.Rules}}</textarea>
+    <button type="submit" class="btn btn--sm">Save ACL policy</button>
+  </form>
+</section>
+{{template "chrome_foot" .}}
+{{end}}

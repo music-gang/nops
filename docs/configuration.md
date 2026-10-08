@@ -28,6 +28,7 @@ inject secrets into the environment. These variables have no flag.
 |---|---|
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
+| `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` (`-acl-bootstrap-token-file`) | `NOPS_ACL_BOOTSTRAP_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 | `NOPS_METRICS_TOKEN_FILE` (`-metrics-token-file`) | `NOPS_METRICS_TOKEN` |
@@ -91,6 +92,13 @@ Set at least one allowlist.
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-users-file` | `NOPS_USERS_FILE` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users--auth-modebasic). |
+
+## Access control
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-acl` | `NOPS_ACL` | `false` | Turn on the [ACL](acl.md). Off, every token can do everything. |
+| `-acl-bootstrap-token-file` | `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` | none, **required** with `-acl` | File holding the [bootstrap token](acl.md#tokens), made by `nops secret generate`. |
 
 ## Notifications
 

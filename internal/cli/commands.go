@@ -24,6 +24,15 @@ var commands = []command{
 	{name: "resume", arg: "<job>", help: "resume a paused job", run: action(http.MethodPost, jobAction("resume"), "resumed")},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
+	{name: "acl policy list", help: "list the ACL policies", run: runPolicyList},
+	{name: "acl policy info", arg: "<name>", help: "show an ACL policy with its rules", run: runPolicyInfo},
+	{name: "acl policy apply", arg: "<name> <file>", flags: policyFlags, help: "create or replace an ACL policy from a file of rules", run: runPolicyApply},
+	{name: "acl policy delete", arg: "<name>", help: "delete an ACL policy", run: action(http.MethodDelete, policyPath, "deleted")},
+	{name: "acl token list", help: "list the tokens", run: runTokenList},
+	{name: "acl token info", arg: "<accessor-id>", help: "show a token", run: runTokenInfo},
+	{name: "acl token create", flags: tokenFlags, help: "create a token and print its secret once", run: runTokenCreate},
+	{name: "acl token delete", arg: "<accessor-id>", help: "revoke a token", run: action(http.MethodDelete, tokenPath, "revoked")},
+	{name: "acl token self", help: "show the token this client uses", run: runTokenSelf},
 	{name: "secret generate", offline: true, help: "print a new random secret, offline", run: runSecretGenerate},
 }
 

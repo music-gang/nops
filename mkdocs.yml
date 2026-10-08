@@ -70,6 +70,7 @@ nav:
       - configuration.md
       - meta-keys.md
       - dashboard.md
+      - acl.md
       - api.md
       - cli.md
       - logs-and-notifications.md
