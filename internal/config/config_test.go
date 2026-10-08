@@ -31,7 +31,6 @@ var authEnv = map[string]string{
 	"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/application/o/nops/",
 	"NOPS_OIDC_CLIENT_ID":     "nops",
 	"NOPS_OIDC_CLIENT_SECRET": "client-secret",
-	"NOPS_OIDC_ALLOWED_USERS": "alice",
 }
 
 func envOf(m map[string]string) func(string) string {
@@ -74,7 +73,6 @@ func TestLoadDefaults(t *testing.T) {
 		OIDCIssuerURL:    "https://idp.example.com/application/o/nops/",
 		OIDCClientID:     "nops",
 		OIDCClientSecret: "client-secret",
-		OIDCAllowedUsers: []string{"alice"},
 		PublicURL:        "https://nops.example.com",
 		NotifyTimeout:    10 * time.Second,
 		GitPollInterval:  time.Minute,
@@ -247,8 +245,6 @@ func TestLoadEveryOption(t *testing.T) {
 	oidcWant.OIDCClientID = "nops-dashboard"
 	oidcWant.OIDCClientSecretFile = oidcSecret
 	oidcWant.OIDCClientSecret = "oidc-client-secret"
-	oidcWant.OIDCAllowedUsers = []string{"alice", "bob@example.com"}
-	oidcWant.OIDCAllowedGroups = []string{"nops-approvers"}
 
 	basicWant := commonWant
 	basicWant.AuthMode = "basic"
@@ -266,8 +262,6 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-issuer-url":         "https://auth.example.com/application/o/nops/",
 				"oidc-client-id":          "nops-dashboard",
 				"oidc-client-secret-file": oidcSecret,
-				"oidc-allowed-users":      "alice, bob@example.com,,",
-				"oidc-allowed-groups":     "nops-approvers",
 				"users-file":              "",
 			},
 			want: oidcWant,
@@ -279,8 +273,6 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-issuer-url":         "",
 				"oidc-client-id":          "",
 				"oidc-client-secret-file": "",
-				"oidc-allowed-users":      "",
-				"oidc-allowed-groups":     "",
 				"users-file":              usersFile,
 			},
 			want: basicWant,
@@ -486,7 +478,7 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	oidc := map[string]string{
 		"NOPS_GIT_URL": repo, "NOPS_AUTH_MODE": "oidc",
 		"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-		"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
 	}
 	c, err = Load(nil, rawEnvOf(oidc), io.Discard)
 	if err != nil {
@@ -645,7 +637,6 @@ func TestLoadOIDCRequired(t *testing.T) {
 		"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/",
 		"NOPS_OIDC_CLIENT_ID":     "nops",
 		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-		"NOPS_OIDC_ALLOWED_USERS": "alice",
 	}
 	if _, err := Load(nil, rawEnvOf(full), io.Discard); err != nil {
 		t.Fatalf("full OIDC configuration: %v", err)
@@ -659,7 +650,6 @@ func TestLoadOIDCRequired(t *testing.T) {
 		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url is required with -auth-mode=oidc"},
 		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id is required with -auth-mode=oidc"},
 		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required with -auth-mode=oidc"},
-		{"allowlist", "NOPS_OIDC_ALLOWED_USERS", "nobody is allowed to log in"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -676,24 +666,28 @@ func TestLoadOIDCRequired(t *testing.T) {
 		})
 	}
 
-	// Groups alone are enough, and blanks in the lists are dropped.
-	env := map[string]string{}
-	for k, v := range full {
-		env[k] = v
-	}
-	delete(env, "NOPS_OIDC_ALLOWED_USERS")
-	env["NOPS_OIDC_ALLOWED_GROUPS"] = " nops-approvers , ,ops "
-	c, err := Load(nil, rawEnvOf(env), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(c.OIDCAllowedGroups, []string{"nops-approvers", "ops"}) || len(c.OIDCAllowedUsers) != 0 {
-		t.Errorf("groups = %q, users = %q", c.OIDCAllowedGroups, c.OIDCAllowedUsers)
+	// The allowlist options are gone: Nops refuses them and says what replaces them.
+	for name, set := range map[string]func(env map[string]string, args *[]string){
+		"flag -oidc-allowed-users":  func(_ map[string]string, args *[]string) { *args = []string{"-oidc-allowed-users", "alice"} },
+		"flag -oidc-allowed-groups": func(_ map[string]string, args *[]string) { *args = []string{"-oidc-allowed-groups=ops"} },
+		"NOPS_OIDC_ALLOWED_USERS":   func(env map[string]string, _ *[]string) { env["NOPS_OIDC_ALLOWED_USERS"] = "alice" },
+		"NOPS_OIDC_ALLOWED_GROUPS":  func(env map[string]string, _ *[]string) { env["NOPS_OIDC_ALLOWED_GROUPS"] = "ops" },
+	} {
+		env := map[string]string{}
+		for k, v := range full {
+			env[k] = v
+		}
+		var args []string
+		set(env, &args)
+		_, err := Load(args, rawEnvOf(env), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "was removed") || !strings.Contains(err.Error(), "binding rules") {
+			t.Errorf("%s: err = %v, want it removed, with what replaces it", name, err)
+		}
 	}
 
 	// The issuer is kept exactly as given: providers such as Authentik
 	// announce it with a trailing slash and the check compares the strings.
-	c, err = Load(nil, rawEnvOf(full), io.Discard)
+	c, err := Load(nil, rawEnvOf(full), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +717,7 @@ func TestLoadAuthMode(t *testing.T) {
 		{"oidc with users-file set", map[string]string{
 			"NOPS_AUTH_MODE": "oidc", "NOPS_USERS_FILE": usersFile,
 			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-			"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
 		}, "-users-file is only used with -auth-mode=basic"},
 	}
 	for _, tt := range tests {

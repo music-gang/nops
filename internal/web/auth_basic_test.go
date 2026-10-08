@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/music-gang/nops/internal/secret"
+	"github.com/music-gang/nops/internal/store"
 )
 
 func bcryptHash(t *testing.T, password string) string {
@@ -32,39 +35,54 @@ func writeUsersFile(t *testing.T, content string) string {
 	return path
 }
 
-// basicApp wires a BasicAuth to a real mux, with the same GET /page and
+// basicApp wires a BasicAuth to a whole server, with the same GET /page and
 // POST /act protected routes auth_test.go's app uses for OIDC, so the two
-// backends can be exercised the same way.
+// auth methods can be exercised the same way.
 type basicApp struct {
-	t    *testing.T
-	auth *BasicAuth
-	mux  *http.ServeMux
-	logs *syncBuffer
+	t     *testing.T
+	auth  *BasicAuth
+	srv   *server
+	mux   *http.ServeMux
+	store *store.Store
+	logs  *syncBuffer
+	aclOn bool
 }
 
-func newBasicApp(t *testing.T, usersContent string, tweak ...func(*BasicAuthOptions)) *basicApp {
+func newBasicApp(t *testing.T, usersContent string) *basicApp {
+	t.Helper()
+	return newBasicAppWith(t, usersContent, "", false)
+}
+
+// newBasicAppAt serves the dashboard under basePath.
+func newBasicAppAt(t *testing.T, usersContent, basePath string) *basicApp {
+	t.Helper()
+	return newBasicAppWith(t, usersContent, basePath, false)
+}
+
+// newBasicAppWith also says whether the ACL is on.
+func newBasicAppWith(t *testing.T, usersContent, basePath string, aclOn bool) *basicApp {
 	t.Helper()
 	logs := &syncBuffer{}
-	o := BasicAuthOptions{
-		UsersFile: writeUsersFile(t, usersContent),
-		PublicURL: "http://nops.test",
-		Log:       slog.New(slog.NewTextHandler(logs, nil)),
-	}
-	for _, f := range tweak {
-		f(&o)
-	}
-	auth, err := NewBasicAuth(o)
+	log := slog.New(slog.NewTextHandler(logs, nil))
+	auth, err := NewBasicAuth(BasicAuthOptions{UsersFile: writeUsersFile(t, usersContent), Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ba := &basicApp{t: t, auth: auth, logs: logs}
-	ba.mux = http.NewServeMux()
-	auth.Register(ba.mux)
-	ba.mux.Handle("GET /page", auth.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	st := openTestStore(t)
+	srv, err := newServer(Options{
+		Auth: auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: st, BasePath: basePath, Log: log,
+		ACL: aclOn, BootstrapToken: map[bool]string{true: secret.New()}[aclOn],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ba := &basicApp{t: t, auth: auth, srv: srv, store: st, logs: logs, aclOn: aclOn}
+	ba.mux = srv.routes()
+	ba.mux.Handle("GET /page", srv.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := UserFrom(r.Context())
 		w.Write([]byte("user=" + u))
 	})))
-	ba.mux.Handle("POST /act", auth.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ba.mux.Handle("POST /act", srv.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("done"))
 	})))
 	return ba
@@ -88,27 +106,24 @@ func (ba *basicApp) do(method, target string, body io.Reader, cookies []*http.Co
 }
 
 func (ba *basicApp) login(username, password string) *httptest.ResponseRecorder {
-	return ba.do("POST", "/auth/login", strings.NewReader(url.Values{"username": {username}, "password": {password}}.Encode()), nil)
+	return ba.do("POST", "/auth/basic", strings.NewReader(url.Values{"username": {username}, "password": {password}}.Encode()), nil)
 }
 
 // -- NewBasicAuth validation --------------------------------------------------
 
 func TestNewBasicAuthValidates(t *testing.T) {
-	valid := writeUsersFile(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	tests := []struct {
 		name string
 		opts BasicAuthOptions
 	}{
-		{"no users file", BasicAuthOptions{PublicURL: "http://nops.test", Log: log}},
-		{"missing users file", BasicAuthOptions{UsersFile: "/does/not/exist", PublicURL: "http://nops.test", Log: log}},
-		{"empty users file", BasicAuthOptions{UsersFile: writeUsersFile(t, "# just a comment\n"), PublicURL: "http://nops.test", Log: log}},
-		{"malformed line", BasicAuthOptions{UsersFile: writeUsersFile(t, "not-a-valid-line\n"), PublicURL: "http://nops.test", Log: log}},
-		{"not a bcrypt hash", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:not-bcrypt\n"), PublicURL: "http://nops.test", Log: log}},
-		{"duplicate user", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\nalice:"+bcryptHash(t, "b")+"\n"), PublicURL: "http://nops.test", Log: log}},
-		{"no public URL", BasicAuthOptions{UsersFile: valid, Log: log}},
-		{"invalid public URL", BasicAuthOptions{UsersFile: valid, PublicURL: "not a url", Log: log}},
+		{"no users file", BasicAuthOptions{Log: log}},
+		{"missing users file", BasicAuthOptions{UsersFile: "/does/not/exist", Log: log}},
+		{"empty users file", BasicAuthOptions{UsersFile: writeUsersFile(t, "# just a comment\n"), Log: log}},
+		{"malformed line", BasicAuthOptions{UsersFile: writeUsersFile(t, "not-a-valid-line\n"), Log: log}},
+		{"not a bcrypt hash", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:not-bcrypt\n"), Log: log}},
+		{"duplicate user", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\nalice:"+bcryptHash(t, "b")+"\n"), Log: log}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -156,7 +171,7 @@ func TestBasicAuthLoginFlow(t *testing.T) {
 
 func TestBasicAuthLoginKeepsNext(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
-	rec := ba.do("POST", "/auth/login", strings.NewReader(url.Values{
+	rec := ba.do("POST", "/auth/basic", strings.NewReader(url.Values{
 		"username": {"alice"}, "password": {"s3cret"}, "next": {"/deployments/d1"},
 	}.Encode()), nil)
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/deployments/d1" {
@@ -167,8 +182,8 @@ func TestBasicAuthLoginKeepsNext(t *testing.T) {
 func TestBasicAuthWrongPassword(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
 	rec := ba.login("alice", "wrong")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d, want 200 (the login form again)", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401 (the login form again)", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "Invalid username or password") {
 		t.Error("missing the generic error")
@@ -183,7 +198,7 @@ func TestBasicAuthUnknownUserGetsTheSameGenericError(t *testing.T) {
 	wrongPassword := ba.login("alice", "wrong")
 	unknownUser := ba.login("bob", "whatever")
 
-	if unknownUser.Code != http.StatusOK || cookie(unknownUser, sessionCookie) != nil {
+	if unknownUser.Code != http.StatusUnauthorized || cookie(unknownUser, sessionCookie) != nil {
 		t.Fatalf("status %d, cookie %v", unknownUser.Code, cookie(unknownUser, sessionCookie))
 	}
 	// An unknown username must read exactly like a wrong password: nothing
@@ -243,7 +258,7 @@ func TestBasicAuthIgnoresAnOffSiteNext(t *testing.T) {
 	}
 
 	form := url.Values{"username": {"alice"}, "password": {"s3cret"}, "next": {next}}
-	rec = ba.do("POST", "/auth/login", strings.NewReader(form.Encode()), nil)
+	rec = ba.do("POST", "/auth/basic", strings.NewReader(form.Encode()), nil)
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
 		t.Errorf("login: status %d, Location %q, want a redirect to /", rec.Code, rec.Header().Get("Location"))
 	}
@@ -257,6 +272,9 @@ func TestBasicAuthLogout(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !deleted(rec, sessionCookie) {
 		t.Errorf("status %d, cookie deleted %v", rec.Code, deleted(rec, sessionCookie))
 	}
+	if rec := ba.do("GET", "/page", nil, []*http.Cookie{sess}); rec.Code != http.StatusFound {
+		t.Errorf("the session after the logout: status %d, want the login redirect", rec.Code)
+	}
 }
 
 // TestBasicAuthLoginFlowWithBasePath covers docs/running-nops.md#under-a-sub-path on
@@ -265,7 +283,7 @@ func TestBasicAuthLogout(t *testing.T) {
 // stay at their bare address (the base path is stripped before the request
 // reaches the mux; see basepath_test.go for that half of the mechanism).
 func TestBasicAuthLoginFlowWithBasePath(t *testing.T) {
-	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n", func(o *BasicAuthOptions) { o.BasePath = "/nops" })
+	ba := newBasicAppAt(t, "alice:"+bcryptHash(t, "s3cret")+"\n", "/nops")
 
 	rec := ba.login("alice", "s3cret")
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/nops/" {
@@ -284,7 +302,7 @@ func TestBasicAuthLoginFlowWithBasePath(t *testing.T) {
 
 func TestBasicAuthLoginRefusesCrossOrigin(t *testing.T) {
 	ba := newBasicApp(t, "alice:"+bcryptHash(t, "s3cret")+"\n")
-	rec := ba.do("POST", "/auth/login",
+	rec := ba.do("POST", "/auth/basic",
 		strings.NewReader(url.Values{"username": {"alice"}, "password": {"s3cret"}}.Encode()),
 		nil, "Sec-Fetch-Site", "cross-site")
 	if rec.Code != http.StatusForbidden {

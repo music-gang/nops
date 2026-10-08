@@ -1,0 +1,26 @@
+{{define "admin_rule"}}
+{{template "chrome_head" .}}
+<div class="pagehead">
+  <h1 class="pagehead__title">Binding rule {{.Form.ID}}</h1>
+  <p class="pagehead__text"><a href="{{.Base}}/admin">Back to Administration</a></p>
+</div>
+
+{{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
+
+<section class="box">
+  <form class="box__body" method="post" action="{{.Base}}/admin/binding-rules">
+    <input type="hidden" name="id" value="{{.Form.ID}}">
+    <input type="text" name="description" maxlength="200" value="{{.Form.Description}}" placeholder="Description" aria-label="Description" class="input">
+    <select name="auth_method" aria-label="Auth method" class="input">
+      {{range .Methods}}<option value="{{.}}"{{if eq . $.Form.AuthMethod}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <input type="text" name="selector" maxlength="1024" value="{{.Form.Selector}}" placeholder="Selector; empty matches every login" aria-label="Selector" class="input mono">
+    <select name="bind" aria-label="Binds" class="input">
+      <option value="management"{{if eq .Form.Bind "management"}} selected{{end}}>binds management: everything</option>
+      {{range .Policies}}<option value="policy:{{.Name}}"{{if eq $.Form.Bind (printf "policy:%s" .Name)}} selected{{end}}>binds ACL policy {{.Name}}</option>{{end}}
+    </select>
+    <button type="submit" class="btn btn--sm">Save binding rule</button>
+  </form>
+</section>
+{{template "chrome_foot" .}}
+{{end}}

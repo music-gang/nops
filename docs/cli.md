@@ -7,7 +7,8 @@ dashboard's rules, and Nops records the token as the
 
 ## Configuration
 
-Get a token as for the [API](api.md#tokens).
+Get a token as for the [API](api.md#tokens), or copy your session token from
+the dashboard's *Administration* page.
 
 | Flag | Variable | Meaning |
 |---|---|---|
@@ -40,6 +41,11 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops acl policy info <name>` | Show an ACL policy with its rules. |
 | `nops acl policy apply <name> <file>` | Create or replace an ACL policy from a file of rules. |
 | `nops acl policy delete <name>` | Delete an ACL policy. |
+| `nops acl binding-rule list` | List the [binding rules](acl.md#binding-rules). |
+| `nops acl binding-rule info <id>` | Show a binding rule. |
+| `nops acl binding-rule create` | Create a binding rule. `-auth-method`, `-selector`, `-bind-type` (`policy` or `management`), `-bind-name`, and `-description` set it. |
+| `nops acl binding-rule update <id>` | Replace a binding rule, with the same flags. |
+| `nops acl binding-rule delete <id>` | Delete a binding rule. |
 | `nops acl token list` | List the tokens. |
 | `nops acl token info <accessor-id>` | Show a token. |
 | `nops acl token create` | Create a token and print its secret once. `-name`, `-type` (`client` by default, or `management`), `-policy` (repeat it), and `-expires` set it. |

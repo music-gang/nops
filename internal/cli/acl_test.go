@@ -9,15 +9,19 @@ import (
 
 const policyBody = `{"name":"readers","description":"see all","rules":"namespace \"*\" {\n  policy = \"read\"\n}\n","created_at":"2026-10-05T10:00:00Z","modified_at":"2026-10-05T10:00:00Z"}`
 
+const ruleBodyJSON = `{"id":"01RULE","description":"ops","auth_method":"oidc","selector":"\"ops\" in list.groups","bind_type":"policy","bind_name":"operator","created_at":"2026-10-05T10:00:00Z","modified_at":"2026-10-05T10:00:00Z"}`
+
 const tokenBodyJSON = `{"accessor_id":"01ABC","name":"ci","type":"client","policies":["readers"],"created_at":"2026-10-05T10:00:00Z","expires_at":"2026-11-05T10:00:00Z","creator_name":"bootstrap"}`
 
 func TestACLReadsPrintTextOrJSON(t *testing.T) {
 	answers := map[string]answer{
-		"GET /api/acl/policies":         {200, `{"acl_policies":[` + policyBody + `]}`},
-		"GET /api/acl/policies/readers": {200, policyBody},
-		"GET /api/acl/tokens":           {200, `{"tokens":[` + tokenBodyJSON + `]}`},
-		"GET /api/acl/tokens/01ABC":     {200, tokenBodyJSON},
-		"GET /api/acl/token/self":       {200, tokenBodyJSON},
+		"GET /api/acl/policies":             {200, `{"acl_policies":[` + policyBody + `]}`},
+		"GET /api/acl/policies/readers":     {200, policyBody},
+		"GET /api/acl/binding-rules":        {200, `{"binding_rules":[` + ruleBodyJSON + `]}`},
+		"GET /api/acl/binding-rules/01RULE": {200, ruleBodyJSON},
+		"GET /api/acl/tokens":               {200, `{"tokens":[` + tokenBodyJSON + `]}`},
+		"GET /api/acl/tokens/01ABC":         {200, tokenBodyJSON},
+		"GET /api/acl/token/self":           {200, tokenBodyJSON},
 	}
 	for _, tt := range []struct {
 		args []string
@@ -25,7 +29,9 @@ func TestACLReadsPrintTextOrJSON(t *testing.T) {
 	}{
 		{[]string{"acl", "policy", "list"}, []string{"NAME", "readers", "see all"}},
 		{[]string{"acl", "policy", "info", "readers"}, []string{"Name:        readers", `policy = "read"`}},
-		{[]string{"acl", "token", "list"}, []string{"ACCESSOR ID", "01ABC", "ci", "client", "readers"}},
+		{[]string{"acl", "binding-rule", "list"}, []string{"AUTH METHOD", "01RULE", "oidc", `"ops" in list.groups`, "ACL policy operator"}},
+		{[]string{"acl", "binding-rule", "info", "01RULE"}, []string{"ID:          01RULE", "Binds:       ACL policy operator"}},
+		{[]string{"acl", "token", "list"}, []string{"ACCESSOR ID", "ORIGIN", "01ABC", "ci", "client", "readers"}},
 		{[]string{"acl", "token", "info", "01ABC"}, []string{"Accessor ID:  01ABC", "Created by:   bootstrap"}},
 		{[]string{"acl", "token", "self"}, []string{"Type:         client", "ACL policies: readers"}},
 	} {
@@ -40,7 +46,7 @@ func TestACLReadsPrintTextOrJSON(t *testing.T) {
 					t.Errorf("stdout %q lacks %q", out, w)
 				}
 			}
-			// The flags go after the three words of the command and before its argument.
+			// The flags go after the words of the command and before its argument.
 			asJSON := append(append(append([]string{}, tt.args[:3]...), "-json"), tt.args[3:]...)
 			code, out, _ = run(t, envFor(addr), "", asJSON...)
 			if code != 0 || !strings.HasPrefix(strings.TrimSpace(out), "{") {
@@ -52,11 +58,15 @@ func TestACLReadsPrintTextOrJSON(t *testing.T) {
 
 func TestACLListsSayWhenEmpty(t *testing.T) {
 	_, addr := newStub(t, map[string]answer{
-		"GET /api/acl/policies": {200, `{"acl_policies":[]}`},
-		"GET /api/acl/tokens":   {200, `{"tokens":[]}`},
+		"GET /api/acl/policies":      {200, `{"acl_policies":[]}`},
+		"GET /api/acl/tokens":        {200, `{"tokens":[]}`},
+		"GET /api/acl/binding-rules": {200, `{"binding_rules":[]}`},
 	})
 	if _, out, _ := run(t, envFor(addr), "", "acl", "policy", "list"); out != "No ACL policies.\n" {
 		t.Errorf("policies: %q", out)
+	}
+	if _, out, _ := run(t, envFor(addr), "", "acl", "binding-rule", "list"); out != "No binding rules.\n" {
+		t.Errorf("binding rules: %q", out)
 	}
 	if _, out, _ := run(t, envFor(addr), "", "acl", "token", "list"); out != "No tokens.\n" {
 		t.Errorf("tokens: %q", out)
@@ -159,9 +169,10 @@ func TestACLGroupsNameTheirSubcommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"acl"}, "acl takes a subcommand: policy, token"},
-		{[]string{"acl", "frobnicate"}, "acl takes a subcommand: policy, token"},
+		{[]string{"acl"}, "acl takes a subcommand: policy, binding-rule, token"},
+		{[]string{"acl", "frobnicate"}, "acl takes a subcommand: policy, binding-rule, token"},
 		{[]string{"acl", "policy"}, "acl policy takes a subcommand: list, info, apply, delete"},
+		{[]string{"acl", "binding-rule"}, "acl binding-rule takes a subcommand: list, info, create, update, delete"},
 		{[]string{"acl", "token"}, "acl token takes a subcommand: list, info, create, delete, self"},
 		{[]string{"acl", "token", "frobnicate"}, "acl token takes a subcommand: list, info, create, delete, self"},
 	} {
@@ -169,5 +180,48 @@ func TestACLGroupsNameTheirSubcommands(t *testing.T) {
 		if code != 2 || !strings.Contains(errOut, tt.want) {
 			t.Errorf("%v: exit %d, stderr %q, want %q", tt.args, code, errOut, tt.want)
 		}
+	}
+}
+
+func TestBindingRuleCreateAndUpdateSendTheFlags(t *testing.T) {
+	s, addr := newStub(t, map[string]answer{
+		"POST /api/acl/binding-rules":          {201, ruleBodyJSON},
+		"PUT /api/acl/binding-rules/01RULE":    {200, ruleBodyJSON},
+		"DELETE /api/acl/binding-rules/01RULE": {204, ""},
+	})
+	flags := []string{"-description", "ops", "-auth-method", "oidc", "-selector", `"ops" in list.groups`, "-bind-type", "policy", "-bind-name", "operator"}
+	const want = `{"auth_method":"oidc","bind_name":"operator","bind_type":"policy","description":"ops","selector":"\"ops\" in list.groups"}`
+
+	code, out, errOut := run(t, envFor(addr), "", append([]string{"acl", "binding-rule", "create"}, flags...)...)
+	if code != 0 || !strings.Contains(out, "ID:          01RULE") {
+		t.Fatalf("create: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if got := s.seen[0]; got.method != "POST" || got.body != want {
+		t.Errorf("create request = %+v", got)
+	}
+
+	code, out, _ = run(t, envFor(addr), "", append(append([]string{"acl", "binding-rule", "update"}, flags...), "01RULE")...)
+	if code != 0 || out != "saved 01RULE\n" {
+		t.Fatalf("update: exit %d, stdout %q", code, out)
+	}
+	if got := s.seen[1]; got.method != "PUT" || got.body != want {
+		t.Errorf("update request = %+v", got)
+	}
+
+	if code, out, _ := run(t, envFor(addr), "", "acl", "binding-rule", "delete", "01RULE"); code != 0 || out != "deleted 01RULE\n" {
+		t.Errorf("delete: exit %d, stdout %q", code, out)
+	}
+
+	// The two flags a rule cannot go without.
+	if code, _, errOut := run(t, envFor(addr), "", "acl", "binding-rule", "create", "-auth-method", "oidc"); code != 2 || !strings.Contains(errOut, "-auth-method and -bind-type are required") {
+		t.Errorf("without a bind type: exit %d, stderr %q", code, errOut)
+	}
+}
+
+func TestBindingRuleRefusedByTheServerShowsWhy(t *testing.T) {
+	_, addr := newStub(t, map[string]answer{"POST /api/acl/binding-rules": {400, `{"error":"selector: \"value.nope\" is not a claim"}`}})
+	code, out, errOut := run(t, envFor(addr), "", "acl", "binding-rule", "create", "-auth-method", "oidc", "-bind-type", "management", "-selector", "value.nope == 1")
+	if code != 1 || out != "" || !strings.Contains(errOut, "is not a claim") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }

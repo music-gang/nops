@@ -4,15 +4,18 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/music-gang/nops/internal/acl"
 )
+
+// basicPath is where the login page posts a username and a password.
+const basicPath = "/auth/basic"
 
 // timingSafetyPassword is hashed once at startup (NewBasicAuth) to give
 // login a hash to compare an unknown username against: bcrypt itself is the
@@ -26,23 +29,18 @@ type BasicAuthOptions struct {
 	// lines starting with "#" are ignored). Generate a line with, for
 	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users--auth-modebasic).
 	UsersFile string
-	// PublicURL decides whether cookies are Secure, like OIDC's RedirectURL.
-	PublicURL string
-	// BasePath is the dashboard's base path (docs/running-nops.md#under-a-sub-path),
-	// "" at the domain root.
-	BasePath string
-	Log      *slog.Logger
+	Log       *slog.Logger
 }
 
-// BasicAuth is the local-users login: no external identity provider, an
+// BasicAuth is the local-users auth method: no external identity provider, an
 // operator-maintained file of usernames and bcrypt hashes instead. It
-// implements Authenticator; *session gives it Require and its share of
-// Register (logout) for free. See docs/dashboard.md#local-users--auth-modebasic.
+// implements Authenticator. See docs/dashboard.md#local-users--auth-modebasic.
 type BasicAuth struct {
-	*session
-	users map[string]string // username -> bcrypt hash
-	dummy string            // see timingSafetyPassword
-	tmpl  *template.Template
+	users   map[string]string // username -> bcrypt hash
+	dummy   string            // see timingSafetyPassword
+	xorigin *http.CrossOriginProtection
+	host    LoginHost
+	log     *slog.Logger
 }
 
 // NewBasicAuth creates the local-users login. The users file is read once,
@@ -59,23 +57,15 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if len(users) == 0 {
 		return nil, fmt.Errorf("web: %s holds no user", o.UsersFile)
 	}
-	u, err := url.Parse(o.PublicURL)
-	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("web: invalid public URL %q", o.PublicURL)
-	}
-	sess, err := newSession(u.Scheme == "https", o.BasePath, o.Log)
-	if err != nil {
-		return nil, err
-	}
 	dummy, err := bcrypt.GenerateFromPassword([]byte(timingSafetyPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
-	tmpl, err := parseTemplates()
-	if err != nil {
-		return nil, fmt.Errorf("web: %w", err)
+	log := o.Log
+	if log == nil {
+		log = slog.Default()
 	}
-	return &BasicAuth{session: sess, users: users, dummy: string(dummy), tmpl: tmpl}, nil
+	return &BasicAuth{users: users, dummy: string(dummy), xorigin: http.NewCrossOriginProtection(), log: log}, nil
 }
 
 // parseUsersFile reads "username:bcrypt-hash" lines. A username may not
@@ -114,36 +104,18 @@ func parseUsersFile(path string) (map[string]string, error) {
 	return users, nil
 }
 
-// Register adds the local-users login routes to mux, on top of the shared
-// ones (POST /auth/logout).
-func (b *BasicAuth) Register(mux *http.ServeMux) {
-	b.session.Register(mux)
-	mux.HandleFunc("GET "+loginPath, b.loginForm)
-	mux.Handle("POST "+loginPath, b.xorigin.Handler(http.HandlerFunc(b.login)))
+// Method implements Authenticator.
+func (b *BasicAuth) Method() string { return "basic" }
+
+// Register adds the local-users route to mux: POST /auth/basic, which the form
+// of the login page posts to.
+func (b *BasicAuth) Register(mux *http.ServeMux, host LoginHost) {
+	b.host = host
+	mux.Handle("POST "+basicPath, b.xorigin.Handler(http.HandlerFunc(b.login)))
 }
 
-// loginPageData is what the login_basic template needs.
-type loginPageData struct {
-	Error string
-	Next  string
-	Base  string // the dashboard's base path (docs/running-nops.md#under-a-sub-path)
-}
-
-func (b *BasicAuth) loginForm(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
-	b.renderLogin(w, "", safeNext(r.URL.Query().Get("next")))
-}
-
-func (b *BasicAuth) renderLogin(w http.ResponseWriter, errMsg, next string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := b.tmpl.ExecuteTemplate(w, "login_basic", loginPageData{Error: errMsg, Next: next, Base: b.base}); err != nil {
-		b.log.Error("render login page", "error", err)
-	}
-}
-
-// login checks the submitted credentials and, on success, starts a session
-// exactly like the OIDC callback does: the actor is the username as is, no
-// claims to map.
+// login checks the submitted credentials and, on success, hands the username to
+// the server as the only claim there is.
 func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if err := r.ParseForm(); err != nil {
@@ -160,13 +132,12 @@ func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil || !known {
 		b.log.WarnContext(r.Context(), "login: invalid credentials", "user", username)
-		b.renderLogin(w, "Invalid username or password.", next)
+		b.host.Fail(w, r, http.StatusUnauthorized, "Invalid username or password.", next)
 		return
 	}
-	if !b.start(w, username) {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	b.log.InfoContext(r.Context(), "login", "user", username)
-	http.Redirect(w, r, b.base+next, http.StatusFound)
+	b.host.Done(w, r, Person{
+		Identity: "basic:" + username,
+		Username: username,
+		Claims:   acl.Claims{Username: username},
+	}, next)
 }

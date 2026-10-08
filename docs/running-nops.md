@@ -76,7 +76,6 @@ group "nops" {
       NOPS_OIDC_ISSUER_URL         = "https://auth.example.com/application/o/nops/"
       NOPS_OIDC_CLIENT_ID          = "nops"
       NOPS_OIDC_CLIENT_SECRET_FILE = "${NOMAD_SECRETS_DIR}/oidc-secret"
-      NOPS_OIDC_ALLOWED_GROUPS     = "nops-approvers"
       NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
       NOPS_DB_PATH                 = "/data/nops.db"
     }
@@ -130,8 +129,9 @@ Set `-public-url`, then create a confidential OIDC client with the
 authorization code flow at your provider:
 
 - **Redirect URI:** `<public-url>/auth/callback`.
-- **Scopes:** `openid`, `profile`, `email`, and `groups` if you use
-  `-oidc-allowed-groups`. Make sure the provider sends a `groups` claim.
+- **Scopes:** `openid`, `profile`, `email` and `groups`. A
+  [binding rule](acl.md#binding-rules) on groups needs the provider to send a
+  `groups` claim.
 - **Issuer:** the `issuer` of the provider's
   `/.well-known/openid-configuration`, trailing slash included.
 

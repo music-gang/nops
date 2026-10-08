@@ -14,12 +14,15 @@ import (
 
 // The commands under "nops acl" (docs/cli.md) call /api/acl/ (docs/api.md).
 
-// aclFlags are the flags of the commands that make an ACL policy or a token.
+// aclFlags are the flags of the commands that make an ACL policy, a binding
+// rule or a token.
 type aclFlags struct {
 	description string
 	name, kind  string
 	policies    stringList
 	expires     string
+
+	authMethod, selector, bindType, bindName string
 }
 
 // stringList is a flag that can be given more than once.
@@ -43,8 +46,19 @@ func tokenFlags(fs *flag.FlagSet, k *call) {
 	fs.StringVar(&k.flags.expires, "expires", "", "how long it lasts, such as 720h (default: it never expires)")
 }
 
+func bindingRuleFlags(fs *flag.FlagSet, k *call) {
+	fs.StringVar(&k.flags.description, "description", "", "what the binding rule is for")
+	fs.StringVar(&k.flags.authMethod, "auth-method", "", "oidc or basic (required)")
+	fs.StringVar(&k.flags.selector, "selector", "", "a go-bexpr expression on value.username, value.sub and list.groups (default: every login of the auth method)")
+	fs.StringVar(&k.flags.bindType, "bind-type", "", "policy, or management for everything (required)")
+	fs.StringVar(&k.flags.bindName, "bind-name", "", "the ACL policy a policy rule binds")
+}
+
 func policyPath(k *call) string { return "/api/acl/policies/" + url.PathEscape(k.arg) }
 func tokenPath(k *call) string  { return "/api/acl/tokens/" + url.PathEscape(k.arg) }
+func bindingRulePath(k *call) string {
+	return "/api/acl/binding-rules/" + url.PathEscape(k.arg)
+}
 
 // What the API answers, as far as the text output reads it.
 
@@ -55,10 +69,29 @@ type aclPolicy struct {
 	ModifiedAt  time.Time `json:"modified_at"`
 }
 
+type bindingRule struct {
+	ID          string    `json:"id"`
+	Description string    `json:"description"`
+	AuthMethod  string    `json:"auth_method"`
+	Selector    string    `json:"selector"`
+	BindType    string    `json:"bind_type"`
+	BindName    string    `json:"bind_name"`
+	ModifiedAt  time.Time `json:"modified_at"`
+}
+
+// binds says what a binding rule gives.
+func (b bindingRule) binds() string {
+	if b.BindType == "management" {
+		return "management"
+	}
+	return "ACL policy " + b.BindName
+}
+
 type aclToken struct {
 	AccessorID  string     `json:"accessor_id"`
 	Name        string     `json:"name"`
 	Type        string     `json:"type"`
+	Origin      string     `json:"origin"`
 	Policies    []string   `json:"policies"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at"`
@@ -131,6 +164,87 @@ func runPolicyApply(k *call) error {
 	return nil
 }
 
+func runBindingRuleList(k *call) error {
+	var r struct {
+		Rules []bindingRule `json:"binding_rules"`
+	}
+	raw, err := k.client.get(k.ctx, "/api/acl/binding-rules", &r)
+	if err != nil {
+		return err
+	}
+	show(k, raw, func(w io.Writer) {
+		if len(r.Rules) == 0 {
+			fmt.Fprintln(w, "No binding rules.")
+			return
+		}
+		t := table(w)
+		fmt.Fprintln(t, "ID\tAUTH METHOD\tSELECTOR\tBINDS\tMODIFIED")
+		for _, b := range r.Rules {
+			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n", b.ID, b.AuthMethod, dash(b.Selector), b.binds(), stamp(b.ModifiedAt))
+		}
+		t.Flush()
+	})
+	return nil
+}
+
+func runBindingRuleInfo(k *call) error {
+	var b bindingRule
+	raw, err := k.client.get(k.ctx, bindingRulePath(k), &b)
+	if err != nil {
+		return err
+	}
+	show(k, raw, func(w io.Writer) { writeBindingRule(w, b) })
+	return nil
+}
+
+func writeBindingRule(w io.Writer, b bindingRule) {
+	fmt.Fprintf(w, "ID:          %s\nDescription: %s\nAuth method: %s\nSelector:    %s\nBinds:       %s\nModified:    %s\n",
+		b.ID, dash(b.Description), b.AuthMethod, dash(b.Selector), b.binds(), stamp(b.ModifiedAt))
+}
+
+// bindingRuleBody is the rule the flags describe. Update replaces the whole
+// rule, so it takes the same flags as create.
+func bindingRuleBody(k *call) (map[string]string, error) {
+	f := k.flags
+	if f.authMethod == "" || f.bindType == "" {
+		return nil, usageErrorf("-auth-method and -bind-type are required")
+	}
+	return map[string]string{
+		"description": f.description, "auth_method": f.authMethod, "selector": f.selector,
+		"bind_type": f.bindType, "bind_name": f.bindName,
+	}, nil
+}
+
+func runBindingRuleCreate(k *call) error {
+	body, err := bindingRuleBody(k)
+	if err != nil {
+		return err
+	}
+	raw, err := k.client.do(k.ctx, http.MethodPost, "/api/acl/binding-rules", body)
+	if err != nil {
+		return err
+	}
+	var b bindingRule
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return fmt.Errorf("the answer is not what the API sends: %w", err)
+	}
+	show(k, raw, func(w io.Writer) { writeBindingRule(w, b) })
+	return nil
+}
+
+func runBindingRuleUpdate(k *call) error {
+	body, err := bindingRuleBody(k)
+	if err != nil {
+		return err
+	}
+	raw, err := k.client.do(k.ctx, http.MethodPut, bindingRulePath(k), body)
+	if err != nil {
+		return err
+	}
+	show(k, raw, func(w io.Writer) { fmt.Fprintf(w, "saved %s\n", k.arg) })
+	return nil
+}
+
 func runTokenList(k *call) error {
 	var r struct {
 		Tokens []aclToken `json:"tokens"`
@@ -145,9 +259,9 @@ func runTokenList(k *call) error {
 			return
 		}
 		t := table(w)
-		fmt.Fprintln(t, "ACCESSOR ID\tNAME\tTYPE\tACL POLICIES\tEXPIRES")
+		fmt.Fprintln(t, "ACCESSOR ID\tNAME\tTYPE\tORIGIN\tACL POLICIES\tEXPIRES")
 		for _, tok := range r.Tokens {
-			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n", tok.AccessorID, tok.Name, tok.Type, dash(strings.Join(tok.Policies, ",")), expiry(tok))
+			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", tok.AccessorID, tok.Name, tok.Type, tok.Origin, dash(strings.Join(tok.Policies, ",")), expiry(tok))
 		}
 		t.Flush()
 	})

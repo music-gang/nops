@@ -22,8 +22,10 @@ retry, pause, and resume deployments. Every page needs a
   to promote canaries.
 - **Activity** (`/history`): every deployment, newest first, grouped by day.
 - **Administration** (`/admin`): your [token](api.md#tokens) and, with a
-  management token, every token and [ACL policy](acl.md#acl-policies) and the
-  latest changes to them. Create and revoke tokens and edit ACL policies here.
+  management token, every token, [ACL policy](acl.md#acl-policies) and
+  [binding rule](acl.md#binding-rules) and the latest changes to them. Create
+  and revoke tokens and edit ACL policies and binding rules here. Copy your
+  session token to use it from the [command line](cli.md).
 
 Pages refresh themselves. Approving checks the spec
 hash you reviewed: if the diff changed since you loaded the page, Nops refuses
@@ -68,13 +70,17 @@ Nops checks who you are itself; it never trusts a header from a reverse proxy.
 [configuration](configuration.md#dashboard)):
 
 - **`oidc`**: log in through your OpenID Connect provider (Authentik,
-  Authelia, Keycloak). Only users or groups on the allowlist get in, and Nops
-  refuses to start with an empty allowlist. Nops contacts the provider only at
-  login, so a provider outage doesn't stop deployments.
+  Authelia, Keycloak). With the [ACL](acl.md) off, everyone the provider
+  lets in has full control; with it on, [binding rules](acl.md#binding-rules)
+  decide what a login gets. Nops contacts the provider only at login, so a
+  provider outage doesn't stop deployments.
 - **`basic`**: [local users](#local-users--auth-modebasic) from a file.
 
-A session lasts 12 hours. Restarting Nops logs everyone out. Changes to the
-allowlist or the users file take effect at the next login.
+A login gives you a [session token](acl.md#binding-rules) that lasts 12
+hours, restarts included. Logging out revokes it. The login page also takes a
+token you paste, such as the bootstrap token: the browser keeps it until it
+closes, and logging out forgets it without revoking it. Changes to the binding
+rules or the users file take effect at the next login.
 
 ## Local users (`-auth-mode=basic`)
 

@@ -66,8 +66,6 @@ type Config struct {
 	OIDCClientID         string
 	OIDCClientSecretFile string
 	OIDCClientSecret     string
-	OIDCAllowedUsers     []string // preferred_username or email; at least one of users and groups is set
-	OIDCAllowedGroups    []string // values of the groups claim
 
 	// UsersFile is the local-users login's "username:bcrypt-hash" file
 	// (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
@@ -220,10 +218,6 @@ var options = []option{
 			c.OIDCClientSecret, err = secretFile(v)
 			return
 		}},
-	{name: "oidc-allowed-users", usage: "comma-separated usernames or emails allowed to log in (with or without -oidc-allowed-groups)",
-		set: func(c *Config, v string) error { c.OIDCAllowedUsers = csvList(v); return nil }},
-	{name: "oidc-allowed-groups", usage: "comma-separated groups (claim \"groups\") allowed to log in (with or without -oidc-allowed-users)",
-		set: func(c *Config, v string) error { c.OIDCAllowedGroups = csvList(v); return nil }},
 	{name: "users-file", usage: "file holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
 		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
 
@@ -314,6 +308,20 @@ var options = []option{
 		set: func(c *Config, v string) error { return c.LogLevel.UnmarshalText([]byte(v)) }},
 }
 
+// removedOption is an option that no longer exists. It still parses, so that
+// Nops refuses to start with it and says what replaces it, instead of the
+// bare "flag provided but not defined".
+type removedOption struct {
+	name, replacedBy string
+}
+
+func (o removedOption) env() string { return option{name: o.name}.env() }
+
+var removedOptions = []removedOption{
+	{"oidc-allowed-users", "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
+	{"oidc-allowed-groups", "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
+}
+
 // value is the flag.Value of every option: it only records the raw string,
 // parsing happens once the source (flag, env or default) is known.
 type value struct {
@@ -339,6 +347,9 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		vals[i] = &value{boolean: o.boolean}
 		fs.Var(vals[i], o.name, o.usage)
 	}
+	for _, o := range removedOptions {
+		fs.Var(&value{}, o.name, "removed")
+	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -359,6 +370,14 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		}
 		if err := o.set(c, v); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", source, err))
+		}
+	}
+	for _, o := range removedOptions {
+		switch {
+		case set[o.name]:
+			errs = append(errs, fmt.Errorf("flag -%s was removed: %s", o.name, o.replacedBy))
+		case getenv(o.env()) != "":
+			errs = append(errs, fmt.Errorf("%s was removed: %s", o.env(), o.replacedBy))
 		}
 	}
 	if getenv("NOPS_NOMAD_NAMESPACE") != "" {
@@ -469,8 +488,7 @@ func (c *Config) check() []error {
 	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
 		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
-	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != "" ||
-		len(c.OIDCAllowedUsers) > 0 || len(c.OIDCAllowedGroups) > 0
+	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != ""
 	switch c.AuthMode {
 	case "oidc":
 		if c.OIDCIssuerURL == "" {
@@ -481,9 +499,6 @@ func (c *Config) check() []error {
 		}
 		if c.OIDCClientSecret == "" {
 			errs = append(errs, errors.New("the OIDC client secret is required with -auth-mode=oidc (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
-		}
-		if len(c.OIDCAllowedUsers) == 0 && len(c.OIDCAllowedGroups) == 0 {
-			errs = append(errs, errors.New("nobody is allowed to log in: set -oidc-allowed-users or -oidc-allowed-groups"))
 		}
 		if c.UsersFile != "" {
 			errs = append(errs, errors.New("-users-file is only used with -auth-mode=basic"))

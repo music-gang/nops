@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/store"
 )
 
 // The Administration page (docs/dashboard.md): your token, and with a
-// management token every token and ACL policy.
+// management token every token, ACL policy and binding rule.
 
 // expiryChoice is one answer to "when does it expire" on the form of a new
 // token: a fixed list, so there is nothing to validate beyond membership. A
@@ -34,7 +35,8 @@ const defaultExpiry = "90"
 // selfView is the token of the request, or the login when it has none.
 type selfView struct {
 	Name       string
-	Kind       string // "management", "client", or "login" for a session without a token
+	Kind       string // "management", "client", or "login" for a request without a token
+	Session    bool   // a session token, which a login made
 	AccessorID string
 	Policies   []string
 	Created    timeView
@@ -52,9 +54,41 @@ type policyRow struct {
 	Modified          timeView
 }
 
+type ruleRow struct {
+	ID, Description, AuthMethod, Selector, Binds string
+	Modified                                     timeView
+}
+
+// ruleForm is a binding rule as the form holds it. Bind is "management" or
+// "policy:<name>".
+type ruleForm struct {
+	ID, Description, AuthMethod, Selector, Bind string
+	Existing                                    bool // editing: the ID is fixed
+}
+
+func ruleFormOf(b store.BindingRule) ruleForm {
+	f := ruleForm{ID: b.ID, Description: b.Description, AuthMethod: b.AuthMethod, Selector: b.Selector, Bind: b.BindType, Existing: true}
+	if b.BindType == acl.BindPolicy {
+		f.Bind = "policy:" + b.BindName
+	}
+	return f
+}
+
+// binding turns the form back into a binding rule.
+func (f ruleForm) binding() store.BindingRule {
+	b := store.BindingRule{ID: f.ID, Description: f.Description, AuthMethod: f.AuthMethod, Selector: f.Selector, BindType: acl.BindManagement}
+	if name, ok := strings.CutPrefix(f.Bind, "policy:"); ok {
+		b.BindType, b.BindName = acl.BindPolicy, name
+	} else if f.Bind != acl.BindManagement {
+		b.BindType = f.Bind // not a type: putBindingRule refuses it
+	}
+	return b
+}
+
 type changeRow struct {
 	When                 timeView
 	Actor, AccessorID    string
+	Identity             string
 	Action, Kind, Object string
 }
 
@@ -77,14 +111,33 @@ type adminData struct {
 
 	Tokens   []tokenRow
 	Policies []policyRow
+	Rules    []ruleRow
 	Changes  []changeRow
 	Expiry   []expiryChoice
 	Default  string
 	Created  *createdToken
 
+	// SessionSecret is the secret of the session token of this request, to copy
+	// into the command line. Empty for any other token.
+	SessionSecret string
+	// Sessions says the token list holds the session tokens, hidden by default;
+	// HiddenSessions is how many it leaves out.
+	Sessions       bool
+	HiddenSessions int
+	Method         string // the auth method a new binding rule starts with
+	NewRule        ruleForm
+
 	// Error and Form come back from a form that was not filled in right.
 	Error string
 	Form  policyForm
+}
+
+type rulePageData struct {
+	baseData
+	Form     ruleForm
+	Error    string
+	Policies []policyRow
+	Methods  []string
 }
 
 type policyPageData struct {
@@ -110,7 +163,7 @@ func (s *server) tokenView(t store.ACLToken) selfView {
 		creator = "—"
 	}
 	return selfView{
-		Name: t.Name, Kind: t.Type, AccessorID: t.AccessorID, Policies: t.Policies,
+		Name: t.Name, Kind: t.Type, Session: t.Origin == store.OriginLogin, AccessorID: t.AccessorID, Policies: t.Policies,
 		Created: s.when(t.CreatedAt), Expires: s.until(t.ExpiresAt), Creator: creator,
 	}
 }
@@ -120,9 +173,11 @@ func (s *server) adminView(r *http.Request) (adminData, error) {
 	sub := subjectOf(r.Context())
 	data := adminData{
 		baseData: s.base(r, "admin"), ACLOn: s.aclOn, Self: s.selfOf(sub),
-		Manage: sub.acl.Management(),
+		Manage: sub.acl.Management(), SessionSecret: sub.sessionSecret,
 		Expiry: expiryChoices, Default: defaultExpiry,
+		Sessions: r.URL.Query().Get("sessions") == "1", Method: s.auth.Method(),
 	}
+	data.NewRule = ruleForm{AuthMethod: data.Method, Bind: acl.BindManagement}
 	if !data.Manage {
 		return data, nil
 	}
@@ -133,6 +188,10 @@ func (s *server) adminView(r *http.Request) (adminData, error) {
 	}
 	now := s.now()
 	for _, t := range tokens {
+		if t.Origin == store.OriginLogin && !data.Sessions {
+			data.HiddenSessions++
+			continue
+		}
 		data.Tokens = append(data.Tokens, tokenRow{selfView: s.tokenView(t), Expired: !t.ExpiresAt.IsZero() && !now.Before(t.ExpiresAt)})
 	}
 	policies, err := s.access.ACLPolicies(ctx)
@@ -142,12 +201,23 @@ func (s *server) adminView(r *http.Request) (adminData, error) {
 	for _, p := range policies {
 		data.Policies = append(data.Policies, policyRow{Name: p.Name, Description: p.Description, Modified: s.when(p.ModifiedAt)})
 	}
+	rules, err := s.access.BindingRules(ctx)
+	if err != nil {
+		return data, err
+	}
+	for _, b := range rules {
+		binds := "management"
+		if b.BindType == acl.BindPolicy {
+			binds = "ACL policy " + b.BindName
+		}
+		data.Rules = append(data.Rules, ruleRow{ID: b.ID, Description: b.Description, AuthMethod: b.AuthMethod, Selector: b.Selector, Binds: binds, Modified: s.when(b.ModifiedAt)})
+	}
 	changes, err := s.access.ACLChanges(ctx, changesShown)
 	if err != nil {
 		return data, err
 	}
 	for _, c := range changes {
-		data.Changes = append(data.Changes, changeRow{When: s.when(c.Time), Actor: c.Actor, AccessorID: c.AccessorID, Action: c.Action, Kind: c.Kind, Object: c.Object})
+		data.Changes = append(data.Changes, changeRow{When: s.when(c.Time), Actor: c.Actor, AccessorID: c.AccessorID, Identity: c.Identity, Action: c.Action, Kind: c.Kind, Object: c.Object})
 	}
 	return data, nil
 }
@@ -213,6 +283,76 @@ func (s *server) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		s.notFoundMessage(w, r, "This ACL policy does not exist: someone deleted it already.")
 	default:
 		s.serverError(w, r, "delete an ACL policy", err)
+	}
+}
+
+// ruleFormPage renders the page of a binding rule.
+func (s *server) ruleFormPage(w http.ResponseWriter, r *http.Request, f ruleForm, errMsg string) {
+	policies, err := s.access.ACLPolicies(r.Context())
+	if err != nil {
+		s.serverError(w, r, "list ACL policies", err)
+		return
+	}
+	data := rulePageData{baseData: s.base(r, "admin"), Form: f, Error: errMsg, Methods: authMethods}
+	for _, p := range policies {
+		data.Policies = append(data.Policies, policyRow{Name: p.Name, Description: p.Description})
+	}
+	s.render(w, r, "admin_rule", data)
+}
+
+// bindingRulePage is GET /admin/binding-rules/{id}: edit a binding rule.
+func (s *server) bindingRulePage(w http.ResponseWriter, r *http.Request) {
+	b, err := s.access.BindingRule(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.notFoundMessage(w, r, "This binding rule does not exist.")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, "read a binding rule", err)
+		return
+	}
+	s.ruleFormPage(w, r, ruleFormOf(b), "")
+}
+
+// saveBindingRule is POST /admin/binding-rules: create a binding rule or
+// replace one. A rule that does not check saves nothing and comes back with the
+// error.
+func (s *server) saveBindingRule(w http.ResponseWriter, r *http.Request) {
+	form := ruleForm{
+		ID:          r.FormValue("id"),
+		Description: r.FormValue("description"),
+		AuthMethod:  r.FormValue("auth_method"),
+		Selector:    r.FormValue("selector"),
+		Bind:        r.FormValue("bind"),
+		Existing:    r.FormValue("id") != "",
+	}
+	_, err := s.putBindingRule(r.Context(), subjectOf(r.Context()), form.binding())
+	var bad invalidInput
+	switch {
+	case errors.As(err, &bad):
+		w.WriteHeader(http.StatusBadRequest)
+		s.ruleFormPage(w, r, form, bad.Error())
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This binding rule does not exist: someone deleted it.")
+	case err != nil:
+		s.serverError(w, r, "save a binding rule", err)
+	default:
+		http.Redirect(w, r, s.basePath+"/admin", http.StatusSeeOther)
+	}
+}
+
+// deleteBindingRule is POST /admin/binding-rules/{id}/delete.
+func (s *server) deleteBindingRule(w http.ResponseWriter, r *http.Request) {
+	sub := subjectOf(r.Context())
+	err := s.access.DeleteBindingRule(r.Context(), r.PathValue("id"), auditOf(sub))
+	switch {
+	case err == nil:
+		s.log.InfoContext(r.Context(), "binding rule deleted", "binding_rule", r.PathValue("id"), "actor", sub.actor, "accessor_id", sub.accessorID)
+		http.Redirect(w, r, s.basePath+"/admin", http.StatusSeeOther)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This binding rule does not exist: someone deleted it already.")
+	default:
+		s.serverError(w, r, "delete a binding rule", err)
 	}
 }
 

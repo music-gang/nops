@@ -61,31 +61,42 @@ func (s aclServer) clientWith(rules string) string {
 	return s.token(tokenBody{Name: "client", Type: store.TokenClient, Policies: []string{"p"}})
 }
 
-// stubLogin is a login whose every request already acts as sub: the dashboard
-// pages are tested against any ACL without going through a token.
-type stubLogin struct{ sub *subject }
-
-func (stubLogin) Register(*http.ServeMux) {}
-func (l stubLogin) Require(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), userKey{}, l.sub.actor)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, subjectKey{}, l.sub)))
-	})
+// clientSession is a login that carries one ACL policy of these rules, or none
+// when the rules are empty: the dashboard pages are tested against any ACL.
+func (ts *testServer) clientSession(actor, rules string) *http.Cookie {
+	ts.t.Helper()
+	ctx := context.Background()
+	var policies []string
+	if rules != "" {
+		if _, err := acl.Parse(rules); err != nil {
+			ts.t.Fatal(err)
+		}
+		if err := ts.tokens.PutACLPolicy(ctx, store.ACLPolicy{Name: "login-" + actor, Rules: rules}, store.Audit{Actor: "test"}); err != nil {
+			ts.t.Fatal(err)
+		}
+		policies = []string{"login-" + actor}
+	}
+	sec := secret.New()
+	if _, err := ts.tokens.CreateACLToken(ctx, store.ACLToken{
+		Name: actor, Type: store.TokenClient, Policies: policies, ACL: ts.aclOn, Origin: store.OriginLogin,
+		Identity: "test:" + actor, CreatorName: actor,
+	}, hashToken(sec), store.Audit{Actor: actor}); err != nil {
+		ts.t.Fatal(err)
+	}
+	return &http.Cookie{Name: sessionCookie, Value: sec}
 }
 
-// dashboardAs is a server whose logged-in subject has these rules (none: a
-// management token).
+// dashboardAs is a server with the ACL on whose dashboard requests carry a login
+// with these rules (none: a management token).
 func dashboardAs(t *testing.T, st Store, en *fakeEngine, rules string) *testServer {
 	t.Helper()
-	sub := &subject{actor: "carol", accessorID: "acc-carol", acl: acl.Management()}
-	if rules != "" {
-		p, err := acl.Parse(rules)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sub.acl = acl.New(p)
+	ts := newTestServerLogin(t, st, en, "", nil, "", nil, func(o *Options) { o.ACL = true; o.BootstrapToken = "x" })
+	if rules == "" {
+		ts.login = ts.session("carol")
+	} else {
+		ts.login = ts.clientSession("carol", rules)
 	}
-	return newTestServerLogin(t, st, en, "", nil, "", stubLogin{sub}, func(o *Options) { o.ACL = true; o.BootstrapToken = "x" })
+	return ts
 }
 
 func (ts *testServer) page(method, target string, form url.Values) *httptest.ResponseRecorder {
@@ -94,7 +105,7 @@ func (ts *testServer) page(method, target string, form url.Values) *httptest.Res
 	if form != nil {
 		body = formBody(form)
 	}
-	return ts.do(method, target, body)
+	return ts.do(method, target, body, ts.login)
 }
 
 // The invariant: no configuration lets a token without "approve" on the job's
@@ -129,18 +140,8 @@ func TestNoACLWithoutApproveOnTheNamespaceApproves(t *testing.T) {
 				}
 			}
 
-			var parsed *acl.Policy
-			if rules != "" {
-				var err error
-				if parsed, err = acl.Parse(rules); err != nil {
-					t.Fatal(err)
-				}
-			}
-			sub := &subject{actor: "carol", acl: acl.New()}
-			if parsed != nil {
-				sub.acl = acl.New(parsed)
-			}
-			d := newTestServerLogin(t, st, en, "", nil, "", stubLogin{sub}, func(o *Options) { o.ACL, o.BootstrapToken = true, "x" })
+			d := newTestServerLogin(t, st, en, "", nil, "", nil, func(o *Options) { o.ACL, o.BootstrapToken = true, "x" })
+			d.login = d.clientSession("carol", rules)
 			for _, target := range []string{"/deployments/d1/approve", "/deployments/d1/reject"} {
 				if rec := d.page("POST", target, url.Values{"spec_hash": {"spec-hash-1"}}); rec.Code != http.StatusForbidden {
 					t.Errorf("dashboard %s: status %d, want 403", target, rec.Code)
@@ -263,8 +264,7 @@ func TestReadsAreFilteredByNamespace(t *testing.T) {
 	}
 
 	// The dashboard filters the same way.
-	p, _ := acl.Parse(`namespace "prod" { policy = "read" }`)
-	ts := newTestServerLogin(t, st, en, "", nil, "", stubLogin{&subject{actor: "carol", acl: acl.New(p)}}, func(o *Options) { o.ACL, o.BootstrapToken = true, "x" })
+	ts := dashboardAs(t, st, en, `namespace "prod" { policy = "read" }`)
 	for _, page := range []string{"/jobs", "/history"} {
 		body := ts.get(page)
 		mustContain(t, body, "prod/api")
@@ -566,8 +566,15 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 		t.Fatalf("create: status %d, body %s", rec.Code, rec.Body)
 	}
 	mustContain(t, rec.Body.String(), "Token “ci” created", "nops_")
-	list, err := ts.tokens.ACLTokens(t.Context())
-	if err != nil || len(list) != 1 || list[0].Name != "ci" || len(list[0].Policies) != 1 || list[0].ExpiresAt.IsZero() {
+	all, err := ts.tokens.ACLTokens(t.Context())
+	var list []store.ACLToken // the session of the page's own login is not one of them
+	for _, tok := range all {
+		if tok.Origin == store.OriginCreated {
+			list = append(list, tok)
+		}
+	}
+	if err != nil || len(list) != 1 || list[0].Name != "ci" || len(list[0].Policies) != 1 || list[0].ExpiresAt.IsZero() ||
+		list[0].CreatorName != "carol" || list[0].CreatorIdentity != "test:carol" {
 		t.Fatalf("tokens = %+v, %v", list, err)
 	}
 
@@ -589,11 +596,11 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 	}
 }
 
-// With the ACL on a login carries no token yet: it sees the pages and does nothing.
-func TestALoginWithTheACLOnCanDoNothing(t *testing.T) {
+// A session token that carries no ACL policy sees the pages and does nothing.
+func TestASessionWithoutACLPoliciesCanDoNothing(t *testing.T) {
 	en := &fakeEngine{}
 	s := newACLServer(t, &fakeStore{deployment: sampleDeployment()}, en)
-	cookie := mintSession(t, s.auth, "alice")
+	cookie := s.clientSession("alice", "")
 
 	if rec := s.do("GET", "/", nil, cookie); rec.Code != http.StatusOK {
 		t.Errorf("the Overview: status %d, want 200", rec.Code)
@@ -618,4 +625,173 @@ func TestTokenSecretsAreNotKept(t *testing.T) {
 	if _, err := s.tokens.ACLTokenBySecret(t.Context(), hashToken(sec), true); err != nil {
 		t.Errorf("the store does not know the token by the hash of its secret: %v", err)
 	}
+}
+
+// -- binding rules ------------------------------------------------------------
+
+func (s aclServer) rule(body string) *httptest.ResponseRecorder {
+	s.t.Helper()
+	return s.api("POST", "/api/acl/binding-rules", s.boot, body)
+}
+
+func TestBindingRulesOnTheAPI(t *testing.T) {
+	s := newACLServer(t, &fakeStore{}, &fakeEngine{})
+	s.policy("operator", `namespace "*" { policy = "read" }`)
+
+	rec := s.rule(`{"description":"ops","auth_method":"oidc","selector":"\"ops\" in list.groups","bind_type":"policy","bind_name":"operator"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: status %d: %s", rec.Code, rec.Body)
+	}
+	var created apiBindingRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.ID == "" || created.BindName != "operator" {
+		t.Fatalf("create: %s, %v", rec.Body, err)
+	}
+
+	var list struct {
+		Rules []apiBindingRule `json:"binding_rules"`
+	}
+	rec = s.api("GET", "/api/acl/binding-rules", s.boot, "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Rules) != 1 || list.Rules[0].ID != created.ID {
+		t.Errorf("list: %s, %v", rec.Body, err)
+	}
+	if rec := s.api("GET", "/api/acl/binding-rules/"+created.ID, s.boot, ""); rec.Code != http.StatusOK {
+		t.Errorf("get: status %d", rec.Code)
+	}
+
+	// PUT replaces the rule, whole.
+	rec = s.api("PUT", "/api/acl/binding-rules/"+created.ID, s.boot, `{"auth_method":"basic","bind_type":"management"}`)
+	var replaced apiBindingRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &replaced); err != nil || rec.Code != http.StatusOK ||
+		replaced.AuthMethod != "basic" || replaced.BindType != "management" || replaced.Selector != "" || replaced.BindName != "" {
+		t.Errorf("replace: status %d: %s", rec.Code, rec.Body)
+	}
+	if rec := s.api("PUT", "/api/acl/binding-rules/nope", s.boot, `{"auth_method":"basic","bind_type":"management"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("replace an unknown rule: status %d, want 404", rec.Code)
+	}
+
+	if rec := s.api("DELETE", "/api/acl/binding-rules/"+created.ID, s.boot, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("delete: status %d", rec.Code)
+	}
+	for _, method := range []string{"GET", "DELETE"} {
+		if rec := s.api(method, "/api/acl/binding-rules/"+created.ID, s.boot, ""); rec.Code != http.StatusNotFound {
+			t.Errorf("%s a deleted rule: status %d, want 404", method, rec.Code)
+		}
+	}
+
+	changes := s.api("GET", "/api/acl/changes", s.boot, "").Body.String()
+	mustContain(t, changes, `"kind":"binding-rule"`, created.ID)
+}
+
+func TestBindingRulesAreCheckedBeforeTheyAreSaved(t *testing.T) {
+	s := newACLServer(t, &fakeStore{}, &fakeEngine{})
+	s.policy("operator", `namespace "*" { policy = "read" }`)
+	for name, body := range map[string]string{
+		"a selector that does not parse":  `{"auth_method":"oidc","selector":"value.username ==","bind_type":"management"}`,
+		"a claim that does not exist":     `{"auth_method":"oidc","selector":"value.nope == \"x\"","bind_type":"management"}`,
+		"a selector that reads elsewhere": `{"auth_method":"oidc","selector":"foo == \"x\"","bind_type":"management"}`,
+		"an unknown auth method":          `{"auth_method":"ldap","bind_type":"management"}`,
+		"no auth method":                  `{"bind_type":"management"}`,
+		"an unknown bind type":            `{"auth_method":"oidc","bind_type":"root"}`,
+		"a policy rule without a name":    `{"auth_method":"oidc","bind_type":"policy"}`,
+		"an ACL policy that is not there": `{"auth_method":"oidc","bind_type":"policy","bind_name":"ghost"}`,
+		"management with a policy":        `{"auth_method":"oidc","bind_type":"management","bind_name":"operator"}`,
+		"a selector that is too long":     `{"auth_method":"oidc","selector":"` + strings.Repeat("a", maxSelector+1) + `","bind_type":"management"}`,
+		"an unknown field":                `{"auth_method":"oidc","bind_type":"management","bind":"x"}`,
+	} {
+		if rec := s.rule(body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400: %s", name, rec.Code, rec.Body)
+		}
+	}
+	if list, _ := s.tokens.BindingRules(t.Context()); len(list) != 0 {
+		t.Errorf("%d rules saved by refused requests", len(list))
+	}
+}
+
+func TestOnlyAManagementTokenAdministersBindingRules(t *testing.T) {
+	s := newACLServer(t, &fakeStore{}, &fakeEngine{})
+	client := s.clientWith(`namespace "*" { policy = "write" }`)
+	for _, c := range []struct{ method, target, body string }{
+		{"GET", "/api/acl/binding-rules", ""},
+		{"POST", "/api/acl/binding-rules", `{"auth_method":"oidc","bind_type":"management"}`},
+		{"GET", "/api/acl/binding-rules/x", ""},
+		{"PUT", "/api/acl/binding-rules/x", `{"auth_method":"oidc","bind_type":"management"}`},
+		{"DELETE", "/api/acl/binding-rules/x", ""},
+	} {
+		if rec := s.api(c.method, c.target, client, c.body); rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s with a client token: status %d, want 403", c.method, c.target, rec.Code)
+		}
+	}
+}
+
+func TestAdministrationFormsManageBindingRules(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := ts.page("POST", "/admin/policies", url.Values{"name": {"readers"}, "rules": {`namespace "*" { policy = "read" }`}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("policy: status %d", rec.Code)
+	}
+
+	bad := url.Values{"auth_method": {"oidc"}, "selector": {`value.nope == "x"`}, "bind": {"management"}}
+	rec := ts.page("POST", "/admin/binding-rules", bad)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a bad selector: status %d, want 400", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "not a claim", `value.nope == &#34;x&#34;`)
+
+	good := url.Values{"description": {"ops"}, "auth_method": {"oidc"}, "selector": {`"ops" in list.groups`}, "bind": {"policy:readers"}}
+	if rec := ts.page("POST", "/admin/binding-rules", good); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: status %d, body %s", rec.Code, rec.Body)
+	}
+	rules, err := ts.tokens.BindingRules(t.Context())
+	if err != nil || len(rules) != 1 || rules[0].BindType != acl.BindPolicy || rules[0].BindName != "readers" {
+		t.Fatalf("rules = %+v, %v", rules, err)
+	}
+	id := rules[0].ID
+	mustContain(t, ts.get("/admin"), "ACL policy readers", "ops", `/admin/binding-rules/`+id)
+	mustContain(t, ts.get("/admin/binding-rules/"+id), `value="`+id+`"`, `value="policy:readers" selected`)
+
+	edit := url.Values{"id": {id}, "auth_method": {"basic"}, "bind": {"management"}}
+	if rec := ts.page("POST", "/admin/binding-rules", edit); rec.Code != http.StatusSeeOther {
+		t.Fatalf("replace: status %d", rec.Code)
+	}
+	if r, _ := ts.tokens.BindingRule(t.Context(), id); r.AuthMethod != "basic" || r.BindType != acl.BindManagement || r.Selector != "" {
+		t.Errorf("rule after the replace = %+v", r)
+	}
+	if rec := ts.page("POST", "/admin/binding-rules", url.Values{"id": {"nope"}, "auth_method": {"basic"}, "bind": {"management"}}); rec.Code != http.StatusNotFound {
+		t.Errorf("replace an unknown rule: status %d, want 404", rec.Code)
+	}
+
+	if rec := ts.page("POST", "/admin/binding-rules/"+id+"/delete", url.Values{}); rec.Code != http.StatusSeeOther {
+		t.Errorf("delete: status %d", rec.Code)
+	}
+	if rec := ts.page("GET", "/admin/binding-rules/"+id, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("a deleted rule: status %d, want 404", rec.Code)
+	}
+	if rec := ts.page("POST", "/admin/binding-rules/"+id+"/delete", url.Values{}); rec.Code != http.StatusNotFound {
+		t.Errorf("deleting twice: status %d, want 404", rec.Code)
+	}
+
+	// The changes name the person, with the token used.
+	changes, _ := ts.tokens.ACLChanges(t.Context(), 20)
+	var found bool
+	for _, c := range changes {
+		if c.Kind == "binding-rule" && c.Action == "create" {
+			found = c.Actor == "carol" && c.Identity == "test:carol" && c.AccessorID != ""
+		}
+	}
+	if !found {
+		t.Errorf("no change of the creation of the rule by carol: %+v", changes)
+	}
+}
+
+func TestBindingRulesAreForManagementOnTheDashboard(t *testing.T) {
+	client := dashboardAs(t, &fakeStore{}, &fakeEngine{}, `namespace "*" { policy = "write" }`)
+	for _, c := range []struct{ method, target string }{
+		{"GET", "/admin/binding-rules/x"},
+		{"POST", "/admin/binding-rules"},
+		{"POST", "/admin/binding-rules/x/delete"},
+	} {
+		if rec := client.page(c.method, c.target, url.Values{}); rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s: status %d, want 403", c.method, c.target, rec.Code)
+		}
+	}
+	mustNotContain(t, client.get("/admin"), "New binding rule")
 }

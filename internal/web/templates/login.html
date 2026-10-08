@@ -1,4 +1,4 @@
-{{define "login_basic"}}
+{{define "login"}}
 <!doctype html>
 <html lang="en">
 <head>
@@ -12,8 +12,9 @@
 <main class="login">
   <img class="login__logo" src="{{.Base}}{{asset "logo-192x192.png"}}" alt="" width="96" height="96">
   <h1 class="login__title">Sign in to Nops</h1>
-  <form class="login__form" method="post" action="{{.Base}}/auth/login">
-    {{if .Error}}<p class="login__error">{{.Error}}</p>{{end}}
+  {{if .Error}}<p class="login__error">{{.Error}}</p>{{end}}
+  {{if eq .Method "basic"}}
+  <form class="login__form" method="post" action="{{.Base}}/auth/basic">
     <input type="hidden" name="next" value="{{.Next}}">
     <label class="login__field">Username
       <input type="text" name="username" autocomplete="username" autofocus required>
@@ -22,6 +23,16 @@
       <input type="password" name="password" autocomplete="current-password" required>
     </label>
     <button type="submit" class="btn btn--primary">Log in</button>
+  </form>
+  {{else}}
+  <p class="login__form"><a class="btn btn--primary" href="{{.Base}}/auth/oidc?next={{.Next | urlquery}}">Log in with your identity provider</a></p>
+  {{end}}
+  <form class="login__form" method="post" action="{{.Base}}/auth/token">
+    <input type="hidden" name="next" value="{{.Next}}">
+    <label class="login__field">Or paste a token
+      <input type="password" name="token" autocomplete="off" required>
+    </label>
+    <button type="submit" class="btn">Use token</button>
   </form>
 </main>
 </body>

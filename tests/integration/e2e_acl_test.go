@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,6 +77,33 @@ func TestE2EACLBootstrapTokenAdministersAndClientTokenIsLimited(t *testing.T) {
 	}
 	if got := e.deployment(d.ID); got.State != store.StatePendingApproval {
 		t.Fatalf("deployment = %s after a refused approval, want it still pending", got.State)
+	}
+
+	// A login gets what a binding rule gives it, and nothing before there is one.
+	if status, _ := e.dash.post(t, "/auth/basic", url.Values{"username": {e2eUser}, "password": {e2ePassword}}); status != http.StatusForbidden {
+		t.Errorf("a login no binding rule matches: status %d, want 403", status)
+	}
+	if _, errOut, err := nops(bootstrap, "acl", "binding-rule", "create", "-auth-method", "basic",
+		"-selector", `value.username == "`+e2eUser+`"`, "-bind-type", "policy", "-bind-name", "readers"); err != nil {
+		t.Fatalf("acl binding-rule create: %v\n%s", err, errOut)
+	}
+	e.dash.login(t, e2eUser, e2ePassword)
+	if status := e.dash.approve(t, d.ID, d.SpecHash); status != http.StatusForbidden {
+		t.Errorf("a login bound to a read-only ACL policy approving: status %d, want 403", status)
+	}
+	// The session token of that login works from the command line, as the same person.
+	base, _ := url.Parse(e.dash.base)
+	var session string
+	for _, c := range e.dash.c.Jar.Cookies(base) {
+		if c.Name == "nops_session" {
+			session = c.Value
+		}
+	}
+	if out, _, err := nops(session, "acl", "token", "self"); err != nil || !strings.Contains(out, "Name:         "+e2eUser) {
+		t.Errorf("the session token on the command line: %v, stdout %q, want a token named %s", err, out, e2eUser)
+	}
+	if got := e.deployment(d.ID); got.State != store.StatePendingApproval {
+		t.Fatalf("deployment = %s after the login's refused approval, want it still pending", got.State)
 	}
 
 	if _, errOut, err := nops(bootstrap, "approve", "-yes", d.ID); err != nil {

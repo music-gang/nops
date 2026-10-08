@@ -8,6 +8,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/gorilla/securecookie v1.1.2
 	github.com/hashicorp/cronexpr v1.1.3
+	github.com/hashicorp/go-bexpr v0.1.16
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hashicorp/nomad/api v0.0.0-20260923095306-73804ff45659
 	github.com/oklog/ulid/v2 v2.1.2
@@ -46,6 +47,8 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
+	github.com/mitchellh/mapstructure v1.4.1 // indirect
+	github.com/mitchellh/pointerstructure v1.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect

@@ -82,10 +82,10 @@ SSH. The release image can't read `file://` URLs.
 | `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL, exactly as the provider announces it, trailing slash included. |
 | `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of Nops at the provider. |
 | `-oidc-client-secret-file` | `NOPS_OIDC_CLIENT_SECRET_FILE` | none, **required** | File holding the client secret. |
-| `-oidc-allowed-users` | `NOPS_OIDC_ALLOWED_USERS` | none | Comma-separated usernames or emails allowed to log in. |
-| `-oidc-allowed-groups` | `NOPS_OIDC_ALLOWED_GROUPS` | none | Comma-separated groups allowed to log in. |
 
-Set at least one allowlist.
+Nops refuses to start with `-oidc-allowed-users` or `-oidc-allowed-groups`.
+Limit who can log in at the identity provider, or with
+[binding rules](acl.md#binding-rules) and `-acl`.
 
 ### Local users (`-auth-mode=basic`)
 

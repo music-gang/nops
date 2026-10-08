@@ -2,7 +2,8 @@
 // tokens of access.go) and the git webhook. Authentication is
 // session.go (shared session/cookie/actor mechanics), auth.go (OpenID
 // Connect) and auth_basic.go (local users); this file wires the pages, the
-// diff renderer and the webhook behind whichever Authenticator it is given.
+// diff renderer and the webhook behind whichever Authenticator it is given;
+// login.go is what happens after a person has proved who they are.
 // The pages are documented in docs/dashboard.md.
 package web
 
@@ -72,9 +73,9 @@ type Engine interface {
 	Status() engine.Status
 }
 
-// AccessStore is what the access control needs from SQLite: the ACL policies
-// and the tokens, which the Administration page and /api/acl/ change and every
-// request looks up. *store.Store implements it.
+// AccessStore is what the access control needs from SQLite: the ACL policies,
+// the binding rules and the tokens, which the Administration page and /api/acl/
+// change and every request looks up. *store.Store implements it.
 type AccessStore interface {
 	PutACLPolicy(ctx context.Context, p store.ACLPolicy, by store.Audit) error
 	ACLPolicy(ctx context.Context, name string) (store.ACLPolicy, error)
@@ -86,6 +87,11 @@ type AccessStore interface {
 	ACLTokenBySecret(ctx context.Context, hash string, acl bool) (store.ACLToken, error)
 	RevokeACLToken(ctx context.Context, accessorID string, by store.Audit) error
 	ACLChanges(ctx context.Context, limit int) ([]store.ACLChange, error)
+	DeleteExpiredSessions(ctx context.Context) (int, error)
+	PutBindingRule(ctx context.Context, r store.BindingRule, by store.Audit) (store.BindingRule, error)
+	BindingRule(ctx context.Context, id string) (store.BindingRule, error)
+	BindingRules(ctx context.Context) ([]store.BindingRule, error)
+	DeleteBindingRule(ctx context.Context, id string, by store.Audit) error
 }
 
 // Git is what the dashboard shows about the repository nops reads: the
@@ -93,17 +99,6 @@ type AccessStore interface {
 type Git interface {
 	Snapshot() gitwatch.Snapshot
 	Status() gitwatch.Status
-}
-
-// Authenticator is what the dashboard needs from a login backend: NewAuth
-// (OpenID Connect) and NewBasicAuth (local users) both implement it, and
-// -auth-mode picks exactly one (docs/dashboard.md#authentication).
-type Authenticator interface {
-	// Register adds the backend's /auth/* routes to mux.
-	Register(mux *http.ServeMux)
-	// Require lets a request through only with a valid session, and puts
-	// the actor in its context (UserFrom).
-	Require(next http.Handler) http.Handler
 }
 
 var (
@@ -118,6 +113,9 @@ type Options struct {
 	Engine Engine
 	Git    Git
 	Access AccessStore
+
+	// Secure makes the cookies Secure: the public URL is https.
+	Secure bool
 
 	// ACL turns the access control on (-acl, docs/acl.md). Off, every token
 	// and every login can do everything.
@@ -182,6 +180,8 @@ type server struct {
 	access    AccessStore
 	aclOn     bool
 	bootstrap string
+	secure    bool // cookies are Secure
+	xorigin   *http.CrossOriginProtection
 	nomad     Nomad  // nil: no Nomad panel
 	nomadUI   string // "": no links into the Nomad UI
 	panels    panelCache
@@ -202,6 +202,15 @@ type server struct {
 // once, so a broken one fails loud at startup rather than on the first
 // request.
 func New(o Options) (http.Handler, error) {
+	s, err := newServer(o)
+	if err != nil {
+		return nil, err
+	}
+	return s.handler(), nil
+}
+
+// newServer checks the options and builds the server behind New.
+func newServer(o Options) (*server, error) {
 	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Access == nil || o.Log == nil {
 		return nil, errors.New("web: Auth, Store, Engine, Git, Access and Log are required")
 	}
@@ -230,6 +239,8 @@ func New(o Options) (http.Handler, error) {
 		access:    o.Access,
 		aclOn:     o.ACL,
 		bootstrap: o.BootstrapToken,
+		secure:    o.Secure,
+		xorigin:   http.NewCrossOriginProtection(),
 		nomad:     o.Nomad,
 		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
 		trigger:   o.Trigger,
@@ -244,7 +255,7 @@ func New(o Options) (http.Handler, error) {
 		static:    staticDir,
 		started:   time.Now(),
 	}
-	return s.handler(), nil
+	return s, nil
 }
 
 // handler wraps the routes with the security headers and, if the dashboard
@@ -282,7 +293,10 @@ func parseTemplates() (*template.Template, error) {
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	s.auth.Register(mux) // GET/POST /auth/*, whichever backend this is
+	s.auth.Register(mux, s) // the /auth/* routes of the auth method
+	mux.HandleFunc("GET "+loginPath, s.loginPage)
+	mux.Handle("POST "+tokenPath, s.xorigin.Handler(http.HandlerFunc(s.pasteToken)))
+	mux.Handle("POST "+logoutPath, s.xorigin.Handler(http.HandlerFunc(s.logout)))
 
 	mux.HandleFunc("GET /healthz", s.healthz)
 	if s.metrics != nil {
@@ -318,6 +332,9 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("POST /admin/policies/{name}/delete", s.page(management(), s.deletePolicy))
 	mux.Handle("POST /admin/tokens", s.page(management(), s.createTokenForm))
 	mux.Handle("POST /admin/tokens/{accessor}/revoke", s.page(management(), s.revokeTokenForm))
+	mux.Handle("GET /admin/binding-rules/{id}", s.page(management(), s.bindingRulePage))
+	mux.Handle("POST /admin/binding-rules", s.page(management(), s.saveBindingRule))
+	mux.Handle("POST /admin/binding-rules/{id}/delete", s.page(management(), s.deleteBindingRule))
 
 	s.apiRoutes(mux)
 
