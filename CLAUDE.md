@@ -128,7 +128,7 @@ The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md);
 
 1. **Plan before every write**: no `Register` without a fresh `Jobs.Plan()` confirming a difference.
 2. **CAS on every register** (`EnforceIndex` + the `JobModifyIndex` captured at detection).
-3. **Never auto-apply under policy `approval`**: it takes an authenticated human action, valid for `(deployment_id, spec_hash)`.
+3. **Never auto-apply under policy `approval`**: Nops never moves a deployment past `pending_approval` on its own; it takes an authenticated request from a token with `approve` on the job's namespace, valid for `(deployment_id, spec_hash)`.
 4. **Git is the source of truth for Nops's behaviour**: policy and hooks; invalid meta → policy `none` + ERROR.
 5. **Nops never writes to Git** and never writes meta into the live job; state lives only in SQLite.
 6. **One active deployment per job**, enforced by the DB (partial unique index).
@@ -142,6 +142,7 @@ internal/config/       flags + env vars (NOPS_*), validation
 internal/gitwatch/     in-memory clone, polling, webhook trigger
 internal/nomadx/       Nomad client wrapper (CAS-only register, error sentinels)
 internal/meta/         parsing/validation of the nops_* meta keys
+internal/acl/          ACL policies (HCL rules), binding rules (go-bexpr selectors), the capability check
 internal/store/        SQLite (modernc.org/sqlite, no cgo), embedded SQL migrations
 internal/engine/       state machine, reconciler, recovery on restart
 internal/hooks/        dispatch, wait, timeout and stop of hook jobs

@@ -26,6 +26,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/music-gang/nops/internal/secret"
 )
 
 // Config holds every setting nops needs. Load fills and validates it.
@@ -65,12 +66,14 @@ type Config struct {
 	OIDCClientID         string
 	OIDCClientSecretFile string
 	OIDCClientSecret     string
-	OIDCAllowedUsers     []string // preferred_username or email; at least one of users and groups is set
-	OIDCAllowedGroups    []string // values of the groups claim
 
 	// UsersFile is the local-users login's "username:bcrypt-hash" file
 	// (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
 	UsersFile string
+
+	// GroupsFile is the optional "group: user1 user2" file of the local-users
+	// login (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
+	GroupsFile string
 
 	// WebhookSecret authenticates the git forge's push webhook
 	// (docs/running-nops.md#the-git-webhook): its HMAC for GitHub and Gitea, its
@@ -83,6 +86,12 @@ type Config struct {
 	// like /healthz.
 	MetricsTokenFile string
 	MetricsToken     string
+
+	// ACL turns the access control on (docs/acl.md). The bootstrap token is
+	// its management token, read from a file at every start.
+	ACL                   bool
+	ACLBootstrapTokenFile string
+	ACLBootstrapToken     string
 
 	// Notification adapters: each one is on when its URL is set. URLs that
 	// carry a token and every token are read from files by Load.
@@ -213,12 +222,10 @@ var options = []option{
 			c.OIDCClientSecret, err = secretFile(v)
 			return
 		}},
-	{name: "oidc-allowed-users", usage: "comma-separated usernames or emails allowed to log in (with or without -oidc-allowed-groups)",
-		set: func(c *Config, v string) error { c.OIDCAllowedUsers = csvList(v); return nil }},
-	{name: "oidc-allowed-groups", usage: "comma-separated groups (claim \"groups\") allowed to log in (with or without -oidc-allowed-users)",
-		set: func(c *Config, v string) error { c.OIDCAllowedGroups = csvList(v); return nil }},
 	{name: "users-file", usage: "file holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
 		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
+	{name: "groups-file", usage: "file holding \"group: user1 user2\" lines, the groups of the local users for binding rules (optional, only with -auth-mode=basic)",
+		set: func(c *Config, v string) (err error) { c.GroupsFile, err = readableFile(v); return }},
 
 	{name: "webhook-secret-file", usage: "file holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
 		set: func(c *Config, v string) (err error) {
@@ -230,6 +237,15 @@ var options = []option{
 		set: func(c *Config, v string) (err error) {
 			c.MetricsTokenFile = v
 			c.MetricsToken, err = secretFile(v)
+			return
+		}},
+
+	{name: "acl", def: "false", boolean: true, usage: "turn on the access control: tokens and ACL policies decide what each request may do (needs -acl-bootstrap-token-file)",
+		set: func(c *Config, v string) (err error) { c.ACL, err = strconv.ParseBool(v); return }},
+	{name: "acl-bootstrap-token-file", usage: "file holding the bootstrap token, a management token made by \"nops secret generate\" (required with -acl)",
+		set: func(c *Config, v string) (err error) {
+			c.ACLBootstrapTokenFile = v
+			c.ACLBootstrapToken, err = secretFile(v)
 			return
 		}},
 
@@ -298,6 +314,20 @@ var options = []option{
 		set: func(c *Config, v string) error { return c.LogLevel.UnmarshalText([]byte(v)) }},
 }
 
+// removedOption is an option that no longer exists. It still parses, so that
+// Nops refuses to start with it and says what replaces it, instead of the
+// bare "flag provided but not defined".
+type removedOption struct {
+	name, replacedBy string
+}
+
+func (o removedOption) env() string { return option{name: o.name}.env() }
+
+var removedOptions = []removedOption{
+	{"oidc-allowed-users", "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
+	{"oidc-allowed-groups", "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
+}
+
 // value is the flag.Value of every option: it only records the raw string,
 // parsing happens once the source (flag, env or default) is known.
 type value struct {
@@ -323,6 +353,9 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		vals[i] = &value{boolean: o.boolean}
 		fs.Var(vals[i], o.name, o.usage)
 	}
+	for _, o := range removedOptions {
+		fs.Var(&value{}, o.name, "removed")
+	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -343,6 +376,14 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		}
 		if err := o.set(c, v); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", source, err))
+		}
+	}
+	for _, o := range removedOptions {
+		switch {
+		case set[o.name]:
+			errs = append(errs, fmt.Errorf("flag -%s was removed: %s", o.name, o.replacedBy))
+		case getenv(o.env()) != "":
+			errs = append(errs, fmt.Errorf("%s was removed: %s", o.env(), o.replacedBy))
 		}
 	}
 	if getenv("NOPS_NOMAD_NAMESPACE") != "" {
@@ -378,6 +419,8 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
+	{envVar: "NOPS_ACL_BOOTSTRAP_TOKEN",
+		get: func(c *Config) string { return c.ACLBootstrapToken }, set: func(c *Config, v string) { c.ACLBootstrapToken = v }},
 	{envVar: "NOPS_METRICS_TOKEN",
 		get: func(c *Config) string { return c.MetricsToken }, set: func(c *Config, v string) { c.MetricsToken = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
@@ -451,8 +494,7 @@ func (c *Config) check() []error {
 	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
 		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
-	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != "" ||
-		len(c.OIDCAllowedUsers) > 0 || len(c.OIDCAllowedGroups) > 0
+	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != ""
 	switch c.AuthMode {
 	case "oidc":
 		if c.OIDCIssuerURL == "" {
@@ -464,11 +506,11 @@ func (c *Config) check() []error {
 		if c.OIDCClientSecret == "" {
 			errs = append(errs, errors.New("the OIDC client secret is required with -auth-mode=oidc (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
 		}
-		if len(c.OIDCAllowedUsers) == 0 && len(c.OIDCAllowedGroups) == 0 {
-			errs = append(errs, errors.New("nobody is allowed to log in: set -oidc-allowed-users or -oidc-allowed-groups"))
-		}
 		if c.UsersFile != "" {
 			errs = append(errs, errors.New("-users-file is only used with -auth-mode=basic"))
+		}
+		if c.GroupsFile != "" {
+			errs = append(errs, errors.New("-groups-file is only used with -auth-mode=basic"))
 		}
 	case "basic":
 		if c.UsersFile == "" {
@@ -477,6 +519,14 @@ func (c *Config) check() []error {
 		if oidcSet {
 			errs = append(errs, errors.New("the -oidc-* options are only used with -auth-mode=oidc"))
 		}
+	}
+	switch {
+	case c.ACL && c.ACLBootstrapToken == "":
+		errs = append(errs, errors.New("-acl needs a bootstrap token (-acl-bootstrap-token-file or NOPS_ACL_BOOTSTRAP_TOKEN), made by \"nops secret generate\""))
+	case !c.ACL && c.ACLBootstrapToken != "":
+		errs = append(errs, errors.New("a bootstrap token is set without -acl"))
+	case c.ACL && !secret.Valid(c.ACLBootstrapToken):
+		errs = append(errs, errors.New("the bootstrap token is not a secret made by \"nops secret generate\""))
 	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))

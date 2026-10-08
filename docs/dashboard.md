@@ -21,8 +21,14 @@ retry, pause, and resume deployments. Every page needs a
   *Approve* and *Reject* buttons. *Promote* appears when Nomad waits for you
   to promote canaries.
 - **Activity** (`/history`): every deployment, newest first, grouped by day.
-- **Tokens** (`/tokens`): every [API token](api.md#tokens). Create yours with
-  an expiry, copy it once, and revoke any.
+- **Administration** (`/admin`): your [token](api.md#tokens) and, with a
+  management token, a page each for tokens,
+  [ACL policies](acl.md#acl-policies), [binding rules](acl.md#binding-rules)
+  and the latest changes to them. Create
+  and revoke tokens, revoke every session of a person or every token someone
+  created after seeing which ones go, and edit ACL policies and binding rules
+  here. Copy your
+  session token to use it from the [command line](cli.md).
 
 Pages refresh themselves. Approving checks the spec
 hash you reviewed: if the diff changed since you loaded the page, Nops refuses
@@ -67,13 +73,17 @@ Nops checks who you are itself; it never trusts a header from a reverse proxy.
 [configuration](configuration.md#dashboard)):
 
 - **`oidc`**: log in through your OpenID Connect provider (Authentik,
-  Authelia, Keycloak). Only users or groups on the allowlist get in, and Nops
-  refuses to start with an empty allowlist. Nops contacts the provider only at
-  login, so a provider outage doesn't stop deployments.
+  Authelia, Keycloak). With the [ACL](acl.md) off, everyone the provider
+  lets in has full control; with it on, [binding rules](acl.md#binding-rules)
+  decide what a login gets. Nops contacts the provider only at login, so a
+  provider outage doesn't stop deployments.
 - **`basic`**: [local users](#local-users--auth-modebasic) from a file.
 
-A session lasts 12 hours. Restarting Nops logs everyone out. Changes to the
-allowlist or the users file take effect at the next login.
+A login gives you a [session token](acl.md#binding-rules) that lasts 12
+hours, restarts included. Logging out revokes it. The login page also takes a
+token you paste, such as the bootstrap token: the browser keeps it until it
+closes, and logging out forgets it without revoking it. Changes to the binding
+rules, the users file or the groups file take effect at the next login.
 
 ## Local users (`-auth-mode=basic`)
 
@@ -84,9 +94,13 @@ with:
 htpasswd -nB alice
 ```
 
-Nops reads the file at startup: restart it after you change a user. There is
-no rate limit on failed logins, so put a rate-limiting proxy in front if the
-dashboard is reachable from untrusted networks.
+`-groups-file`, optional, holds one `group: user1 user2` line per group, in
+Apache's `AuthGroupFile` format, for [binding rules](acl.md#binding-rules) on
+`list.groups`. Each member must be in the users file.
+
+Nops reads both files at startup: restart it after you change a user or a
+group. There is no rate limit on failed logins, so put a rate-limiting proxy
+in front if the dashboard is reachable from untrusted networks.
 
 ## Secret redaction
 

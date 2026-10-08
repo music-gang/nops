@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/cli"
+	"github.com/music-gang/nops/internal/secret"
 )
 
 const repo = "https://git.example.com/ops/jobs.git"
@@ -30,7 +31,6 @@ var authEnv = map[string]string{
 	"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/application/o/nops/",
 	"NOPS_OIDC_CLIENT_ID":     "nops",
 	"NOPS_OIDC_CLIENT_SECRET": "client-secret",
-	"NOPS_OIDC_ALLOWED_USERS": "alice",
 }
 
 func envOf(m map[string]string) func(string) string {
@@ -73,7 +73,6 @@ func TestLoadDefaults(t *testing.T) {
 		OIDCIssuerURL:    "https://idp.example.com/application/o/nops/",
 		OIDCClientID:     "nops",
 		OIDCClientSecret: "client-secret",
-		OIDCAllowedUsers: []string{"alice"},
 		PublicURL:        "https://nops.example.com",
 		NotifyTimeout:    10 * time.Second,
 		GitPollInterval:  time.Minute,
@@ -142,7 +141,10 @@ func TestLoadEveryOption(t *testing.T) {
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
 	metricsTok := writeFile(t, "metrics-token", "metrics-secret\n")
+	bootstrap := secret.New()
+	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
+	groupsFile := writeFile(t, "groups", "ops: alice\n")
 
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
@@ -168,6 +170,8 @@ func TestLoadEveryOption(t *testing.T) {
 		"listen-addr":               "127.0.0.1:9000",
 		"webhook-secret-file":       webhookSecret,
 		"metrics-token-file":        metricsTok,
+		"acl":                       "true",
+		"acl-bootstrap-token-file":  bootstrapTok,
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
 		"notify-discord-url-file":   discordURL,
@@ -208,6 +212,9 @@ func TestLoadEveryOption(t *testing.T) {
 		WebhookSecret:          "webhook-shared-secret",
 		MetricsTokenFile:       metricsTok,
 		MetricsToken:           "metrics-secret",
+		ACL:                    true,
+		ACLBootstrapTokenFile:  bootstrapTok,
+		ACLBootstrapToken:      bootstrap,
 		NotifyWebhookURLFile:   webhookURL,
 		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
 		NotifyWebhookTokenFile: webhookTok,
@@ -239,12 +246,11 @@ func TestLoadEveryOption(t *testing.T) {
 	oidcWant.OIDCClientID = "nops-dashboard"
 	oidcWant.OIDCClientSecretFile = oidcSecret
 	oidcWant.OIDCClientSecret = "oidc-client-secret"
-	oidcWant.OIDCAllowedUsers = []string{"alice", "bob@example.com"}
-	oidcWant.OIDCAllowedGroups = []string{"nops-approvers"}
 
 	basicWant := commonWant
 	basicWant.AuthMode = "basic"
 	basicWant.UsersFile = usersFile
+	basicWant.GroupsFile = groupsFile
 
 	variants := []struct {
 		name   string
@@ -258,9 +264,8 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-issuer-url":         "https://auth.example.com/application/o/nops/",
 				"oidc-client-id":          "nops-dashboard",
 				"oidc-client-secret-file": oidcSecret,
-				"oidc-allowed-users":      "alice, bob@example.com,,",
-				"oidc-allowed-groups":     "nops-approvers",
 				"users-file":              "",
+				"groups-file":             "",
 			},
 			want: oidcWant,
 		},
@@ -271,9 +276,8 @@ func TestLoadEveryOption(t *testing.T) {
 				"oidc-issuer-url":         "",
 				"oidc-client-id":          "",
 				"oidc-client-secret-file": "",
-				"oidc-allowed-users":      "",
-				"oidc-allowed-groups":     "",
 				"users-file":              usersFile,
+				"groups-file":             groupsFile,
 			},
 			want: basicWant,
 		},
@@ -478,7 +482,7 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	oidc := map[string]string{
 		"NOPS_GIT_URL": repo, "NOPS_AUTH_MODE": "oidc",
 		"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-		"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
 	}
 	c, err = Load(nil, rawEnvOf(oidc), io.Discard)
 	if err != nil {
@@ -580,6 +584,7 @@ func checkErr(t *testing.T, err error, prefix, want string) {
 func TestLoadCrossChecks(t *testing.T) {
 	tok := writeFile(t, "token", "secret")
 	cert := writeFile(t, "cert.pem", "cert")
+	boot := writeFile(t, "bootstrap", secret.New())
 	tests := []struct {
 		name string
 		args []string
@@ -593,6 +598,9 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"webhook token without url", []string{"-git-url", repo, "-notify-webhook-token-file", tok}, "a webhook token is set without a webhook URL (-notify-webhook-url-file)"},
 		{"ntfy token without url", []string{"-git-url", repo, "-notify-ntfy-token-file", tok}, "a ntfy token is set without a ntfy URL (-notify-ntfy-url)"},
 		{"gotify token without url", []string{"-git-url", repo, "-notify-gotify-token-file", tok}, "a gotify token is set without a gotify URL (-notify-gotify-url)"},
+		{"acl without a bootstrap token", []string{"-git-url", repo, "-acl"}, "-acl needs a bootstrap token"},
+		{"a bootstrap token without acl", []string{"-git-url", repo, "-acl-bootstrap-token-file", boot}, "a bootstrap token is set without -acl"},
+		{"a bootstrap token that is not generated", []string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", tok}, "not a secret made by"},
 		{"gotify url without token", []string{"-git-url", repo, "-notify-gotify-url", "https://gotify.example.com"}, "a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"},
 	}
 	for _, tt := range tests {
@@ -608,6 +616,11 @@ func TestLoadCrossChecks(t *testing.T) {
 	secretURL := writeFile(t, "discord-url", "discord.com/api/webhooks/1/do-not-print")
 	if _, err := Load([]string{"-git-url", repo, "-notify-discord-url-file", secretURL}, envOf(nil), io.Discard); err == nil || strings.Contains(err.Error(), "do-not-print") {
 		t.Errorf("err = %v: missing, or it prints the URL", err)
+	}
+
+	// A bootstrap token made by nops secret generate turns the ACL on.
+	if c, err := Load([]string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", boot}, envOf(nil), io.Discard); err != nil || !c.ACL {
+		t.Errorf("acl with a bootstrap token: ACL = %v, %v", c != nil && c.ACL, err)
 	}
 
 	// Without a token, an ssh URL is accepted: a public repo needs no auth.
@@ -628,7 +641,6 @@ func TestLoadOIDCRequired(t *testing.T) {
 		"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/",
 		"NOPS_OIDC_CLIENT_ID":     "nops",
 		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-		"NOPS_OIDC_ALLOWED_USERS": "alice",
 	}
 	if _, err := Load(nil, rawEnvOf(full), io.Discard); err != nil {
 		t.Fatalf("full OIDC configuration: %v", err)
@@ -642,7 +654,6 @@ func TestLoadOIDCRequired(t *testing.T) {
 		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url is required with -auth-mode=oidc"},
 		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id is required with -auth-mode=oidc"},
 		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required with -auth-mode=oidc"},
-		{"allowlist", "NOPS_OIDC_ALLOWED_USERS", "nobody is allowed to log in"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -659,24 +670,28 @@ func TestLoadOIDCRequired(t *testing.T) {
 		})
 	}
 
-	// Groups alone are enough, and blanks in the lists are dropped.
-	env := map[string]string{}
-	for k, v := range full {
-		env[k] = v
-	}
-	delete(env, "NOPS_OIDC_ALLOWED_USERS")
-	env["NOPS_OIDC_ALLOWED_GROUPS"] = " nops-approvers , ,ops "
-	c, err := Load(nil, rawEnvOf(env), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(c.OIDCAllowedGroups, []string{"nops-approvers", "ops"}) || len(c.OIDCAllowedUsers) != 0 {
-		t.Errorf("groups = %q, users = %q", c.OIDCAllowedGroups, c.OIDCAllowedUsers)
+	// The allowlist options are gone: Nops refuses them and says what replaces them.
+	for name, set := range map[string]func(env map[string]string, args *[]string){
+		"flag -oidc-allowed-users":  func(_ map[string]string, args *[]string) { *args = []string{"-oidc-allowed-users", "alice"} },
+		"flag -oidc-allowed-groups": func(_ map[string]string, args *[]string) { *args = []string{"-oidc-allowed-groups=ops"} },
+		"NOPS_OIDC_ALLOWED_USERS":   func(env map[string]string, _ *[]string) { env["NOPS_OIDC_ALLOWED_USERS"] = "alice" },
+		"NOPS_OIDC_ALLOWED_GROUPS":  func(env map[string]string, _ *[]string) { env["NOPS_OIDC_ALLOWED_GROUPS"] = "ops" },
+	} {
+		env := map[string]string{}
+		for k, v := range full {
+			env[k] = v
+		}
+		var args []string
+		set(env, &args)
+		_, err := Load(args, rawEnvOf(env), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "was removed") || !strings.Contains(err.Error(), "binding rules") {
+			t.Errorf("%s: err = %v, want it removed, with what replaces it", name, err)
+		}
 	}
 
 	// The issuer is kept exactly as given: providers such as Authentik
 	// announce it with a trailing slash and the check compares the strings.
-	c, err = Load(nil, rawEnvOf(full), io.Discard)
+	c, err := Load(nil, rawEnvOf(full), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,8 +721,13 @@ func TestLoadAuthMode(t *testing.T) {
 		{"oidc with users-file set", map[string]string{
 			"NOPS_AUTH_MODE": "oidc", "NOPS_USERS_FILE": usersFile,
 			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-			"NOPS_OIDC_CLIENT_SECRET": "s3cret", "NOPS_OIDC_ALLOWED_USERS": "alice",
+			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
 		}, "-users-file is only used with -auth-mode=basic"},
+		{"oidc with groups-file set", map[string]string{
+			"NOPS_AUTH_MODE": "oidc", "NOPS_GROUPS_FILE": usersFile,
+			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
+			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
+		}, "-groups-file is only used with -auth-mode=basic"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -921,6 +941,8 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
+		{"NOPS_ACL_BOOTSTRAP_TOKEN", secret.New(), func(c *Config) string { return c.ACLBootstrapToken },
+			map[string]string{"NOPS_ACL": "true"}},
 		{"NOPS_METRICS_TOKEN", "plain-metrics-token", func(c *Config) string { return c.MetricsToken }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },

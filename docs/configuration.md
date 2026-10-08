@@ -28,6 +28,7 @@ inject secrets into the environment. These variables have no flag.
 |---|---|
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
+| `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` (`-acl-bootstrap-token-file`) | `NOPS_ACL_BOOTSTRAP_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 | `NOPS_METRICS_TOKEN_FILE` (`-metrics-token-file`) | `NOPS_METRICS_TOKEN` |
@@ -81,16 +82,24 @@ SSH. The release image can't read `file://` URLs.
 | `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL, exactly as the provider announces it, trailing slash included. |
 | `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of Nops at the provider. |
 | `-oidc-client-secret-file` | `NOPS_OIDC_CLIENT_SECRET_FILE` | none, **required** | File holding the client secret. |
-| `-oidc-allowed-users` | `NOPS_OIDC_ALLOWED_USERS` | none | Comma-separated usernames or emails allowed to log in. |
-| `-oidc-allowed-groups` | `NOPS_OIDC_ALLOWED_GROUPS` | none | Comma-separated groups allowed to log in. |
 
-Set at least one allowlist.
+Nops refuses to start with `-oidc-allowed-users` or `-oidc-allowed-groups`.
+Limit who can log in at the identity provider, or with
+[binding rules](acl.md#binding-rules) and `-acl`.
 
 ### Local users (`-auth-mode=basic`)
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-users-file` | `NOPS_USERS_FILE` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users--auth-modebasic). |
+| `-groups-file` | `NOPS_GROUPS_FILE` | none | File of [`group: user1 user2` lines](dashboard.md#local-users--auth-modebasic). |
+
+## Access control
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-acl` | `NOPS_ACL` | `false` | Turn on the [ACL](acl.md). Off, every token can do everything. |
+| `-acl-bootstrap-token-file` | `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` | none, **required** with `-acl` | File holding the [bootstrap token](acl.md#tokens), made by `nops secret generate`. |
 
 ## Notifications
 

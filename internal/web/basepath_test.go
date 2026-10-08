@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/music-gang/nops/internal/store"
 )
 
 // TestJobPathWithBasePath is the simplest check that a base path is baked
@@ -24,21 +26,21 @@ func TestJobPathWithBasePath(t *testing.T) {
 // the dashboard served under /nops: an Auth whose session cookies and
 // redirects carry that base path too, matching what cmd/nops passes both
 // web.New and the login backend from the same config.Config.BasePath.
-func newBasePathTestServer(t *testing.T) (http.Handler, *Auth) {
+func newBasePathTestServer(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tokens := openTestStore(t)
 	auth, err := NewAuth(AuthOptions{
 		Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
-		RedirectURL:  "http://nops.test/nops/auth/callback",
-		AllowedUsers: []string{"alice"},
-		BasePath:     "/nops",
-		Log:          log,
+		RedirectURL: "http://nops.test/nops/auth/callback",
+		BasePath:    "/nops",
+		Log:         log,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h, err := New(Options{
-		Auth: auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{},
+		Auth: auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: tokens,
 		BasePath: "/nops",
 		Now:      func() time.Time { return testNow },
 		Log:      log,
@@ -46,7 +48,7 @@ func newBasePathTestServer(t *testing.T) (http.Handler, *Auth) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h, auth
+	return h, tokens
 }
 
 // TestBasePathStripsPrefixFromIncomingRequests covers the whole mechanism a
@@ -55,8 +57,8 @@ func newBasePathTestServer(t *testing.T) (http.Handler, *Auth) {
 // it, and every generated link, form action and static asset address in the
 // page carries it.
 func TestBasePathStripsPrefixFromIncomingRequests(t *testing.T) {
-	h, auth := newBasePathTestServer(t)
-	sess := mintSession(t, auth, "alice")
+	h, tokens := newBasePathTestServer(t)
+	sess := mintSession(t, tokens, false, "alice")
 
 	do := func(method, target string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, target, nil)

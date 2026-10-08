@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -38,12 +39,12 @@ type overviewData struct {
 	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
 }
 
-func (s *server) gitView() gitView {
+func (s *server) gitView(r *http.Request) gitView {
 	snap, st := s.git.Snapshot(), s.git.Status()
 	v := gitView{
 		Known: snap.Commit != "", SHA: snap.Commit, Short: shortCommit(snap.Commit),
 		Subject: snap.Subject, Author: snap.Author, CommittedAt: s.when(snap.CommittedAt),
-		CheckedAt: s.when(st.CheckedAt), Error: st.Error, ErrorAt: s.when(st.ErrorAt), CanFetch: s.trigger != nil,
+		CheckedAt: s.when(st.CheckedAt), Error: st.Error, ErrorAt: s.when(st.ErrorAt), CanFetch: s.trigger != nil && subjectOf(r.Context()).acl.Global(acl.Fetch),
 	}
 	if s.commitURL != nil {
 		v.URL = s.commitURL(snap.Commit)
@@ -67,6 +68,7 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "list active deployments", err)
 		return
 	}
+	active = readable(r, active)
 	latest, err := s.latestByJob(r)
 	if err != nil {
 		s.serverError(w, r, "list latest deployments", err)
@@ -79,16 +81,16 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	data := overviewData{
 		baseData:  s.base(r, "overview"),
-		Git:       s.gitView(),
+		Git:       s.gitView(r),
 		Cycle:     s.cycleView(),
-		Attention: s.attention(s.engine.Observations(), active, latest),
+		Attention: s.attention(r, s.observations(r), active, latest),
 	}
 	for _, d := range active {
 		if d.State != store.StatePendingApproval {
 			data.InProgress = append(data.InProgress, s.card(d))
 		}
 	}
-	for _, d := range recent {
+	for _, d := range readable(r, recent) {
 		data.RecentlyCompleted = append(data.RecentlyCompleted, s.card(d))
 	}
 	s.render(w, r, "overview", data)

@@ -35,7 +35,6 @@ func TestNewAuthenticatorPicksTheRightBackend(t *testing.T) {
 		cfg := &config.Config{
 			AuthMode: "oidc", PublicURL: "https://nops.example.com",
 			OIDCIssuerURL: "https://idp.example.com/", OIDCClientID: "nops", OIDCClientSecret: "secret",
-			OIDCAllowedUsers: []string{"alice"},
 		}
 		auth, err := newAuthenticator(cfg, discardLog())
 		if err != nil {
@@ -89,7 +88,7 @@ func TestStartupAttrs(t *testing.T) {
 	for _, want := range []string{
 		"version=", "go=go", "listen_addr=:8080", "nomad_addr=https://nomad.example.com:4646",
 		"namespaces=\"[default prod]\"", "git_url=https://git.example.com/ops/jobs.git",
-		"git_branch=main", "git_path=jobs", "auth_mode=oidc", "db_path=/data/nops.db", "base_path=/nops",
+		"git_branch=main", "git_path=jobs", "auth_mode=oidc", "acl=false", "db_path=/data/nops.db", "base_path=/nops",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("starting line %q does not contain %q", line, want)

@@ -187,7 +187,11 @@ type Event struct {
 	Time         time.Time
 	From, To     State
 	Actor        string
-	Message      string
+	// AccessorID is the token the action was made with; empty for Nops itself.
+	AccessorID string
+	// Identity is the person behind that token, when it was a login.
+	Identity string
+	Message  string
 }
 
 // Transition describes a state change. Optional fields are only written when
@@ -439,8 +443,8 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 
 func insertEvent(ctx context.Context, tx *sql.Tx, depID, ts string, from, to State, actor, msg string) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO events (deployment_id, ts, from_state, to_state, actor, message) VALUES (?, ?, ?, ?, ?, ?)`,
-		depID, ts, string(from), string(to), actor, msg)
+		`INSERT INTO events (deployment_id, ts, from_state, to_state, actor, accessor_id, identity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		depID, ts, string(from), string(to), actor, AccessorFrom(ctx), IdentityFrom(ctx), msg)
 	if err != nil {
 		return fmt.Errorf("insert event: %w", err)
 	}
@@ -940,7 +944,7 @@ func (s *Store) ListRecentCompleted(ctx context.Context, limit int) ([]*Deployme
 // Events returns the audit log of a deployment in order.
 func (s *Store) Events(ctx context.Context, deploymentID string) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, deployment_id, ts, from_state, to_state, actor, message FROM events WHERE deployment_id = ? ORDER BY id`,
+		`SELECT id, deployment_id, ts, from_state, to_state, actor, accessor_id, identity, message FROM events WHERE deployment_id = ? ORDER BY id`,
 		deploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
@@ -953,7 +957,7 @@ func (s *Store) Events(ctx context.Context, deploymentID string) ([]Event, error
 			ts       string
 			from, to string
 		)
-		if err := rows.Scan(&e.ID, &e.DeploymentID, &ts, &from, &to, &e.Actor, &e.Message); err != nil {
+		if err := rows.Scan(&e.ID, &e.DeploymentID, &ts, &from, &to, &e.Actor, &e.AccessorID, &e.Identity, &e.Message); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
 		}
 		var perr error

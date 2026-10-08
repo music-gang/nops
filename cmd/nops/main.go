@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -74,12 +75,20 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.NomadTLSSkipVerify {
 		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
 	}
+	if !cfg.ACL {
+		log.Warn("the ACL is off: everyone who logs in, and every token, has full control (-acl turns it on)")
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
+	if n, err := st.DeleteExpiredTokens(ctx); err != nil {
+		return fmt.Errorf("delete the expired tokens: %w", err)
+	} else if n > 0 {
+		log.Info("deleted the expired tokens", "count", n)
+	}
 
 	nomadClient, err := nomadx.New(cfg.Nomad())
 	if err != nil {
@@ -128,7 +137,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Tokens: st, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})
@@ -196,6 +205,7 @@ func startupAttrs(cfg *config.Config) []any {
 		"git_branch", cfg.GitBranch,
 		"git_path", cfg.GitPath,
 		"auth_mode", cfg.AuthMode,
+		"acl", cfg.ACL,
 		"db_path", cfg.DBPath,
 		"base_path", cfg.BasePath,
 		"sync_window_time_zone", cfg.SyncWindowLocation.String(),
@@ -209,14 +219,12 @@ func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, 
 	case "oidc":
 		return web.NewAuth(web.AuthOptions{
 			Issuer: cfg.OIDCIssuerURL, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
-			RedirectURL:   cfg.PublicURL + "/auth/callback",
-			AllowedUsers:  cfg.OIDCAllowedUsers,
-			AllowedGroups: cfg.OIDCAllowedGroups,
-			BasePath:      cfg.BasePath,
-			Log:           log,
+			RedirectURL: cfg.PublicURL + "/auth/callback",
+			BasePath:    cfg.BasePath,
+			Log:         log,
 		})
 	case "basic":
-		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, BasePath: cfg.BasePath, Log: log})
+		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, GroupsFile: cfg.GroupsFile, Log: log})
 	default:
 		// config.Load's check() already refuses any other value.
 		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)

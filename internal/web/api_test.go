@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,26 +12,35 @@ import (
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
+	"github.com/music-gang/nops/internal/secret"
 	"github.com/music-gang/nops/internal/store"
 )
 
-// makeToken makes a token for owner and returns its secret and what the store
-// keeps of it.
-func makeToken(t *testing.T, ts *testServer, owner string, expires time.Time) (string, store.Token) {
+// makeToken makes a management token called name and returns its secret and
+// what the store keeps of it. With the ACL off it is the token of any script.
+func makeToken(t *testing.T, ts *testServer, name string, expires time.Time) (string, store.ACLToken) {
 	t.Helper()
-	secret := newToken()
-	tok, err := ts.tokens.CreateToken(t.Context(), owner, "test", hashToken(secret), expires)
+	return makeTokenOf(t, ts, store.ACLToken{Name: name, Type: store.TokenManagement, ExpiresAt: expires})
+}
+
+// makeTokenOf stores the token, as made while the server's ACL is in the mode
+// it runs in, and returns its secret.
+func makeTokenOf(t *testing.T, ts *testServer, tok store.ACLToken) (string, store.ACLToken) {
+	t.Helper()
+	sec := secret.New()
+	tok.ACL = ts.aclOn
+	tok, err := ts.tokens.CreateACLToken(t.Context(), tok, hashToken(sec), store.Audit{Actor: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return secret, tok
+	return sec, tok
 }
 
 // apiToken is makeToken for the test that needs only the secret.
-func apiToken(t *testing.T, ts *testServer, owner string, expires time.Time) string {
+func apiToken(t *testing.T, ts *testServer, name string, expires time.Time) string {
 	t.Helper()
-	secret, _ := makeToken(t, ts, owner, expires)
-	return secret
+	sec, _ := makeToken(t, ts, name, expires)
+	return sec
 }
 
 // api sends a request to /api/ with the token (none if empty) and a JSON body
@@ -84,7 +91,7 @@ func TestAPIRequiresAValidToken(t *testing.T) {
 	expiring := apiToken(t, ts, "alice", testNow.Add(time.Hour))
 
 	revoked, revokedToken := makeToken(t, ts, "alice", time.Time{})
-	if err := ts.tokens.RevokeToken(t.Context(), revokedToken.ID); err != nil {
+	if err := ts.tokens.RevokeACLToken(t.Context(), revokedToken.AccessorID, store.Audit{Actor: "test"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,38 +131,25 @@ func TestAPIRequiresAValidToken(t *testing.T) {
 	}
 }
 
-// A token stays valid after its owner leaves the allowlist or the users file
-// (docs/api.md#tokens): the API reads the token, never the login.
-func TestAPITokenOutlivesItsOwnersLogin(t *testing.T) {
-	resumeAsAlice := func(t *testing.T, ts *testServer, token string) {
-		t.Helper()
-		if rec := ts.api("POST", "/api/jobs/default/web/resume", token, ""); rec.Code != http.StatusNoContent {
-			t.Fatalf("status %d, want 204: %s", rec.Code, rec.Body)
-		}
-		if calls := ts.engine.resumeCalls; len(calls) != 1 || calls[0].actor != "alice" {
-			t.Errorf("resume calls = %+v, want one as alice", calls)
-		}
+// A token stays valid after the person who created it logs out, or can no
+// longer log in (docs/api.md#tokens): the API reads the token, never the login.
+func TestAPITokenOutlivesItsCreatorsSession(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	session := ts.session("alice")
+	token, _ := makeTokenOf(t, ts, store.ACLToken{Name: "alice-ci", Type: store.TokenManagement, CreatorName: "alice", CreatorIdentity: "test:alice"})
+
+	if rec := ts.do("POST", "/auth/logout", strings.NewReader(""), session); rec.Code != http.StatusSeeOther {
+		t.Fatalf("logout: status %d", rec.Code)
 	}
-
-	t.Run("allowlist", func(t *testing.T) {
-		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-		token := apiToken(t, ts, "alice", time.Time{})
-		ts.auth.opts.AllowedUsers = []string{"bob"} // alice is no longer listed
-		resumeAsAlice(t, ts, token)
-	})
-
-	t.Run("users file", func(t *testing.T) {
-		basic, err := NewBasicAuth(BasicAuthOptions{
-			UsersFile: writeUsersFile(t, "bob:"+bcryptHash(t, "s3cret")+"\n"), // no alice
-			PublicURL: "http://nops.test",
-			Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ts := newTestServerLogin(t, &fakeStore{}, &fakeEngine{}, "", nil, "", basic)
-		resumeAsAlice(t, ts, apiToken(t, ts, "alice", time.Time{}))
-	})
+	if rec := ts.do("GET", "/", nil, session); rec.Code != http.StatusFound {
+		t.Errorf("the session after the logout: status %d, want the login redirect", rec.Code)
+	}
+	if rec := ts.api("POST", "/api/jobs/default/web/resume", token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("the token after the logout: status %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if calls := ts.engine.resumeCalls; len(calls) != 1 || calls[0].actor != "alice-ci" {
+		t.Errorf("resume calls = %+v, want one as the token alice-ci", calls)
+	}
 }
 
 // A login session opens the dashboard and a token opens the API: neither
@@ -165,14 +159,14 @@ func TestAPIAndDashboardDoNotShareTheirCredentials(t *testing.T) {
 	token := apiToken(t, ts, "alice", time.Time{})
 
 	req := httptest.NewRequest("GET", "/api/jobs", nil)
-	req.AddCookie(mintSession(t, ts.auth, "alice"))
+	req.AddCookie(ts.session("alice"))
 	rec := httptest.NewRecorder()
 	ts.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("a session on /api/jobs: status %d, want 401", rec.Code)
 	}
 
-	for _, target := range []string{"/jobs", "/history", "/tokens"} {
+	for _, target := range []string{"/jobs", "/history", "/admin"} {
 		req := httptest.NewRequest("GET", target, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
@@ -196,9 +190,9 @@ func TestAPIUnknownPathsAreJSON404BehindTheToken(t *testing.T) {
 	}
 }
 
-// Every action calls the engine as the token's owner, the way the dashboard
+// Every action calls the engine as the token, the way the dashboard
 // calls it as the logged-in user.
-func TestAPIActionsActAsTheTokenOwner(t *testing.T) {
+func TestAPIActionsActAsTheToken(t *testing.T) {
 	en := &fakeEngine{retryNext: "d2", deployNowNext: "d3"}
 	ts := newTestServer(t, &fakeStore{}, en, "")
 	token := apiToken(t, ts, "carol", time.Time{})

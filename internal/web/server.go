@@ -1,8 +1,9 @@
 // Package web serves the dashboard, the JSON API (api.go, authenticated by the
-// tokens of tokens.go) and the git webhook. Authentication is
+// tokens of access.go) and the git webhook. Authentication is
 // session.go (shared session/cookie/actor mechanics), auth.go (OpenID
 // Connect) and auth_basic.go (local users); this file wires the pages, the
-// diff renderer and the webhook behind whichever Authenticator it is given.
+// diff renderer and the webhook behind whichever Authenticator it is given;
+// login.go is what happens after a person has proved who they are.
 // The pages are documented in docs/dashboard.md.
 package web
 
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/store"
@@ -71,14 +73,27 @@ type Engine interface {
 	Status() engine.Status
 }
 
-// Tokens is what the API tokens need from SQLite: the Tokens page lists,
-// creates and revokes them, and /api/ looks the owner of one up. *store.Store
-// implements it.
-type Tokens interface {
-	CreateToken(ctx context.Context, owner, name, hash string, expiresAt time.Time) (store.Token, error)
-	Tokens(ctx context.Context) ([]store.Token, error)
-	RevokeToken(ctx context.Context, id string) error
-	TokenOwner(ctx context.Context, hash string) (string, error)
+// AccessStore is what the access control needs from SQLite: the ACL policies,
+// the binding rules and the tokens, which the Administration page and /api/acl/
+// change and every request looks up. *store.Store implements it.
+type AccessStore interface {
+	PutACLPolicy(ctx context.Context, p store.ACLPolicy, by store.Audit) error
+	ACLPolicy(ctx context.Context, name string) (store.ACLPolicy, error)
+	ACLPolicies(ctx context.Context) ([]store.ACLPolicy, error)
+	DeleteACLPolicy(ctx context.Context, name string, by store.Audit) error
+	CreateACLToken(ctx context.Context, t store.ACLToken, secretHash string, by store.Audit) (store.ACLToken, error)
+	ACLTokens(ctx context.Context) ([]store.ACLToken, error)
+	ACLToken(ctx context.Context, accessorID string) (store.ACLToken, error)
+	ACLTokenBySecret(ctx context.Context, hash string, acl bool) (store.ACLToken, error)
+	RevokeACLToken(ctx context.Context, accessorID string, by store.Audit) error
+	TokensToRevoke(ctx context.Context, r store.Revocation) ([]store.ACLToken, error)
+	RevokeACLTokens(ctx context.Context, r store.Revocation, by store.Audit) ([]string, error)
+	ACLChanges(ctx context.Context, limit int) ([]store.ACLChange, error)
+	DeleteExpiredTokens(ctx context.Context) (int, error)
+	PutBindingRule(ctx context.Context, r store.BindingRule, by store.Audit) (store.BindingRule, error)
+	BindingRule(ctx context.Context, id string) (store.BindingRule, error)
+	BindingRules(ctx context.Context) ([]store.BindingRule, error)
+	DeleteBindingRule(ctx context.Context, id string, by store.Audit) error
 }
 
 // Git is what the dashboard shows about the repository nops reads: the
@@ -86,17 +101,6 @@ type Tokens interface {
 type Git interface {
 	Snapshot() gitwatch.Snapshot
 	Status() gitwatch.Status
-}
-
-// Authenticator is what the dashboard needs from a login backend: NewAuth
-// (OpenID Connect) and NewBasicAuth (local users) both implement it, and
-// -auth-mode picks exactly one (docs/dashboard.md#authentication).
-type Authenticator interface {
-	// Register adds the backend's /auth/* routes to mux.
-	Register(mux *http.ServeMux)
-	// Require lets a request through only with a valid session, and puts
-	// the actor in its context (UserFrom).
-	Require(next http.Handler) http.Handler
 }
 
 var (
@@ -110,7 +114,17 @@ type Options struct {
 	Store  Store
 	Engine Engine
 	Git    Git
-	Tokens Tokens
+	Access AccessStore
+
+	// Secure makes the cookies Secure: the public URL is https.
+	Secure bool
+
+	// ACL turns the access control on (-acl, docs/acl.md). Off, every token
+	// and every login can do everything.
+	ACL bool
+	// BootstrapToken is the secret of the bootstrap token, a management token
+	// that lives in configuration. Empty unless ACL is on.
+	BootstrapToken string
 
 	// NomadUIURL is where a person opens Nomad in a browser (-nomad-ui-url), the
 	// base the dashboard's "Open in Nomad" links are built on. Optional: empty
@@ -165,7 +179,11 @@ type server struct {
 	store     Store
 	engine    Engine
 	git       Git
-	tokens    Tokens
+	access    AccessStore
+	aclOn     bool
+	bootstrap string
+	secure    bool // cookies are Secure
+	xorigin   *http.CrossOriginProtection
 	nomad     Nomad  // nil: no Nomad panel
 	nomadUI   string // "": no links into the Nomad UI
 	panels    panelCache
@@ -186,8 +204,20 @@ type server struct {
 // once, so a broken one fails loud at startup rather than on the first
 // request.
 func New(o Options) (http.Handler, error) {
-	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Tokens == nil || o.Log == nil {
-		return nil, errors.New("web: Auth, Store, Engine, Git, Tokens and Log are required")
+	s, err := newServer(o)
+	if err != nil {
+		return nil, err
+	}
+	return s.handler(), nil
+}
+
+// newServer checks the options and builds the server behind New.
+func newServer(o Options) (*server, error) {
+	if o.Auth == nil || o.Store == nil || o.Engine == nil || o.Git == nil || o.Access == nil || o.Log == nil {
+		return nil, errors.New("web: Auth, Store, Engine, Git, Access and Log are required")
+	}
+	if o.ACL && o.BootstrapToken == "" {
+		return nil, errors.New("web: BootstrapToken is required when ACL is on")
 	}
 	if o.WebhookSecret != "" && o.Trigger == nil {
 		return nil, errors.New("web: Trigger is required when WebhookSecret is set")
@@ -208,7 +238,11 @@ func New(o Options) (http.Handler, error) {
 		store:     o.Store,
 		engine:    o.Engine,
 		git:       o.Git,
-		tokens:    o.Tokens,
+		access:    o.Access,
+		aclOn:     o.ACL,
+		bootstrap: o.BootstrapToken,
+		secure:    o.Secure,
+		xorigin:   http.NewCrossOriginProtection(),
 		nomad:     o.Nomad,
 		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
 		trigger:   o.Trigger,
@@ -223,7 +257,7 @@ func New(o Options) (http.Handler, error) {
 		static:    staticDir,
 		started:   time.Now(),
 	}
-	return s.handler(), nil
+	return s, nil
 }
 
 // handler wraps the routes with the security headers and, if the dashboard
@@ -261,7 +295,10 @@ func parseTemplates() (*template.Template, error) {
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	s.auth.Register(mux) // GET/POST /auth/*, whichever backend this is
+	s.auth.Register(mux, s) // the /auth/* routes of the auth method
+	mux.HandleFunc("GET "+loginPath, s.loginPage)
+	mux.Handle("POST "+tokenPath, s.xorigin.Handler(http.HandlerFunc(s.pasteToken)))
+	mux.Handle("POST "+logoutPath, s.xorigin.Handler(http.HandlerFunc(s.logout)))
 
 	mux.HandleFunc("GET /healthz", s.healthz)
 	if s.metrics != nil {
@@ -274,26 +311,40 @@ func (s *server) routes() *http.ServeMux {
 	static := http.FileServerFS(s.static)
 	mux.Handle("GET /static/", noStoreExempt(http.StripPrefix("/static/", static)))
 
-	mux.Handle("GET /{$}", s.auth.Require(http.HandlerFunc(s.index)))
-	mux.Handle("GET /jobs", s.auth.Require(http.HandlerFunc(s.jobs)))
-	mux.Handle("GET /jobs/{namespace}/{job}", s.auth.Require(http.HandlerFunc(s.job)))
-	mux.Handle("GET /history", s.auth.Require(http.HandlerFunc(s.history)))
-	mux.Handle("GET /drift", s.auth.Require(http.HandlerFunc(s.drift)))
-	mux.Handle("GET /deployments/{id}", s.auth.Require(http.HandlerFunc(s.deployment)))
-	mux.Handle("GET /deployments/{id}/status", s.auth.Require(http.HandlerFunc(s.deploymentStatus)))
-	mux.Handle("POST /deployments/{id}/approve", s.auth.Require(http.HandlerFunc(s.approve)))
-	mux.Handle("POST /deployments/{id}/reject", s.auth.Require(http.HandlerFunc(s.reject)))
-	mux.Handle("POST /deployments/{id}/promote", s.auth.Require(http.HandlerFunc(s.promote)))
-	mux.Handle("POST /deployments/{id}/retry", s.auth.Require(http.HandlerFunc(s.retry)))
-	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.auth.Require(http.HandlerFunc(s.pause)))
-	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.auth.Require(http.HandlerFunc(s.resume)))
-	mux.Handle("POST /jobs/{namespace}/{job}/deploy-now", s.auth.Require(http.HandlerFunc(s.deployNow)))
+	mux.Handle("GET /{$}", s.page(anyToken(), s.index))
+	mux.Handle("GET /jobs", s.page(anyToken(), s.jobs))
+	mux.Handle("GET /jobs/{namespace}/{job}", s.page(inNamespace(acl.Read), s.job))
+	mux.Handle("GET /history", s.page(anyToken(), s.history))
+	mux.Handle("GET /drift", s.page(anyToken(), s.drift))
+	mux.Handle("GET /deployments/{id}", s.page(onDeployment(acl.Read), s.deployment))
+	mux.Handle("GET /deployments/{id}/status", s.page(onDeployment(acl.Read), s.deploymentStatus))
+	mux.Handle("POST /deployments/{id}/approve", s.page(onDeployment(acl.Approve), s.approve))
+	mux.Handle("POST /deployments/{id}/reject", s.page(onDeployment(acl.Approve), s.reject))
+	mux.Handle("POST /deployments/{id}/promote", s.page(onDeployment(acl.Promote), s.promote))
+	mux.Handle("POST /deployments/{id}/retry", s.page(onDeployment(acl.Retry), s.retry))
+	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.page(inNamespace(acl.Pause), s.pause))
+	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.page(inNamespace(acl.Pause), s.resume))
+	mux.Handle("POST /jobs/{namespace}/{job}/deploy-now", s.page(inNamespace(acl.DeployNow), s.deployNow))
 	if s.trigger != nil {
-		mux.Handle("POST /fetch", s.auth.Require(http.HandlerFunc(s.fetchNow)))
+		mux.Handle("POST /fetch", s.page(globally(acl.Fetch), s.fetchNow))
 	}
-	mux.Handle("GET /tokens", s.auth.Require(http.HandlerFunc(s.tokensPage)))
-	mux.Handle("POST /tokens", s.auth.Require(http.HandlerFunc(s.createToken)))
-	mux.Handle("POST /tokens/{id}/revoke", s.auth.Require(http.HandlerFunc(s.revokeToken)))
+	mux.Handle("GET /admin", s.page(anyToken(), s.adminPage))
+	mux.Handle("GET /admin/tokens", s.page(management(), s.tokensPage))
+	mux.Handle("GET /admin/tokens/new", s.page(management(), s.newTokenPage))
+	mux.Handle("GET /admin/policies", s.page(management(), s.policiesPage))
+	mux.Handle("GET /admin/policies/new", s.page(management(), s.newPolicyPage))
+	mux.Handle("GET /admin/policies/{name}/edit", s.page(management(), s.policyPage))
+	mux.Handle("GET /admin/binding-rules", s.page(management(), s.rulesPage))
+	mux.Handle("GET /admin/binding-rules/new", s.page(management(), s.newRulePage))
+	mux.Handle("GET /admin/changes", s.page(management(), s.changesPage))
+	mux.Handle("POST /admin/policies", s.page(management(), s.savePolicy))
+	mux.Handle("POST /admin/policies/{name}/delete", s.page(management(), s.deletePolicy))
+	mux.Handle("POST /admin/tokens", s.page(management(), s.createTokenForm))
+	mux.Handle("POST /admin/tokens/{accessor}/revoke", s.page(management(), s.revokeTokenForm))
+	mux.Handle("POST /admin/tokens/revoke", s.page(management(), s.revokeTokensForm))
+	mux.Handle("GET /admin/binding-rules/{id}/edit", s.page(management(), s.bindingRulePage))
+	mux.Handle("POST /admin/binding-rules", s.page(management(), s.saveBindingRule))
+	mux.Handle("POST /admin/binding-rules/{id}/delete", s.page(management(), s.deleteBindingRule))
 
 	s.apiRoutes(mux)
 

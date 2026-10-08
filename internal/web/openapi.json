@@ -4,7 +4,7 @@
     "title": "Nops API",
     "version": "1",
     "license": { "name": "Apache 2.0", "identifier": "Apache-2.0" },
-    "description": "Read jobs and deployments, and act on them. A token stands for its owner: it does what they can do on the dashboard, with the same rules."
+    "description": "Read jobs and deployments, act on them, and manage ACL policies, binding rules and tokens. A token does what its ACL policies allow, with the dashboard's rules."
   },
   "servers": [{ "url": ".." }],
   "security": [{ "bearer": [] }],
@@ -55,6 +55,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobDetail" } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
@@ -95,6 +96,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentDetail" } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
@@ -113,6 +115,7 @@
           "204": { "description": "Approved." },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -127,6 +130,7 @@
         "responses": {
           "204": { "description": "Rejected." },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
@@ -140,6 +144,7 @@
         "responses": {
           "204": { "description": "Promoted." },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -157,6 +162,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentID" } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -175,6 +181,7 @@
           "204": { "description": "Paused." },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -189,6 +196,7 @@
         "responses": {
           "204": { "description": "Resumed." },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -211,6 +219,7 @@
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -223,19 +232,295 @@
         "operationId": "fetchGit",
         "responses": {
           "202": { "description": "The poll is asked for; it runs on its own." },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/acl/policies": {
+      "get": {
+        "summary": "The ACL policies: all for a management token, the ones a client token carries",
+        "operationId": "listACLPolicies",
+        "responses": {
+          "200": {
+            "description": "The ACL policies, by name.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["acl_policies"], "properties": { "acl_policies": { "type": "array", "items": { "$ref": "#/components/schemas/ACLPolicy" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/policies/{name}": {
+      "get": {
+        "summary": "One ACL policy with its rules",
+        "operationId": "getACLPolicy",
+        "parameters": [{ "$ref": "#/components/parameters/PolicyName" }],
+        "responses": {
+          "200": {
+            "description": "The ACL policy.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLPolicy" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "put": {
+        "summary": "Create an ACL policy or replace it",
+        "operationId": "putACLPolicy",
+        "parameters": [{ "$ref": "#/components/parameters/PolicyName" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLPolicyBody" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The ACL policy as saved.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLPolicy" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "delete": {
+        "summary": "Delete an ACL policy",
+        "operationId": "deleteACLPolicy",
+        "parameters": [{ "$ref": "#/components/parameters/PolicyName" }],
+        "responses": {
+          "204": { "description": "Deleted." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/binding-rules": {
+      "get": {
+        "summary": "Every binding rule",
+        "operationId": "listBindingRules",
+        "responses": {
+          "200": {
+            "description": "The binding rules, oldest first.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["binding_rules"], "properties": { "binding_rules": { "type": "array", "items": { "$ref": "#/components/schemas/BindingRule" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "post": {
+        "summary": "Create a binding rule",
+        "operationId": "createBindingRule",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BindingRuleBody" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "The binding rule, with its ID.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BindingRule" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/binding-rules/{id}": {
+      "get": {
+        "summary": "One binding rule",
+        "operationId": "getBindingRule",
+        "parameters": [{ "$ref": "#/components/parameters/BindingRuleID" }],
+        "responses": {
+          "200": {
+            "description": "The binding rule.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BindingRule" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "put": {
+        "summary": "Replace a binding rule",
+        "operationId": "putBindingRule",
+        "parameters": [{ "$ref": "#/components/parameters/BindingRuleID" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BindingRuleBody" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The binding rule as saved.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BindingRule" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a binding rule",
+        "operationId": "deleteBindingRule",
+        "parameters": [{ "$ref": "#/components/parameters/BindingRuleID" }],
+        "responses": {
+          "204": { "description": "Deleted." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/tokens": {
+      "get": {
+        "summary": "Every token",
+        "operationId": "listACLTokens",
+        "responses": {
+          "200": {
+            "description": "The tokens, newest first.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["tokens"], "properties": { "tokens": { "type": "array", "items": { "$ref": "#/components/schemas/ACLToken" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "post": {
+        "summary": "Create a token",
+        "operationId": "createACLToken",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLTokenBody" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "The token, with its secret.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewACLToken" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/tokens/revoke-sessions": {
+      "post": {
+        "summary": "Revoke every session of a person",
+        "operationId": "revokeACLSessions",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["identity"], "properties": { "identity": { "type": "string", "description": "The identity of one of the person's sessions." } } } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Revoked" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/tokens/revoke-created": {
+      "post": {
+        "summary": "Revoke every token a person or a token created, and the tokens those created",
+        "operationId": "revokeACLTokensCreated",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "Set one of the two.", "properties": {
+            "creator_identity": { "type": "string", "description": "The identity of a person." },
+            "creator_accessor_id": { "type": "string", "description": "The accessor ID of a token, bootstrap for the bootstrap token." }
+          } } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Revoked" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/tokens/{accessor_id}": {
+      "get": {
+        "summary": "One token",
+        "operationId": "getACLToken",
+        "parameters": [{ "$ref": "#/components/parameters/AccessorID" }],
+        "responses": {
+          "200": {
+            "description": "The token.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLToken" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "delete": {
+        "summary": "Revoke a token",
+        "operationId": "revokeACLToken",
+        "parameters": [{ "$ref": "#/components/parameters/AccessorID" }],
+        "responses": {
+          "204": { "description": "Revoked." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/token/self": {
+      "get": {
+        "summary": "The token of the request",
+        "operationId": "getSelfACLToken",
+        "responses": {
+          "200": {
+            "description": "The token.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ACLToken" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/acl/changes": {
+      "get": {
+        "summary": "The latest changes to ACL policies and tokens",
+        "operationId": "listACLChanges",
+        "responses": {
+          "200": {
+            "description": "The changes, newest first.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["changes"], "properties": { "changes": { "type": "array", "items": { "$ref": "#/components/schemas/Change" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "bearer": { "type": "http", "scheme": "bearer", "description": "A token from the dashboard's Tokens page." }
+      "bearer": { "type": "http", "scheme": "bearer", "description": "A token from the dashboard's Administration page." }
     },
     "parameters": {
       "Namespace": { "name": "namespace", "in": "path", "required": true, "schema": { "type": "string" } },
       "Job": { "name": "job", "in": "path", "required": true, "schema": { "type": "string" } },
-      "DeploymentID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      "DeploymentID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "PolicyName": { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+      "AccessorID": { "name": "accessor_id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "BindingRuleID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
     },
     "responses": {
       "BadRequest": {
@@ -246,8 +531,12 @@
         "description": "No valid token: it is missing, unknown, expired, or revoked.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
+      "Forbidden": {
+        "description": "The token is valid, and its ACL policies do not allow this.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
       "NotFound": {
-        "description": "The job or deployment does not exist.",
+        "description": "The job, deployment, ACL policy or token does not exist.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
       "Conflict": {
@@ -257,6 +546,10 @@
       "ServerError": {
         "description": "Nops hit an error and logged it.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Revoked": {
+        "description": "The accessor IDs of the tokens revoked, newest first; none is not an error.",
+        "content": { "application/json": { "schema": { "type": "object", "required": ["revoked"], "properties": { "revoked": { "type": "array", "items": { "type": "string" } } } } } }
       }
     },
     "schemas": {
@@ -360,6 +653,7 @@
           "from": { "type": "string" },
           "to": { "type": "string" },
           "actor": { "type": "string" },
+          "accessor_id": { "type": "string", "description": "The token the action was made with. Absent for Nops itself." },
           "message": { "type": "string" }
         }
       },
@@ -388,6 +682,100 @@
             }
           }
         ]
+      },
+      "ACLPolicy": {
+        "type": "object",
+        "required": ["name", "description", "rules", "created_at", "modified_at"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "rules": { "type": "string", "description": "The rules, in HCL." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "modified_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ACLPolicyBody": {
+        "type": "object",
+        "required": ["rules"],
+        "properties": {
+          "description": { "type": "string" },
+          "rules": { "type": "string", "description": "The rules, in HCL. Rules that do not parse are refused and nothing is saved." }
+        }
+      },
+      "BindingRule": {
+        "type": "object",
+        "required": ["id", "description", "auth_method", "selector", "bind_type", "created_at", "modified_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "auth_method": { "type": "string", "enum": ["oidc", "basic"] },
+          "selector": { "type": "string", "description": "A go-bexpr expression on the claims of a login: value.username, value.sub and list.groups. Empty matches every login of the auth method." },
+          "bind_type": { "type": "string", "enum": ["policy", "management"] },
+          "bind_name": { "type": "string", "description": "The ACL policy a policy rule binds. Absent for management." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "modified_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BindingRuleBody": {
+        "type": "object",
+        "required": ["auth_method", "bind_type"],
+        "properties": {
+          "description": { "type": "string", "maxLength": 200 },
+          "auth_method": { "type": "string", "enum": ["oidc", "basic"] },
+          "selector": { "type": "string", "maxLength": 1024, "description": "Refused if it does not parse or reads a claim that does not exist." },
+          "bind_type": { "type": "string", "enum": ["policy", "management"] },
+          "bind_name": { "type": "string", "description": "The ACL policy to bind, which must exist. Empty for management." }
+        }
+      },
+      "ACLToken": {
+        "type": "object",
+        "required": ["accessor_id", "name", "type", "origin", "policies", "created_at"],
+        "properties": {
+          "accessor_id": { "type": "string", "description": "Public: it names the token in logs and the audit, and grants nothing." },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["management", "client"] },
+          "origin": { "type": "string", "enum": ["login", "created"], "description": "A login made a session token; a person or a token created the others." },
+          "identity": { "type": "string", "description": "The person a session token stands for. Absent for a created token." },
+          "policies": { "type": "array", "items": { "type": "string" }, "description": "The ACL policies a client token carries, by name." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time", "description": "Absent for a token that never expires." },
+          "creator_accessor_id": { "type": "string", "description": "The token that made this one. It stays after that token is gone." },
+          "creator_name": { "type": "string" },
+          "creator_identity": { "type": "string", "description": "The person who created the token, when it was one." }
+        }
+      },
+      "NewACLToken": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ACLToken" },
+          {
+            "type": "object",
+            "required": ["secret"],
+            "properties": { "secret": { "type": "string", "description": "The secret. Nops shows it once and keeps only its hash." } }
+          }
+        ]
+      },
+      "ACLTokenBody": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 100 },
+          "type": { "type": "string", "enum": ["management", "client"], "description": "Default client." },
+          "policies": { "type": "array", "items": { "type": "string" }, "description": "The ACL policies of a client token. Each must exist." },
+          "expires_in": { "type": "string", "description": "A duration such as 720h. Empty: the token never expires." }
+        }
+      },
+      "Change": {
+        "type": "object",
+        "required": ["time", "accessor_id", "actor", "action", "kind", "object"],
+        "properties": {
+          "time": { "type": "string", "format": "date-time" },
+          "accessor_id": { "type": "string", "description": "The token used. Empty when the change was made without one." },
+          "actor": { "type": "string" },
+          "identity": { "type": "string", "description": "The person behind the token used. Absent when it was not a login." },
+          "action": { "type": "string", "enum": ["create", "update", "delete", "revoke"] },
+          "kind": { "type": "string", "enum": ["acl-policy", "binding-rule", "token"] },
+          "object": { "type": "string", "description": "The name of an ACL policy, the ID of a binding rule, or the accessor ID of a token." }
+        }
       }
     }
   }

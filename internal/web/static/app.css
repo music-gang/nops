@@ -3,8 +3,7 @@
  * A dense, row-oriented reading of GitHub's Primer (primer.style): its color
  * tokens for light and dark, a 14px base, 6px corners, system fonts. One thing
  * per line, cut with an ellipsis rather than wrapped, with the whole value on
- * hover (title=); an operator scans a list, they do not read it. See
- * docs/design/decisions.md.
+ * hover (title=); an operator scans a list, they do not read it.
  *
  * No build step: plain CSS, custom properties as tokens, redefined for dark
  * mode under prefers-color-scheme. Only htmx is loaded, vendored under
@@ -46,6 +45,13 @@
 
   --shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
   --radius: 6px;
+
+  /* Code: the colors of Primer's syntax highlighting. */
+  --code-keyword: #cf222e;
+  --code-attr: #953800;
+  --code-string: #0a3069;
+  --code-constant: #0550ae;
+  --code-comment: #59636e;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -79,6 +85,12 @@
     --header-fg-muted: rgba(240, 246, 252, 0.7);
 
     --shadow: none;
+
+    --code-keyword: #ff7b72;
+    --code-attr: #ffa657;
+    --code-string: #a5d6ff;
+    --code-constant: #79c0ff;
+    --code-comment: #9198a1;
   }
 }
 
@@ -275,6 +287,9 @@ p.empty.box { padding: 16px; }
 .btn--primary:hover { background: var(--success-emphasis-hover); }
 .btn--danger { color: var(--danger); }
 .btn--danger:hover { color: #fff; background: var(--danger-emphasis); border-color: var(--danger-emphasis); }
+/* The button that confirms a revocation or a deletion. */
+.btn--danger-solid { color: #fff; background: var(--danger-emphasis); border-color: rgba(31, 35, 40, 0.15); }
+.btn--danger-solid:hover { color: #fff; background: var(--danger); }
 
 form { margin: 0; }
 
@@ -288,6 +303,8 @@ form { margin: 0; }
 }
 .flash--error { color: var(--fg); background: var(--danger-subtle); border-color: var(--danger-border); }
 .flash--warn { color: var(--fg); background: var(--attention-subtle); border-color: var(--attention-border); }
+.flash--success { color: var(--fg); background: var(--success-subtle); border-color: var(--success-border); }
+p + .input-group { margin-top: 8px; }
 .flash--action { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 /* Inside a box: a full-width band, not a card of its own. */
 .flash--flat { margin: 0; border-width: 1px 0 0; border-radius: 0; }
@@ -488,15 +505,129 @@ form { margin: 0; }
   border-radius: var(--radius);
 }
 
+/* -- Administration: GitHub's settings, a menu at the side and a page each ---------------------- */
+
+.settings { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+
+.settings-nav { display: flex; flex-direction: column; gap: 2px; }
+.settings-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 8px;
+  color: var(--fg);
+  border-radius: var(--radius);
+}
+.settings-nav__item:hover { background: var(--neutral-subtle); text-decoration: none; }
+.settings-nav__item.is-active { font-weight: 600; background: var(--neutral-subtle); }
+.settings-nav__item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 6px;
+  bottom: 6px;
+  width: 4px;
+  background: var(--accent);
+  border-radius: var(--radius);
+}
+
+.subhead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-muted);
+}
+.subhead__title { font-size: 20px; font-weight: 400; line-height: 1.5; }
+.subhead__desc { color: var(--fg-muted); }
+.subhead .crumbs { margin-bottom: 0; }
+.subhead__title .mono { font-size: inherit; }
+.subhead > .btn { flex: none; }
+
+/* A form: one field under the other, its label above and a hint below. */
+.form { max-width: 640px; }
+.field { margin: 0 0 24px; padding: 0; border: 0; min-width: 0; }
+.field__label { display: block; margin-bottom: 4px; padding: 0; font-weight: 600; }
+.field__optional { margin-left: 4px; color: var(--fg-muted); font-size: 12px; font-weight: 400; }
+.field__caption { display: block; margin-top: 4px; color: var(--fg-muted); font-size: 12px; }
+.field .input { margin: 0; max-width: 440px; }
+.field .input--wide, .field textarea.input { max-width: none; }
+.input--auto { width: auto; min-width: 12rem; }
+textarea.input { resize: vertical; }
+.input.mono { font-family: var(--font-mono); font-size: 13px; }
+legend.field__label + .field__caption { margin: -4px 0 8px; }
+
+/* A radio button or a checkbox, with its label and a line under it. */
+.choice { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; cursor: pointer; }
+.choice > input { flex: none; margin: 3px 0 0; }
+.choice__label { display: block; font-weight: 600; }
+.choice .field__caption { margin-top: 0; }
+
+.form__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.box__body > .form__actions, .confirm-list + .form__actions { margin-top: 16px; }
+
+/* The code editor (editor.js): the textarea, its text transparent, over the
+   same text in color. Both lay it out alike, without wrapping. */
+.code-editor { position: relative; }
+.code-editor__view,
+.field .code-editor__input {
+  margin: 0;
+  padding: 5px 12px;
+  font: 13px/20px var(--font-mono);
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+.code-editor__view { position: absolute; inset: 0; overflow: hidden; color: var(--fg); background: var(--canvas); pointer-events: none; }
+.field .code-editor__input { position: relative; overflow: auto; color: transparent; background: transparent; caret-color: var(--fg); border-color: var(--border); }
+.code-editor__input::placeholder { color: var(--fg-subtle); }
+.code-editor__input::selection { color: transparent; background: rgba(84, 174, 255, 0.4); }
+.tok-keyword { color: var(--code-keyword); }
+.tok-attr { color: var(--code-attr); }
+.tok-string { color: var(--code-string); }
+.tok-constant { color: var(--code-constant); }
+.tok-comment { color: var(--code-comment); font-style: italic; }
+
+/* A value to copy, beside its button. */
+.input-group { display: flex; gap: 8px; }
+.input-group .input { flex: 1; margin: 0; min-width: 0; }
+
+.box--danger { border-color: var(--danger-border); }
+.box--danger > .box__header { background: var(--danger-subtle); border-bottom-color: var(--danger-border); }
+.danger-zone { margin-top: 40px; }
+.danger-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; }
+.confirm-list { margin-top: 8px; }
+.confirm-list li { padding: 4px 0; }
+
+.blankslate { padding: 32px 16px; text-align: center; }
+.blankslate__title { margin-bottom: 4px; font-size: 16px; font-weight: 600; }
+.blankslate .btn { margin-top: 16px; }
+
+.table .col-type { width: 8rem; }
+.table .col-expires { width: 8rem; }
+.table .col-when { width: 8rem; }
+.table .col-name { width: 30%; }
+.table .col-action { width: 6.5rem; }
+.table .cell-action { text-align: right; }
+.dl--wide { grid-template-columns: 9rem minmax(0, 1fr); }
+
 /* -- error page and login ---------------------------------------------------------------------- */
 
 .error-page { max-width: 520px; margin: 48px auto; }
 .error-page__status { color: var(--fg-muted); font-family: var(--font-mono); }
 
-.login { max-width: 320px; margin: 0 auto; padding: 64px 16px 32px; }
+.login { max-width: 340px; margin: 0 auto; padding: 64px 16px 32px; }
 .login__logo { display: block; width: 96px; height: 96px; margin: 0 auto 8px; }
 .login__title { margin-bottom: 24px; font-size: 24px; font-weight: 300; text-align: center; }
 .login__error { margin-bottom: 16px; padding: 8px 12px; color: var(--fg); background: var(--danger-subtle); border: 1px solid var(--danger-border); border-radius: var(--radius); }
+.login__box { padding: 16px; background: var(--canvas-subtle); border: 1px solid var(--border-muted); border-radius: var(--radius); }
 .login__field { display: block; margin-bottom: 16px; font-weight: 600; }
 .login__field input {
   display: block;
@@ -510,19 +641,38 @@ form { margin: 0; }
   border-radius: var(--radius);
 }
 .login .btn { width: 100%; }
+/* "or" between the two ways in, on a line. */
+.login__or { display: flex; align-items: center; gap: 12px; margin: 24px 0; color: var(--fg-muted); font-size: 12px; }
+.login__or::before, .login__or::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 
 /* -- narrow screens: one column, secondary columns hidden ---------------------------------------- */
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
   .layout__side { position: static; }
+
+  /* The menu becomes a row of pills above the page. */
+  .settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .settings-nav { flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+  .settings-nav__item {
+    flex: none;
+    min-height: 0;
+    padding: 3px 12px;
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+  .settings-nav__item.is-active { color: var(--fg); border-color: var(--fg-subtle); }
+  .settings-nav__item.is-active::before { content: none; }
 }
 
 @media (max-width: 768px) {
   .hide-sm { display: none !important; }
   .page { padding: 16px; }
   .app-header__inner { padding: 0 16px; gap: 12px; }
-  .app-nav__link { padding: 0 8px; }
+  .app-nav { overflow-x: auto; scrollbar-width: none; }
+  .app-nav__link { flex: none; padding: 0 8px; }
+  .app-header__actor { flex: none; }
   .app-header__actor-name { display: none; }
   .pagehead__title { font-size: 20px; flex-wrap: wrap; gap: 4px 12px; }
   .pagehead__sub { flex-wrap: wrap; white-space: normal; }
@@ -537,6 +687,10 @@ form { margin: 0; }
   .decision__actions .btn { width: 100%; }
   .decision__actions form { flex: 1; }
   .flash--action { flex-direction: column; align-items: flex-start; }
+  .subhead { flex-wrap: wrap; align-items: flex-start; }
+  .danger-row { flex-direction: column; align-items: flex-start; }
+  .table .col-expires { width: 5.5rem; }
+  .table .col-action { width: 5.5rem; }
 
   /* A row becomes two lines on purpose: the state, the name and what
      matters on the first, the detail on the second. */

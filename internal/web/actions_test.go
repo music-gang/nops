@@ -17,7 +17,7 @@ import (
 func TestRetry(t *testing.T) {
 	en := &fakeEngine{retryNext: "d2"}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/retry", nil, cookie)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/deployments/d2" {
@@ -32,7 +32,7 @@ func TestRetry(t *testing.T) {
 // they retried.
 func TestRetryWithNoSuccessorGoesToTheRetriedDeployment(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-	rec := ts.do("POST", "/deployments/d1/retry", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("POST", "/deployments/d1/retry", nil, ts.session("alice"))
 	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/deployments/d1" {
 		t.Errorf("status %d, Location %q, want 303 to /deployments/d1", rec.Code, got)
 	}
@@ -59,7 +59,7 @@ func TestRetryReturnsToANamedPage(t *testing.T) {
 		"JOBS":                "/",
 	} {
 		ts := newTestServer(t, &fakeStore{deployment: dep}, &fakeEngine{observations: []engine.Observation{blocked}, retryNext: "d2"}, "")
-		cookie := mintSession(t, ts.auth, "alice")
+		cookie := ts.session("alice")
 		rec := ts.do("POST", "/deployments/d1/retry", formBody(url.Values{"back": {back}, "next": {back}, "url": {back}}), cookie)
 		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != want {
 			t.Errorf("back=%q: status %d, Location %q, want 303 to %q", back, rec.Code, got, want)
@@ -73,7 +73,7 @@ func TestRetryReturnsToANamedPage(t *testing.T) {
 func TestRetryBackToAJobTheEngineDoesNotKnow(t *testing.T) {
 	dep := &store.Deployment{ID: "d1", JobID: "../../evil", Namespace: "default"}
 	ts := newTestServer(t, &fakeStore{deployment: dep}, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 	rec := ts.do("POST", "/deployments/d1/retry", formBody(url.Values{"back": {"job"}}), cookie)
 	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
 		t.Errorf("status %d, Location %q, want 303 to /", rec.Code, got)
@@ -84,7 +84,7 @@ func TestRetryBackToAJobTheEngineDoesNotKnow(t *testing.T) {
 func TestRetryByJobIsGone(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	rec := ts.do("POST", "/jobs/default/web/retry", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("POST", "/jobs/default/web/retry", nil, ts.session("alice"))
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed || len(en.retryCalls) != 0 {
 		t.Errorf("status %d, %d Retry calls, want the route gone", rec.Code, len(en.retryCalls))
 	}
@@ -93,7 +93,7 @@ func TestRetryByJobIsGone(t *testing.T) {
 func TestFetchNowAlwaysGoesToTheOverview(t *testing.T) {
 	for _, v := range []string{"", "/jobs", "https://evil.test", "//evil.test"} {
 		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-		cookie := mintSession(t, ts.auth, "alice")
+		cookie := ts.session("alice")
 		rec := ts.do("POST", "/fetch", formBody(url.Values{"back": {v}, "next": {v}}), cookie)
 		if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/" {
 			t.Errorf("form value %q: status %d, Location %q, want 303 to /", v, rec.Code, got)
@@ -117,7 +117,7 @@ func TestRetryErrors(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			en := &fakeEngine{retryErr: c.err}
 			ts := newTestServer(t, &fakeStore{}, en, "")
-			cookie := mintSession(t, ts.auth, "alice")
+			cookie := ts.session("alice")
 
 			rec := ts.do("POST", "/deployments/d1/retry", nil, cookie)
 			if rec.Code != c.code || !strings.Contains(rec.Body.String(), c.body) {
@@ -133,7 +133,7 @@ func TestRetryErrors(t *testing.T) {
 
 func TestRetryServerErrorIsLogged(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{retryErr: errors.New("disk on fire")}, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 	ts.do("POST", "/deployments/d1/retry", nil, cookie)
 	if logs := ts.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "disk on fire") {
 		t.Errorf("expected the failure at ERROR, got: %s", logs)
@@ -143,7 +143,7 @@ func TestRetryServerErrorIsLogged(t *testing.T) {
 func TestRetryRefusesCrossOrigin(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	req := httptest.NewRequest("POST", "/deployments/d1/retry", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
@@ -158,7 +158,7 @@ func TestRetryRefusesCrossOrigin(t *testing.T) {
 
 func TestFetchNow(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/fetch", nil, cookie)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
@@ -171,7 +171,7 @@ func TestFetchNow(t *testing.T) {
 
 func TestFetchNowRefusesCrossOrigin(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	req := httptest.NewRequest("POST", "/fetch", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
@@ -187,12 +187,13 @@ func TestFetchNowRefusesCrossOrigin(t *testing.T) {
 // Without a Trigger there is nothing to call: the route is not served.
 func TestFetchNowNotServedWithoutTrigger(t *testing.T) {
 	a := newTestAuth(t)
-	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	tokens := openTestStore(t)
+	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: tokens, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("POST", "/fetch", nil)
-	req.AddCookie(mintSession(t, a, "alice"))
+	req.AddCookie(mintSession(t, tokens, false, "alice"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {

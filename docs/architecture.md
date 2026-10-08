@@ -13,6 +13,7 @@ are in [philosophy](philosophy.md).
 | `internal/gitwatch` | Keeps the repository in memory and polls it. |
 | `internal/nomadx` | Nomad client: parse, plan, CAS register, dispatch. |
 | `internal/meta` | Reads and validates the `nops_*` keys. |
+| `internal/acl` | Parses ACL policies and binding rules and decides what a token may do. |
 | `internal/store` | SQLite, the only place state lives. |
 | `internal/engine` | Detection and apply: the state machine. |
 | `internal/hooks` | Runs a hook job and waits for its outcome. |

@@ -76,7 +76,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 	}
 	summary := nomadx.Summarize(diff)
 	dd := deploymentDetailData{
-		baseData: baseData{Actor: "alice"}, Deployment: dc, Diff: diff, Summary: summary, CanDecide: true, Notice: "review again",
+		baseData: baseData{Actor: "alice"}, Deployment: dc, Diff: diff, Summary: summary, CanDecide: true, MayDecide: true, MayPromote: true, Notice: "review again",
 		Steps: []planStep{{Kind: "pre", Job: "h", Timeout: "5m"}, {Kind: "register", Text: "Update"}, {Kind: "health"}, {Kind: "post", Job: "p", Timeout: "1m"}},
 		Events: []eventView{
 			{Time: tv, From: store.StateDetected, To: store.StatePendingApproval, Actor: "nops", Msg: "drift"},
@@ -103,6 +103,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 	nv.DeploymentsURL = "https://nomad.example.com/ui/jobs/web@default/deployments"
 	dd.Nomad, dd.PromotionWait = nv, true
 	dd.NomadURL, dd.NomadDeploymentsURL = "https://nomad.example.com/ui/jobs/web@default", nv.DeploymentsURL
+	admin := adminBase{baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true}
 	oob := dd
 	oob.OOB = true
 	ddOther, ddErr, ddMissing, ddNone := dd, dd, dd, dd
@@ -166,6 +167,65 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		"deployment (no nomad dep)":      ddNone,
 		"status_fragment":                oob,
 		"error":                          errorData{baseData: baseData{}, Status: 404, Title: "Not found", Message: "gone"},
+		"admin": adminSelfData{
+			adminBase:     adminBase{baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true, Section: "self"},
+			Self:          selfView{Name: "alice", Kind: "client", Session: true, AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "alice"},
+			SessionSecret: "nops_x",
+		},
+		"admin (acl off, a login)": adminSelfData{
+			adminBase: adminBase{baseData: baseData{Actor: "alice", Nav: "admin"}, Section: "self"}, Self: selfView{Name: "alice", Kind: "login"},
+		},
+		"admin (the bootstrap token)": adminSelfData{
+			adminBase: adminBase{baseData: baseData{Actor: "bootstrap", Nav: "admin"}, ACLOn: true, Manage: true, Section: "self"},
+			Self:      selfView{Name: "bootstrap", Kind: "management", AccessorID: "bootstrap", Creator: "the configuration"},
+		},
+		"admin_tokens": adminTokensData{
+			adminBase: admin, CreatedN: 3, SessionsN: 1,
+			Tokens: []tokenRow{
+				{selfView: selfView{Name: "ci", Kind: "client", AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "bootstrap"}},
+				{selfView: selfView{Name: "old", Kind: "management", AccessorID: "01DEF", Created: tv, Expires: tv, Creator: "alice"}, CreatorIdentity: "basic:alice", CreatorAccessorID: "01SES"},
+				{selfView: selfView{Name: "forever", Kind: "management", AccessorID: "01GHI", Created: tv, Creator: "—"}, CreatorAccessorID: "bootstrap"},
+			},
+			Created: &createdToken{Name: "ci", Secret: "nops_x"},
+		},
+		"admin_tokens (sessions)": adminTokensData{
+			adminBase: admin, Sessions: true, CreatedN: 3, SessionsN: 1,
+			Tokens: []tokenRow{{selfView: selfView{Name: "alice", Kind: "client", Session: true, AccessorID: "01SES", Created: tv, Expires: tv, Creator: "alice"}, Identity: "https://idp.example sub 1"}},
+		},
+		"admin_tokens (none)": adminTokensData{adminBase: admin},
+		"admin_tokens (confirm a revocation)": adminTokensData{
+			adminBase: admin,
+			Revoke: &revokeView{Revocation: store.Revocation{CreatorAccessorID: "bootstrap"}, Tokens: []tokenRow{
+				{selfView: selfView{Name: "m", Kind: "management", AccessorID: "01M"}}, {selfView: selfView{Name: "t", Kind: "client", AccessorID: "01T"}},
+			}},
+		},
+		"admin_tokens (confirm one)": adminTokensData{
+			adminBase: admin, Revoke: &revokeView{Accessor: "01T", Tokens: []tokenRow{{selfView: selfView{Name: "t", Kind: "client", AccessorID: "01T"}}}},
+		},
+		"admin_tokens (nothing to revoke)": adminTokensData{
+			adminBase: admin, Revoke: &revokeView{Revocation: store.Revocation{SessionsOf: "basic:bob"}},
+		},
+		"admin_token_new": tokenFormData{
+			adminBase: admin, Form: tokenForm{Name: "x", Type: "client", Expires: defaultExpiry}, Expiry: expiryChoices, Error: "Bad.",
+			Policies: []policyChoice{{policyRow: policyRow{Name: "readers", Description: "see all"}, Checked: true}},
+		},
+		"admin_token_new (no policy)": tokenFormData{adminBase: admin, Form: tokenForm{Type: "client", Expires: defaultExpiry}, Expiry: expiryChoices},
+		"admin_policies":              adminPoliciesData{adminBase: admin, Policies: []policyRow{{Name: "readers", Description: "see all", Modified: tv}}},
+		"admin_policies (none)":       adminPoliciesData{adminBase: admin},
+		"admin_policy":                policyPageData{adminBase: admin, Form: policyForm{Name: "readers", Description: "d", Rules: "namespace \"*\" {}", Existing: true}},
+		"admin_policy (new)":          policyPageData{adminBase: admin},
+		"admin_policy (delete)":       policyPageData{adminBase: admin, Form: policyForm{Name: "readers", Existing: true}, Delete: true},
+		"admin_policy (error)":        policyPageData{adminBase: admin, Form: policyForm{Name: "x", Rules: "{{"}, Error: "line 1: bad"},
+		"admin_rules": adminRulesData{adminBase: admin, Rules: []ruleRow{
+			{ID: "r1", Description: "ops", AuthMethod: "oidc", Selector: `"ops" in list.groups`, Binds: "ACL policy readers", Modified: tv},
+			{ID: "r2", AuthMethod: "basic", Binds: "management", Modified: tv},
+		}},
+		"admin_rules (none)":   adminRulesData{adminBase: admin},
+		"admin_rule":           rulePageData{adminBase: admin, Form: ruleForm{ID: "r1", AuthMethod: "oidc", Bind: "policy:readers", Existing: true}, Policies: []policyRow{{Name: "readers"}}, Methods: authMethods},
+		"admin_rule (new)":     rulePageData{adminBase: admin, Form: ruleForm{AuthMethod: "oidc", Bind: "management"}, Methods: authMethods, Error: "bad"},
+		"admin_rule (delete)":  rulePageData{adminBase: admin, Form: ruleForm{ID: "r1", Description: "ops", Existing: true}, Delete: true},
+		"admin_changes":        adminChangesData{adminBase: admin, Changes: []changeRow{{When: tv, Actor: "alice", AccessorID: "01ABC", Action: "create", Kind: "token", Object: "01DEF"}, {When: tv, Actor: "bootstrap", Action: "update", Kind: "acl-policy", Object: "readers"}}},
+		"admin_changes (none)": adminChangesData{adminBase: admin},
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
