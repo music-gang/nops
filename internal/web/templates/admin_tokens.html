@@ -1,0 +1,151 @@
+{{define "admin_tokens"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <h2 class="subhead__title">Tokens</h2>
+    <p class="subhead__desc">Tokens for the API and the command line, and the session tokens that logins make.</p>
+  </div>
+  <a class="btn btn--primary" href="{{.Base}}/admin/tokens/new">New token</a>
+</div>
+
+{{with .Created}}
+<section class="flash flash--success">
+  <p><strong>Token “{{.Name}}” created.</strong> Copy it now: nops keeps only its hash, and does not show it again.</p>
+  <div class="input-group">
+    <input type="text" readonly value="{{.Secret}}" id="new-token" aria-label="The new token" class="input mono">
+    <button type="button" class="btn" data-copy="new-token">Copy</button>
+  </div>
+</section>
+{{end}}
+
+{{with .Revoke}}
+<section class="box box--danger">
+  <header class="box__header">
+    <h3 class="box__title">{{if .Accessor}}Revoke this token{{else if .SessionsOf}}Revoke every session of <span class="mono">{{.SessionsOf}}</span>{{else}}Revoke every token <span class="mono">{{or .CreatorIdentity .CreatorAccessorID}}</span> created{{end}}</h3>
+  </header>
+  <div class="box__body">
+    {{if .Tokens}}
+    <p>This revokes {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}{{if not (or .Accessor .SessionsOf)}}, with the tokens they created{{end}}:</p>
+    <ul class="confirm-list">
+      {{range .Tokens}}<li><strong>{{.Name}}</strong> <span class="label">{{.Kind}}</span> <span class="muted mono">{{.AccessorID}}</span></li>{{end}}
+    </ul>
+    <form method="post" action="{{if .Accessor}}{{$.Base}}/admin/tokens/{{.Accessor}}/revoke{{else}}{{$.Base}}/admin/tokens/revoke{{end}}" class="form__actions">
+      {{if .SessionsOf}}<input type="hidden" name="sessions_of" value="{{.SessionsOf}}">{{end}}
+      {{if .CreatorIdentity}}<input type="hidden" name="creator_identity" value="{{.CreatorIdentity}}">{{end}}
+      {{if .CreatorAccessorID}}<input type="hidden" name="creator" value="{{.CreatorAccessorID}}">{{end}}
+      <button type="submit" class="btn btn--danger-solid">Revoke {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}</button>
+      <a href="{{$.Base}}/admin/tokens{{if $.Sessions}}?sessions=1{{end}}" class="btn">Cancel</a>
+    </form>
+    {{else}}
+    <p class="muted">No token to revoke.</p>
+    <div class="form__actions"><a href="{{$.Base}}/admin/tokens{{if $.Sessions}}?sessions=1{{end}}" class="btn">Back</a></div>
+    {{end}}
+  </div>
+</section>
+{{else}}
+
+<nav class="filters" aria-label="Filter">
+  <a class="filter{{if not .Sessions}} is-active{{end}}" href="{{.Base}}/admin/tokens">Created <span class="filter__count">{{.CreatedN}}</span></a>
+  <a class="filter{{if .Sessions}} is-active{{end}}" href="{{.Base}}/admin/tokens?sessions=1">Sessions <span class="filter__count">{{.SessionsN}}</span></a>
+</nav>
+
+<div class="box">
+  {{if .Tokens}}
+  <table class="table">
+    <thead>
+      <tr><th>Name</th><th class="col-type hide-sm">Type</th><th class="hide-sm">ACL policies</th><th class="hide-sm">{{if .Sessions}}Person{{else}}Created by{{end}}</th><th class="col-expires">Expires</th><th class="col-action"></th></tr>
+    </thead>
+    <tbody>
+      {{range .Tokens}}
+      <tr>
+        <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span><div class="cell-sub mono" title="Accessor ID">{{.AccessorID}}</div></td>
+        <td class="hide-sm"><span class="label">{{.Kind}}</span></td>
+        <td class="hide-sm cell-ellipsis">{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="hide-sm cell-ellipsis">
+          {{if .Session}}
+          <span class="mono" title="{{.Identity}}">{{or .Identity "—"}}</span>
+          {{if .Identity}}<div class="cell-sub"><a href="{{$.Base}}/admin/tokens?sessions=1&amp;sessions_of={{.Identity}}">Revoke their sessions</a></div>{{end}}
+          {{else}}
+          {{.Creator}}
+          {{if .CreatorIdentity}}<div class="cell-sub"><a href="{{$.Base}}/admin/tokens?creator_identity={{.CreatorIdentity}}">Revoke all they created</a></div>
+          {{else if .CreatorAccessorID}}<div class="cell-sub"><a href="{{$.Base}}/admin/tokens?creator={{.CreatorAccessorID}}">Revoke all it created</a></div>{{end}}
+          {{end}}
+        </td>
+        <td class="muted">{{if .Expires.ISO}}{{template "time" .Expires}}{{else}}never{{end}}</td>
+        <td class="cell-action"><a class="btn btn--sm btn--danger" href="{{$.Base}}/admin/tokens?{{if $.Sessions}}sessions=1&amp;{{end}}revoke={{.AccessorID}}">Revoke</a></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else if .Sessions}}
+  <p class="empty">No session token: nobody is logged in.</p>
+  {{else}}
+  <div class="blankslate">
+    <p class="blankslate__title">No token yet</p>
+    <p class="muted">A token lets the API and the command line in, with what its ACL policies allow.</p>
+    <a class="btn btn--primary" href="{{.Base}}/admin/tokens/new">New token</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{template "admin_close" .}}
+{{end}}
+
+{{define "admin_token_new"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <p class="crumbs"><a href="{{.Base}}/admin/tokens">Tokens</a></p>
+    <h2 class="subhead__title">New token</h2>
+  </div>
+</div>
+
+{{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
+
+<form class="form" method="post" action="{{.Base}}/admin/tokens">
+  <div class="field">
+    <label class="field__label" for="token-name">Name</label>
+    <input type="text" id="token-name" name="name" maxlength="100" required value="{{.Form.Name}}" class="input">
+    <p class="field__caption">What the token is for, for example “ci”, to tell it from the others.</p>
+  </div>
+
+  <fieldset class="field">
+    <legend class="field__label">Type</legend>
+    <label class="choice">
+      <input type="radio" name="type" value="client"{{if ne .Form.Type "management"}} checked{{end}}>
+      <span><span class="choice__label">Client</span><span class="field__caption">Only what its ACL policies allow.</span></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="type" value="management"{{if eq .Form.Type "management"}} checked{{end}}>
+      <span><span class="choice__label">Management</span><span class="field__caption">Everything, these pages included.</span></span>
+    </label>
+  </fieldset>
+
+  <fieldset class="field">
+    <legend class="field__label">ACL policies</legend>
+    <p class="field__caption">Only for a client token.</p>
+    {{range .Policies}}
+    <label class="choice">
+      <input type="checkbox" name="policy" value="{{.Name}}"{{if .Checked}} checked{{end}}>
+      <span><span class="choice__label mono">{{.Name}}</span>{{if .Description}}<span class="field__caption">{{.Description}}</span>{{end}}</span>
+    </label>
+    {{else}}
+    <p class="muted">No ACL policy yet: <a href="{{.Base}}/admin/policies/new">create one</a> first, or make a management token.</p>
+    {{end}}
+  </fieldset>
+
+  <div class="field">
+    <label class="field__label" for="token-expires">Expires</label>
+    <select id="token-expires" name="expires" class="input input--auto">
+      {{range .Expiry}}<option value="{{.Key}}"{{if eq .Key $.Form.Expires}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <p class="field__caption">Nops deletes the token when it expires.</p>
+  </div>
+
+  <div class="form__actions">
+    <button type="submit" class="btn btn--primary">Create token</button>
+    <a class="btn" href="{{.Base}}/admin/tokens">Cancel</a>
+  </div>
+</form>
+{{template "admin_close" .}}
+{{end}}

@@ -523,16 +523,22 @@ func TestAdministrationPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := manager.get("/admin")
-	mustContain(t, page, "Administration", "Your token", "New token", "ci", "readers", "see all", "Latest changes", "New ACL policy")
+	mustContain(t, page, "Administration", "Your token", `href="/admin/tokens"`, `href="/admin/policies"`, `href="/admin/binding-rules"`, `href="/admin/changes"`)
 	mustNotContain(t, page, "The ACL is off")
+	mustContain(t, manager.get("/admin/tokens"), "New token", "ci", "readers")
+	mustContain(t, manager.get("/admin/tokens/new"), "Create token", `value="readers"`, "see all")
+	mustContain(t, manager.get("/admin/policies"), "New ACL policy", "readers", "see all")
+	mustContain(t, manager.get("/admin/changes"), "Changes", "readers")
 
 	// A client token sees itself and nothing to administer.
 	client := dashboardAs(t, st, &fakeEngine{}, `namespace "*" { policy = "read" }`)
 	page = client.get("/admin")
 	mustContain(t, page, "Your token")
-	mustNotContain(t, page, "New token", "New ACL policy", "Latest changes")
+	mustNotContain(t, page, `href="/admin/tokens"`, `href="/admin/policies"`, `href="/admin/changes"`)
 	for _, c := range []struct{ method, target string }{
-		{"POST", "/admin/tokens"}, {"POST", "/admin/policies"}, {"GET", "/admin/policies/readers"},
+		{"GET", "/admin/tokens"}, {"GET", "/admin/tokens/new"}, {"GET", "/admin/policies"}, {"GET", "/admin/policies/new"},
+		{"GET", "/admin/binding-rules"}, {"GET", "/admin/binding-rules/new"}, {"GET", "/admin/changes"},
+		{"POST", "/admin/tokens"}, {"POST", "/admin/policies"}, {"GET", "/admin/policies/readers/edit"},
 		{"POST", "/admin/policies/readers/delete"}, {"POST", "/admin/tokens/abc/revoke"}, {"POST", "/admin/tokens/revoke"},
 	} {
 		if rec := client.page(c.method, c.target, url.Values{}); rec.Code != http.StatusForbidden {
@@ -544,7 +550,7 @@ func TestAdministrationPage(t *testing.T) {
 func TestAdministrationSaysWhenTheACLIsOff(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	page := ts.get("/admin")
-	mustContain(t, page, "The ACL is off", "full control", "New token")
+	mustContain(t, page, "The ACL is off", "full control", `href="/admin/tokens"`)
 }
 
 func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
@@ -565,7 +571,12 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 	if rec := ts.page("POST", "/admin/policies", good); rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status %d, body %s", rec.Code, rec.Body)
 	}
-	mustContain(t, ts.get("/admin/policies/readers"), "see all", "policy = &#34;read&#34;")
+	editor, err := asset("editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The rules get the code editor, and stay a textarea without JavaScript.
+	mustContain(t, ts.get("/admin/policies/readers/edit"), "see all", "policy = &#34;read&#34;", `<textarea id="policy-rules" name="rules"`, `data-editor="hcl"`, `src="`+editor+`"`)
 
 	rec = ts.page("POST", "/admin/tokens", url.Values{"name": {"ci"}, "type": {"client"}, "policy": {"readers"}, "expires": {"30"}})
 	if rec.Code != http.StatusOK {
@@ -584,9 +595,12 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 		t.Fatalf("tokens = %+v, %v", list, err)
 	}
 
-	if rec := ts.page("POST", "/admin/tokens", url.Values{"name": {"x"}, "policy": {"nope"}, "expires": {"30"}}); rec.Code != http.StatusBadRequest {
+	// A form not filled in right comes back with the error and what was typed.
+	rec = ts.page("POST", "/admin/tokens", url.Values{"name": {"keep-me"}, "policy": {"nope"}, "expires": {"30"}})
+	if rec.Code != http.StatusBadRequest {
 		t.Errorf("an absent ACL policy: status %d, want 400", rec.Code)
 	}
+	mustContain(t, rec.Body.String(), "The ACL policy &#34;nope&#34; does not exist", `value="keep-me"`, `value="30" selected`)
 	if rec := ts.page("POST", "/admin/tokens", url.Values{"name": {"x"}, "expires": {"forever"}}); rec.Code != http.StatusBadRequest {
 		t.Errorf("a bad expiry: status %d, want 400", rec.Code)
 	}
@@ -597,7 +611,7 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 	if rec := ts.page("POST", "/admin/policies/readers/delete", url.Values{}); rec.Code != http.StatusSeeOther {
 		t.Errorf("delete: status %d", rec.Code)
 	}
-	if rec := ts.page("GET", "/admin/policies/readers", nil); rec.Code != http.StatusNotFound {
+	if rec := ts.page("GET", "/admin/policies/readers/edit", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("a deleted ACL policy: status %d, want 404", rec.Code)
 	}
 }
@@ -751,8 +765,9 @@ func TestAdministrationFormsManageBindingRules(t *testing.T) {
 		t.Fatalf("rules = %+v, %v", rules, err)
 	}
 	id := rules[0].ID
-	mustContain(t, ts.get("/admin"), "ACL policy readers", "ops", `/admin/binding-rules/`+id)
-	mustContain(t, ts.get("/admin/binding-rules/"+id), `value="`+id+`"`, `value="policy:readers" selected`)
+	mustContain(t, ts.get("/admin/binding-rules"), "ACL policy readers", "ops", `/admin/binding-rules/`+id+`/edit`)
+	mustContain(t, ts.get("/admin/binding-rules/"+id+"/edit"), `value="`+id+`"`, `value="policy:readers" selected`)
+	mustContain(t, ts.get("/admin/binding-rules/new"), "New binding rule", `name="id" value=""`)
 
 	edit := url.Values{"id": {id}, "auth_method": {"basic"}, "bind": {"management"}}
 	if rec := ts.page("POST", "/admin/binding-rules", edit); rec.Code != http.StatusSeeOther {
@@ -768,7 +783,7 @@ func TestAdministrationFormsManageBindingRules(t *testing.T) {
 	if rec := ts.page("POST", "/admin/binding-rules/"+id+"/delete", url.Values{}); rec.Code != http.StatusSeeOther {
 		t.Errorf("delete: status %d", rec.Code)
 	}
-	if rec := ts.page("GET", "/admin/binding-rules/"+id, nil); rec.Code != http.StatusNotFound {
+	if rec := ts.page("GET", "/admin/binding-rules/"+id+"/edit", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("a deleted rule: status %d, want 404", rec.Code)
 	}
 	if rec := ts.page("POST", "/admin/binding-rules/"+id+"/delete", url.Values{}); rec.Code != http.StatusNotFound {
@@ -791,7 +806,7 @@ func TestAdministrationFormsManageBindingRules(t *testing.T) {
 func TestBindingRulesAreForManagementOnTheDashboard(t *testing.T) {
 	client := dashboardAs(t, &fakeStore{}, &fakeEngine{}, `namespace "*" { policy = "write" }`)
 	for _, c := range []struct{ method, target string }{
-		{"GET", "/admin/binding-rules/x"},
+		{"GET", "/admin/binding-rules/x/edit"},
 		{"POST", "/admin/binding-rules"},
 		{"POST", "/admin/binding-rules/x/delete"},
 	} {
@@ -799,7 +814,7 @@ func TestBindingRulesAreForManagementOnTheDashboard(t *testing.T) {
 			t.Errorf("%s %s: status %d, want 403", c.method, c.target, rec.Code)
 		}
 	}
-	mustNotContain(t, client.get("/admin"), "New binding rule")
+	mustNotContain(t, client.get("/admin"), `href="/admin/binding-rules"`)
 }
 
 func TestRevokeInOneActionFromTheAPI(t *testing.T) {
@@ -863,18 +878,23 @@ func TestAdministrationConfirmsARevocationInOneAction(t *testing.T) {
 		return n
 	}
 
-	mustContain(t, ts.get("/admin"), "Revoke all they created", "/admin?creator_identity=test%3acarol")
-	mustContain(t, ts.get("/admin?sessions=1"), "Revoke their sessions", "/admin?sessions_of=test%3acarol")
-	mustContain(t, ts.get("/admin?sessions_of=test:carol"), "Revoke every session of", "This revokes 1 token:")
+	mustContain(t, ts.get("/admin/tokens"), "Revoke all they created", "/admin/tokens?creator_identity=test%3acarol")
+	mustContain(t, ts.get("/admin/tokens?sessions=1"), "Revoke their sessions", "/admin/tokens?sessions=1&amp;sessions_of=test%3acarol")
+	mustContain(t, ts.get("/admin/tokens?sessions_of=test:carol"), "Revoke every session of", "This revokes 1 token:")
 	// Asking shows what would go and revokes nothing.
-	page := ts.get("/admin?creator_identity=test:carol")
+	page := ts.get("/admin/tokens?creator_identity=test:carol")
 	mustContain(t, page, "Revoke every token", "This revokes 1 token", "Revoke 1 token", `name="creator_identity" value="test:carol"`, "Cancel")
 	if created() != 1 {
 		t.Fatal("the preview revoked the token")
 	}
-	mustContain(t, ts.get("/admin?creator=nobody"), "No token to revoke")
-	if rec := ts.page("GET", "/admin?sessions_of=a&creator=b", nil); rec.Code != http.StatusBadRequest {
-		t.Errorf("two subjects: status %d, want 400", rec.Code)
+	mustContain(t, ts.get("/admin/tokens?creator=nobody"), "No token to revoke")
+	for _, q := range []string{"sessions_of=a&creator=b", "revoke=x&creator=b"} {
+		if rec := ts.page("GET", "/admin/tokens?"+q, nil); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", q, rec.Code)
+		}
+	}
+	if rec := ts.page("GET", "/admin/tokens?revoke=nope", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("an unknown token: status %d, want 404", rec.Code)
 	}
 
 	if rec := ts.page("POST", "/admin/tokens/revoke", url.Values{"creator_identity": {"test:carol"}}); rec.Code != http.StatusSeeOther {
@@ -886,4 +906,72 @@ func TestAdministrationConfirmsARevocationInOneAction(t *testing.T) {
 	if rec := ts.page("POST", "/admin/tokens/revoke", url.Values{}); rec.Code != http.StatusBadRequest {
 		t.Errorf("nothing named: status %d, want 400", rec.Code)
 	}
+}
+
+// Revoking a token and deleting an ACL policy or a binding rule ask first: the
+// list only links to a confirmation, and showing it changes nothing.
+func TestAdministrationAsksBeforeItRevokesOrDeletes(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := ts.page("POST", "/admin/policies", url.Values{"name": {"readers"}, "rules": {`namespace "*" { policy = "read" }`}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("policy: status %d", rec.Code)
+	}
+	if rec := ts.page("POST", "/admin/binding-rules", url.Values{"auth_method": {"oidc"}, "bind": {"management"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("rule: status %d", rec.Code)
+	}
+	if rec := ts.page("POST", "/admin/tokens", url.Values{"name": {"ci"}, "type": {"management"}, "expires": {"30"}}); rec.Code != http.StatusOK {
+		t.Fatalf("token: status %d", rec.Code)
+	}
+	var accessor string
+	all, _ := ts.tokens.ACLTokens(t.Context())
+	for _, tok := range all {
+		if tok.Name == "ci" {
+			accessor = tok.AccessorID
+		}
+	}
+	rules, _ := ts.tokens.BindingRules(t.Context())
+	if accessor == "" || len(rules) != 1 {
+		t.Fatalf("token %q, rules %+v", accessor, rules)
+	}
+	id := rules[0].ID
+
+	revoke := `action="/admin/tokens/` + accessor + `/revoke"`
+	list := ts.get("/admin/tokens")
+	mustContain(t, list, `href="/admin/tokens?revoke=`+accessor+`"`)
+	mustNotContain(t, list, revoke)
+	mustContain(t, ts.get("/admin/tokens?revoke="+accessor), "This revokes 1 token", revoke, "Cancel")
+
+	delPolicy := `action="/admin/policies/readers/delete"`
+	edit := ts.get("/admin/policies/readers/edit")
+	mustContain(t, edit, "Danger zone", `href="/admin/policies/readers/edit?delete=1"`)
+	mustNotContain(t, edit, delPolicy)
+	mustContain(t, ts.get("/admin/policies/readers/edit?delete=1"), "Delete the ACL policy", delPolicy, "Cancel")
+
+	delRule := `action="/admin/binding-rules/` + id + `/delete"`
+	edit = ts.get("/admin/binding-rules/" + id + "/edit")
+	mustContain(t, edit, "Danger zone", `href="/admin/binding-rules/`+id+`/edit?delete=1"`)
+	mustNotContain(t, edit, delRule)
+	mustContain(t, ts.get("/admin/binding-rules/"+id+"/edit?delete=1"), "Delete the binding rule", delRule, "Cancel")
+
+	if _, err := ts.tokens.ACLPolicy(t.Context(), "readers"); err != nil {
+		t.Error("asking deleted the ACL policy")
+	}
+	if _, err := ts.tokens.BindingRule(t.Context(), id); err != nil {
+		t.Error("asking deleted the binding rule")
+	}
+	if all, _ := ts.tokens.ACLTokens(t.Context()); !slices.ContainsFunc(all, func(tok store.ACLToken) bool { return tok.AccessorID == accessor }) {
+		t.Error("asking revoked the token")
+	}
+}
+
+// "new" is a name an ACL policy may take: its page is still its own, not the
+// form of a new one.
+func TestAnACLPolicyCalledNewHasItsPage(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := ts.page("POST", "/admin/policies", url.Values{"name": {"new"}, "description": {"called new"}, "rules": {`namespace "*" { policy = "read" }`}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: status %d", rec.Code)
+	}
+	mustContain(t, ts.get("/admin/policies/new/edit"), "called new", `name="existing" value="true"`)
+	page := ts.get("/admin/policies/new")
+	mustContain(t, page, "New ACL policy", `id="policy-name"`)
+	mustNotContain(t, page, "called new")
 }

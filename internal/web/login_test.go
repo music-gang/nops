@@ -302,9 +302,9 @@ func TestAPastedTokenLogsIn(t *testing.T) {
 	if rec := a.do("GET", "/page", []*http.Cookie{pasted}); rec.Body.String() != "user=bootstrap" {
 		t.Errorf("page = %q, want the bootstrap token", rec.Body.String())
 	}
-	// The whole Administration page is open to it: it is a management token.
+	// The whole Administration is open to it: it is a management token.
 	admin := a.do("GET", "/admin", []*http.Cookie{pasted})
-	mustContain(t, admin.Body.String(), "New binding rule", "New ACL policy")
+	mustContain(t, admin.Body.String(), `href="/admin/binding-rules"`, `href="/admin/policies"`)
 	mustNotContain(t, admin.Body.String(), "session-secret")
 
 	// Logging out forgets it, and revokes nothing: it may be the bootstrap token.
@@ -393,11 +393,11 @@ func TestSessionsAreHiddenInTheTokenListByDefault(t *testing.T) {
 	a.rule("", acl.BindManagement, "")
 	sess := a.loggedIn(alice())
 
-	page := a.do("GET", "/admin", []*http.Cookie{sess}).Body.String()
-	mustContain(t, page, "1 session token hidden", `href="/admin?sessions=1"`)
-	page = a.do("GET", "/admin?sessions=1", []*http.Cookie{sess}).Body.String()
-	mustContain(t, page, "Showing the session tokens", "login")
-	mustNotContain(t, page, "session token hidden")
+	page := a.do("GET", "/admin/tokens", []*http.Cookie{sess}).Body.String()
+	mustContain(t, page, `href="/admin/tokens?sessions=1">Sessions <span class="filter__count">1</span>`, "No token yet")
+	page = a.do("GET", "/admin/tokens?sessions=1", []*http.Cookie{sess}).Body.String()
+	mustContain(t, page, "Revoke their sessions")
+	mustNotContain(t, page, "No token yet")
 }
 
 // -- local users --------------------------------------------------------------

@@ -422,7 +422,7 @@ func TestPagesRequireLogin(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
 
-	getPaths := []string{"/", "/jobs", "/jobs/default/web", "/history", "/drift", "/deployments/d1", "/deployments/d1/status", "/admin", "/admin/policies/readers"}
+	getPaths := []string{"/", "/jobs", "/jobs/default/web", "/history", "/drift", "/deployments/d1", "/deployments/d1/status", "/admin", "/admin/tokens", "/admin/policies/readers/edit"}
 	for _, p := range getPaths {
 		rec := ts.do("GET", p, nil)
 		if rec.Code != http.StatusFound {

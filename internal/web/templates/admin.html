@@ -1,4 +1,7 @@
-{{define "admin"}}
+{{/* The Administration pages share a shell: the page head and the menu at the
+     side. admin_tokens.html, admin_policy.html and admin_rule.html hold the
+     other pages. */}}
+{{define "admin_open"}}
 {{template "chrome_head" .}}
 <div class="pagehead">
   <h1 class="pagehead__title">Administration</h1>
@@ -7,185 +10,87 @@
 
 {{if not .ACLOn}}
 <section class="flash flash--warn">
-  <div><strong>The ACL is off.</strong> Everyone who logs in, and every token, has full control. Turn it on with <span class="mono">-acl</span>.</div>
+  <strong>The ACL is off.</strong> Everyone who logs in, and every token, has full control. Turn it on with <span class="mono">-acl</span>.
 </section>
 {{end}}
 
-{{with .Created}}
-<section class="flash flash--warn">
+<div class="settings">
+  <nav class="settings-nav" aria-label="Administration">
+    <a class="settings-nav__item{{if eq .Section "self"}} is-active{{end}}" href="{{.Base}}/admin"{{if eq .Section "self"}} aria-current="page"{{end}}>Your token</a>
+    {{if .Manage}}
+    <a class="settings-nav__item{{if eq .Section "tokens"}} is-active{{end}}" href="{{.Base}}/admin/tokens"{{if eq .Section "tokens"}} aria-current="page"{{end}}>Tokens</a>
+    <a class="settings-nav__item{{if eq .Section "policies"}} is-active{{end}}" href="{{.Base}}/admin/policies"{{if eq .Section "policies"}} aria-current="page"{{end}}>ACL policies</a>
+    <a class="settings-nav__item{{if eq .Section "rules"}} is-active{{end}}" href="{{.Base}}/admin/binding-rules"{{if eq .Section "rules"}} aria-current="page"{{end}}>Binding rules</a>
+    <a class="settings-nav__item{{if eq .Section "changes"}} is-active{{end}}" href="{{.Base}}/admin/changes"{{if eq .Section "changes"}} aria-current="page"{{end}}>Changes</a>
+    {{end}}
+  </nav>
+  <div class="settings__main">
+{{end}}
+
+{{define "admin_close"}}
+  </div>
+</div>
+{{template "chrome_foot" .}}
+{{end}}
+
+{{define "admin"}}
+{{template "admin_open" .}}
+<div class="subhead">
   <div>
-    <strong>Token “{{.Name}}” created.</strong> Copy it now: nops keeps only its hash, and does not show it again.
-    <input type="text" readonly value="{{.Secret}}" aria-label="The new token" class="input mono">
+    <h2 class="subhead__title">Your token</h2>
+    <p class="subhead__desc">The token of this {{if .Self.Session}}session{{else}}request{{end}}, and what it carries.</p>
+  </div>
+</div>
+
+<section class="box">
+  <dl class="dl dl--wide">
+    <dt>Name</dt><dd title="{{.Self.Name}}">{{.Self.Name}}</dd>
+    <dt>Type</dt><dd><span class="label">{{.Self.Kind}}</span>{{if .Self.Session}} <span class="muted">session</span>{{end}}</dd>
+    {{if .Self.AccessorID}}<dt>Accessor ID</dt><dd class="mono" title="{{.Self.AccessorID}}">{{.Self.AccessorID}}</dd>{{end}}
+    {{if eq .Self.Kind "client"}}<dt>ACL policies</dt><dd>{{range $i, $p := .Self.Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>{{end}}
+    {{if .Self.Created.ISO}}
+    <dt>{{if .Self.Session}}Session started{{else}}Created{{end}}</dt><dd>{{template "time" .Self.Created}}{{if not .Self.Session}} by {{.Self.Creator}}{{end}}</dd>
+    <dt>Expires</dt><dd>{{if .Self.Expires.ISO}}{{template "time" .Self.Expires}}{{else}}never{{end}}</dd>
+    {{end}}
+  </dl>
+</section>
+
+{{if .SessionSecret}}
+<section class="box">
+  <header class="box__header"><h3 class="box__title">Use it from the command line</h3></header>
+  <div class="box__body">
+    <p class="muted">Copy this session's secret into a file and pass it with <span class="mono">-token-file</span>. It stops working when the session ends.</p>
+    <div class="input-group">
+      <input type="text" readonly value="{{.SessionSecret}}" id="session-secret" aria-label="The secret of your session token" class="input mono">
+      <button type="button" class="btn" data-copy="session-secret">Copy</button>
+    </div>
   </div>
 </section>
 {{end}}
-
-<section class="box">
-  <header class="box__header"><h2 class="box__title">Your token</h2></header>
-  <div class="box__body">
-    <p><strong>{{.Self.Name}}</strong> <span class="pill">{{.Self.Kind}}</span>{{if .Self.AccessorID}} <span class="muted mono">{{.Self.AccessorID}}</span>{{end}}</p>
-    {{if eq .Self.Kind "client"}}<p>ACL policies: {{range $i, $p := .Self.Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">none</span>{{end}}</p>{{end}}
-    {{if .Self.Created.ISO}}<p class="muted">{{if .Self.Session}}Session started{{else}}Created{{end}} {{template "time" .Self.Created}}{{if not .Self.Session}} by {{.Self.Creator}}{{end}}. {{if .Self.Expires.ISO}}Expires {{template "time" .Self.Expires}}.{{else}}Never expires.{{end}}</p>{{end}}
-    {{if .SessionSecret}}
-    <p class="muted">To use this session from the command line, copy its secret into a file and pass it with <span class="mono">-token-file</span>. It stops working when the session ends.</p>
-    <input type="text" readonly value="{{.SessionSecret}}" id="session-secret" aria-label="The secret of your session token" class="input mono">
-    <button type="button" class="btn btn--sm" data-copy="session-secret">Copy</button>
-    {{end}}
-  </div>
-</section>
-
-{{if .Manage}}
-<section class="box">
-  <header class="box__header"><h2 class="box__title">New token</h2></header>
-  <form class="box__body" method="post" action="{{.Base}}/admin/tokens">
-    <input type="text" name="name" maxlength="100" required placeholder="Name, for example “ci”" aria-label="Name of the token" class="input">
-    <select name="type" aria-label="Type" class="input">
-      <option value="client" selected>client: the ACL policies below</option>
-      <option value="management">management: everything</option>
-    </select>
-    <select name="expires" aria-label="Expiry" class="input">
-      {{range .Expiry}}<option value="{{.Key}}"{{if eq .Key $.Default}} selected{{end}}>Expires: {{.Label}}</option>{{end}}
-    </select>
-    {{range .Policies}}<label><input type="checkbox" name="policy" value="{{.Name}}"> <span class="mono">{{.Name}}</span></label> {{end}}
-    <button type="submit" class="btn btn--sm">Create token</button>
-  </form>
-</section>
-
-{{with .Revoke}}
-<section class="box">
-  <header class="box__header"><h2 class="box__title">{{if .SessionsOf}}Revoke every session of <span class="mono">{{.SessionsOf}}</span>{{else}}Revoke every token <span class="mono">{{or .CreatorIdentity .CreatorAccessorID}}</span> created{{end}}</h2></header>
-  <div class="box__body">
-    {{if .Tokens}}
-    <p>This revokes {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}{{if not .SessionsOf}}, with the tokens they created{{end}}:</p>
-    <ul>
-      {{range .Tokens}}<li><strong>{{.Name}}</strong> <span class="pill">{{.Kind}}</span> <span class="muted mono">{{.AccessorID}}</span></li>{{end}}
-    </ul>
-    <form method="post" action="{{$.Base}}/admin/tokens/revoke">
-      {{if .SessionsOf}}<input type="hidden" name="sessions_of" value="{{.SessionsOf}}">{{end}}
-      {{if .CreatorIdentity}}<input type="hidden" name="creator_identity" value="{{.CreatorIdentity}}">{{end}}
-      {{if .CreatorAccessorID}}<input type="hidden" name="creator" value="{{.CreatorAccessorID}}">{{end}}
-      <button type="submit" class="btn btn--sm btn--danger">Revoke {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}</button>
-      <a href="{{$.Base}}/admin" class="btn btn--sm">Cancel</a>
-    </form>
-    {{else}}
-    <p class="empty">No token to revoke.</p>
-    <a href="{{$.Base}}/admin" class="btn btn--sm">Back</a>
-    {{end}}
-  </div>
-</section>
+{{template "admin_close" .}}
 {{end}}
 
-<p class="muted">{{if .Sessions}}Showing the session tokens that logins made. <a href="{{.Base}}/admin">Hide them</a>.{{else if .HiddenSessions}}{{.HiddenSessions}} session token{{if ne .HiddenSessions 1}}s{{end}} hidden. <a href="{{.Base}}/admin?sessions=1">Show them</a>.{{end}}</p>
-<div class="box">
-  {{if .Tokens}}
-  <table class="table">
-    <thead>
-      <tr><th>Name</th><th>Type</th><th>ACL policies</th><th class="hide-sm">Origin</th><th>Expires</th><th></th></tr>
-    </thead>
-    <tbody>
-      {{range .Tokens}}
-      <tr>
-        <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span> <span class="muted mono" title="Accessor ID">{{.AccessorID}}</span></td>
-        <td>{{.Kind}}</td>
-        <td>{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}</td>
-        <td class="hide-sm muted">{{if .Session}}login{{if .Identity}} · <a href="{{$.Base}}/admin?sessions_of={{.Identity}}">Revoke their sessions</a>{{end}}{{else}}created by {{.Creator}}{{if .CreatorIdentity}} · <a href="{{$.Base}}/admin?creator_identity={{.CreatorIdentity}}">Revoke all they created</a>{{else if .CreatorAccessorID}} · <a href="{{$.Base}}/admin?creator={{.CreatorAccessorID}}">Revoke all it created</a>{{end}}{{end}}</td>
-        <td>{{if .Expires.ISO}}<span class="muted">{{template "time" .Expires}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
-        <td><form method="post" action="{{$.Base}}/admin/tokens/{{.AccessorID}}/revoke"><button type="submit" class="btn btn--sm btn--danger">Revoke</button></form></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-  {{else}}
-  <p class="empty">No token yet.</p>
-  {{end}}
+{{define "admin_changes"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <h2 class="subhead__title">Changes</h2>
+    <p class="subhead__desc">The latest changes to tokens, ACL policies and binding rules, newest first.</p>
+  </div>
 </div>
 
-<section class="box">
-  <header class="box__header"><h2 class="box__title">New ACL policy</h2></header>
-  <form class="box__body" method="post" action="{{.Base}}/admin/policies">
-    <input type="text" name="name" maxlength="128" required placeholder="Name, for example “readers”" aria-label="Name of the ACL policy" class="input">
-    <input type="text" name="description" maxlength="200" placeholder="Description" aria-label="Description" class="input">
-    <textarea name="rules" rows="6" required aria-label="Rules" class="input mono" placeholder='namespace "*" {&#10;  policy = "read"&#10;}'></textarea>
-    <button type="submit" class="btn btn--sm">Save ACL policy</button>
-  </form>
-</section>
-
 <div class="box">
-  {{if .Policies}}
-  <table class="table">
-    <thead>
-      <tr><th>ACL policy</th><th>Description</th><th class="hide-sm">Modified</th><th></th></tr>
-    </thead>
-    <tbody>
-      {{range .Policies}}
-      <tr>
-        <td><a class="mono" href="{{$.Base}}/admin/policies/{{.Name}}">{{.Name}}</a></td>
-        <td>{{.Description}}</td>
-        <td class="hide-sm muted">{{template "time" .Modified}}</td>
-        <td><form method="post" action="{{$.Base}}/admin/policies/{{.Name}}/delete"><button type="submit" class="btn btn--sm btn--danger">Delete</button></form></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-  {{else}}
-  <p class="empty">No ACL policy yet.</p>
-  {{end}}
-</div>
-
-<section class="box">
-  <header class="box__header"><h2 class="box__title">New binding rule</h2></header>
-  <form class="box__body" method="post" action="{{.Base}}/admin/binding-rules">
-    <input type="text" name="description" maxlength="200" placeholder="Description" aria-label="Description" class="input">
-    <select name="auth_method" aria-label="Auth method" class="input">
-      <option value="oidc"{{if eq .NewRule.AuthMethod "oidc"}} selected{{end}}>oidc</option>
-      <option value="basic"{{if eq .NewRule.AuthMethod "basic"}} selected{{end}}>basic</option>
-    </select>
-    <input type="text" name="selector" maxlength="1024" placeholder='Selector, for example "ops" in list.groups; empty matches every login' aria-label="Selector" class="input mono">
-    <select name="bind" aria-label="Binds" class="input">
-      <option value="management" selected>binds management: everything</option>
-      {{range .Policies}}<option value="policy:{{.Name}}">binds ACL policy {{.Name}}</option>{{end}}
-    </select>
-    <button type="submit" class="btn btn--sm">Save binding rule</button>
-  </form>
-</section>
-
-<div class="box">
-  {{if .Rules}}
-  <table class="table">
-    <thead>
-      <tr><th>Binding rule</th><th>Auth method</th><th>Selector</th><th>Binds</th><th class="hide-sm">Modified</th><th></th></tr>
-    </thead>
-    <tbody>
-      {{range .Rules}}
-      <tr>
-        <td><a href="{{$.Base}}/admin/binding-rules/{{.ID}}">{{if .Description}}{{.Description}}{{else}}<span class="mono">{{.ID}}</span>{{end}}</a></td>
-        <td>{{.AuthMethod}}</td>
-        <td class="mono">{{if .Selector}}{{.Selector}}{{else}}<span class="muted">every login</span>{{end}}</td>
-        <td>{{.Binds}}</td>
-        <td class="hide-sm muted">{{template "time" .Modified}}</td>
-        <td><form method="post" action="{{$.Base}}/admin/binding-rules/{{.ID}}/delete"><button type="submit" class="btn btn--sm btn--danger">Delete</button></form></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-  {{else}}
-  <p class="empty">No binding rule yet: {{if .ACLOn}}no login gets a token.{{else}}the ACL is off, so every login gets full control.{{end}}</p>
-  {{end}}
-</div>
-
-<section class="box">
-  <header class="box__header"><h2 class="box__title">Latest changes</h2></header>
   {{if .Changes}}
   <table class="table">
     <thead>
-      <tr><th>When</th><th>Who</th><th>What</th></tr>
+      <tr><th class="col-when">When</th><th>Who</th><th>What</th></tr>
     </thead>
     <tbody>
       {{range .Changes}}
       <tr>
         <td class="muted">{{template "time" .When}}</td>
-        <td>{{.Actor}}{{if .AccessorID}} <span class="muted mono" title="Accessor ID of the token used">{{.AccessorID}}</span>{{end}}{{if .Identity}} <span class="muted mono" title="Identity of the person">{{.Identity}}</span>{{end}}</td>
-        <td>{{.Action}} {{.Kind}} <span class="mono">{{.Object}}</span></td>
+        <td class="cell-ellipsis">{{.Actor}}{{if .Identity}} <span class="muted mono" title="Identity of the person">{{.Identity}}</span>{{end}}{{if .AccessorID}}<div class="cell-sub mono" title="Accessor ID of the token used">{{.AccessorID}}</div>{{end}}</td>
+        <td class="cell-ellipsis">{{.Action}} {{.Kind}} <span class="mono" title="{{.Object}}">{{.Object}}</span></td>
       </tr>
       {{end}}
     </tbody>
@@ -193,7 +98,6 @@
   {{else}}
   <p class="empty">No change yet.</p>
   {{end}}
-</section>
-{{end}}
-{{template "chrome_foot" .}}
+</div>
+{{template "admin_close" .}}
 {{end}}
