@@ -136,6 +136,7 @@ internal/config/       flags + env vars (NOPS_*), validation
 internal/gitwatch/     in-memory clone, polling, webhook trigger
 internal/nomadx/       Nomad client wrapper (CAS-only register, error sentinels)
 internal/meta/         parsing/validation of the nops_* meta keys
+internal/acl/          ACL policies (HCL rules), binding rules (go-bexpr selectors), the capability check
 internal/store/        SQLite (modernc.org/sqlite, no cgo), embedded SQL migrations
 internal/engine/       state machine, reconciler, recovery on restart
 internal/hooks/        dispatch, wait, timeout and stop of hook jobs

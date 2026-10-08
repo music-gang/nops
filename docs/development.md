@@ -8,6 +8,7 @@ conventions.
 | Area | Tests |
 |---|---|
 | `internal/meta` | Table-driven unit tests: valid and invalid values, unknown keys, defaults. |
+| `internal/acl` | Table-driven unit tests: valid and invalid rules and selectors, the most specific rule, deny, and which binding rules match. |
 | `internal/engine` | Unit tests for every transition, for crash recovery, and for CAS conflicts. They use a fake Nomad and an injected clock. Each invariant has an adversarial test in `invariants_test.go`. |
 | `internal/nomadx` | Unit tests against an `httptest` stub, plus integration tests. |
 | `internal/store` | Tests against real SQLite in `t.TempDir()`. |

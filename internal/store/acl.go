@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/music-gang/nops/internal/acl"
 )
 
 // The two types of token (docs/acl.md#tokens).
@@ -14,14 +16,24 @@ const (
 	TokenClient     = "client"
 )
 
+// How a token came to be.
+const (
+	OriginLogin   = "login"   // a login made it: a session
+	OriginCreated = "created" // a person or a token created it
+)
+
 // Audit says who made a change to the ACL: the accessor ID of the token used,
-// and who it stands for. It stays readable after the token is gone.
+// and who it stands for, by name and, for a person, by identity (the issuer and
+// sub of an OIDC login, or the method and username of a basic one). It stays
+// readable after the token is gone.
 type Audit struct {
 	AccessorID string
 	Actor      string
+	Identity   string
 }
 
 type accessorKey struct{}
+type identityKey struct{}
 
 // WithAccessor returns a context that makes the events of an action carry the
 // accessor ID of the token that asked for it.
@@ -32,6 +44,18 @@ func WithAccessor(ctx context.Context, accessorID string) context.Context {
 // AccessorFrom returns the accessor ID WithAccessor put in the context.
 func AccessorFrom(ctx context.Context) string {
 	id, _ := ctx.Value(accessorKey{}).(string)
+	return id
+}
+
+// WithIdentity returns a context that makes the events of an action carry the
+// identity of the person who asked for it.
+func WithIdentity(ctx context.Context, identity string) context.Context {
+	return context.WithValue(ctx, identityKey{}, identity)
+}
+
+// IdentityFrom returns the identity WithIdentity put in the context.
+func IdentityFrom(ctx context.Context) string {
+	id, _ := ctx.Value(identityKey{}).(string)
 	return id
 }
 
@@ -51,10 +75,13 @@ type ACLToken struct {
 	Type              string
 	Policies          []string // names of the ACL policies a client token carries
 	ACL               bool     // created with the ACL on
+	Origin            string   // OriginLogin or OriginCreated; empty means OriginCreated
+	Identity          string   // the person a session stands for; empty for a created token
 	CreatedAt         time.Time
 	ExpiresAt         time.Time // zero for a token that never expires
 	CreatorAccessorID string
 	CreatorName       string
+	CreatorIdentity   string // the person who created the token, when it was one
 }
 
 // ACLChange is one row of the log of changes to ACL policies and tokens.
@@ -63,14 +90,15 @@ type ACLChange struct {
 	Time       time.Time
 	AccessorID string
 	Actor      string
+	Identity   string
 	Action     string // "create", "update", "delete" or "revoke"
-	Kind       string // "acl-policy" or "token"
-	Object     string // the name of an ACL policy, or the accessor ID of a token
+	Kind       string // "acl-policy", "binding-rule" or "token"
+	Object     string // the name of an ACL policy, the ID of a binding rule, or the accessor ID of a token
 }
 
 func (s *Store) insertChange(ctx context.Context, tx *sql.Tx, by Audit, action, kind, object string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO acl_changes (ts, accessor_id, actor, action, kind, object)
-		VALUES (?, ?, ?, ?, ?, ?)`, s.ts(), by.AccessorID, by.Actor, action, kind, object)
+	_, err := tx.ExecContext(ctx, `INSERT INTO acl_changes (ts, accessor_id, actor, identity, action, kind, object)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, s.ts(), by.AccessorID, by.Actor, by.Identity, action, kind, object)
 	if err != nil {
 		return fmt.Errorf("log %s of %s %s: %w", action, kind, object, err)
 	}
@@ -204,6 +232,12 @@ func (s *Store) CreateACLToken(ctx context.Context, t ACLToken, secretHash strin
 	if t.Type == TokenManagement && len(t.Policies) > 0 {
 		return ACLToken{}, errors.New("create token: a management token carries no ACL policies")
 	}
+	if t.Origin == "" {
+		t.Origin = OriginCreated
+	}
+	if t.Origin != OriginLogin && t.Origin != OriginCreated {
+		return ACLToken{}, fmt.Errorf("create token: origin %q is not %s or %s", t.Origin, OriginLogin, OriginCreated)
+	}
 
 	t.AccessorID = s.newID()
 	now := s.now()
@@ -219,10 +253,11 @@ func (s *Store) CreateACLToken(ctx context.Context, t ACLToken, secretHash strin
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO acl_tokens
-		(accessor_id, secret_hash, name, type, acl, created_at, expires_at, creator_accessor_id, creator_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.AccessorID, secretHash, t.Name, t.Type, t.ACL, now.UTC().Format(time.RFC3339Nano), expires,
-		t.CreatorAccessorID, t.CreatorName); err != nil {
+		(accessor_id, secret_hash, name, type, acl, origin, identity, created_at, expires_at,
+		 creator_accessor_id, creator_name, creator_identity)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.AccessorID, secretHash, t.Name, t.Type, t.ACL, t.Origin, t.Identity, now.UTC().Format(time.RFC3339Nano), expires,
+		t.CreatorAccessorID, t.CreatorName, t.CreatorIdentity); err != nil {
 		return ACLToken{}, fmt.Errorf("create token %s: %w", t.Name, err)
 	}
 	for _, p := range t.Policies {
@@ -240,13 +275,14 @@ func (s *Store) CreateACLToken(ctx context.Context, t ACLToken, secretHash strin
 	return t, nil
 }
 
-const aclTokenColumns = `accessor_id, name, type, acl, created_at, expires_at, creator_accessor_id, creator_name`
+const aclTokenColumns = `accessor_id, name, type, acl, origin, identity, created_at, expires_at, creator_accessor_id, creator_name, creator_identity`
 
 func scanACLToken(r scanner) (ACLToken, error) {
 	var t ACLToken
 	var created string
 	var expires sql.NullString
-	if err := r.Scan(&t.AccessorID, &t.Name, &t.Type, &t.ACL, &created, &expires, &t.CreatorAccessorID, &t.CreatorName); err != nil {
+	if err := r.Scan(&t.AccessorID, &t.Name, &t.Type, &t.ACL, &t.Origin, &t.Identity, &created, &expires,
+		&t.CreatorAccessorID, &t.CreatorName, &t.CreatorIdentity); err != nil {
 		return ACLToken{}, err
 	}
 	var err error
@@ -374,9 +410,208 @@ func (s *Store) RevokeACLToken(ctx context.Context, accessorID string, by Audit)
 	return nil
 }
 
+// DeleteExpiredSessions deletes the session tokens that have expired, and
+// returns how many. An expired token that someone created stays listed until
+// someone revokes it. It is not a change to the ACL: nothing is logged.
+func (s *Store) DeleteExpiredSessions(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT accessor_id, expires_at FROM acl_tokens WHERE origin = ? AND expires_at IS NOT NULL`, OriginLogin)
+	if err != nil {
+		return 0, fmt.Errorf("list sessions: %w", err)
+	}
+	var expired []string
+	now := s.now()
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan session: %w", err)
+		}
+		// Compared as times, not as text: see ACLTokenBySecret.
+		t, err := parseTime(at)
+		if err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("parse session expiry %q: %w", at, err)
+		}
+		if !now.Before(t) {
+			expired = append(expired, id)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, fmt.Errorf("list sessions: %w", err)
+	}
+	for _, id := range expired {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM acl_tokens WHERE accessor_id = ?`, id); err != nil {
+			return 0, fmt.Errorf("delete session %s: %w", id, err)
+		}
+	}
+	return len(expired), nil
+}
+
+// BindingRule is a binding rule as saved (docs/acl.md#binding-rules).
+type BindingRule struct {
+	ID          string
+	Description string
+	AuthMethod  string // "oidc" or "basic"
+	Selector    string // a go-bexpr expression on the login's claims; empty matches every login
+	BindType    string // acl.BindPolicy or acl.BindManagement
+	BindName    string // the ACL policy a BindPolicy rule binds; empty for BindManagement
+	CreatedAt   time.Time
+	ModifiedAt  time.Time
+}
+
+func checkBindingRule(r BindingRule, by Audit) error {
+	if by.Actor == "" {
+		return errors.New("put binding rule: who is required")
+	}
+	if r.AuthMethod == "" {
+		return errors.New("put binding rule: the auth method is required")
+	}
+	switch r.BindType {
+	case acl.BindPolicy:
+		if r.BindName == "" {
+			return errors.New("put binding rule: an ACL policy to bind is required")
+		}
+	case acl.BindManagement:
+		if r.BindName != "" {
+			return errors.New("put binding rule: management binds no ACL policy")
+		}
+	default:
+		return fmt.Errorf("put binding rule: bind type %q is not %s or %s", r.BindType, acl.BindPolicy, acl.BindManagement)
+	}
+	return nil
+}
+
+// PutBindingRule creates a binding rule when r.ID is empty, and returns it with
+// its ID. Otherwise it replaces the rule with that ID, or returns ErrNotFound.
+// The change is logged in the same transaction. The caller has checked the
+// selector.
+func (s *Store) PutBindingRule(ctx context.Context, r BindingRule, by Audit) (BindingRule, error) {
+	if err := checkBindingRule(r, by); err != nil {
+		return BindingRule{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BindingRule{}, fmt.Errorf("put binding rule: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := s.now()
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	action := "update"
+	if r.ID == "" {
+		action = "create"
+		r.ID = s.newID()
+		r.CreatedAt = now
+		_, err = tx.ExecContext(ctx, `INSERT INTO acl_binding_rules
+			(id, description, auth_method, selector, bind_type, bind_name, created_at, modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.ID, r.Description, r.AuthMethod, r.Selector, r.BindType, r.BindName, stamp, stamp)
+	} else {
+		var res sql.Result
+		res, err = tx.ExecContext(ctx, `UPDATE acl_binding_rules
+			SET description = ?, auth_method = ?, selector = ?, bind_type = ?, bind_name = ?, modified_at = ? WHERE id = ?`,
+			r.Description, r.AuthMethod, r.Selector, r.BindType, r.BindName, stamp, r.ID)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n == 0 {
+				return BindingRule{}, fmt.Errorf("binding rule %s: %w", r.ID, ErrNotFound)
+			}
+		}
+	}
+	if err != nil {
+		return BindingRule{}, fmt.Errorf("put binding rule %s: %w", r.ID, err)
+	}
+	if err := s.insertChange(ctx, tx, by, action, "binding-rule", r.ID); err != nil {
+		return BindingRule{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return BindingRule{}, fmt.Errorf("put binding rule %s: commit: %w", r.ID, err)
+	}
+	return s.BindingRule(ctx, r.ID)
+}
+
+const bindingRuleColumns = `id, description, auth_method, selector, bind_type, bind_name, created_at, modified_at`
+
+func scanBindingRule(r scanner) (BindingRule, error) {
+	var b BindingRule
+	var created, modified string
+	if err := r.Scan(&b.ID, &b.Description, &b.AuthMethod, &b.Selector, &b.BindType, &b.BindName, &created, &modified); err != nil {
+		return BindingRule{}, err
+	}
+	var err error
+	if b.CreatedAt, err = parseTime(created); err != nil {
+		return BindingRule{}, fmt.Errorf("parse binding rule time %q: %w", created, err)
+	}
+	if b.ModifiedAt, err = parseTime(modified); err != nil {
+		return BindingRule{}, fmt.Errorf("parse binding rule time %q: %w", modified, err)
+	}
+	return b, nil
+}
+
+// BindingRule returns the binding rule, or ErrNotFound.
+func (s *Store) BindingRule(ctx context.Context, id string) (BindingRule, error) {
+	b, err := scanBindingRule(s.db.QueryRowContext(ctx, `SELECT `+bindingRuleColumns+` FROM acl_binding_rules WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return BindingRule{}, fmt.Errorf("binding rule %s: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return BindingRule{}, fmt.Errorf("read binding rule %s: %w", id, err)
+	}
+	return b, nil
+}
+
+// BindingRules returns every binding rule, oldest first.
+func (s *Store) BindingRules(ctx context.Context) ([]BindingRule, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+bindingRuleColumns+` FROM acl_binding_rules ORDER BY created_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list binding rules: %w", err)
+	}
+	defer rows.Close()
+	var out []BindingRule
+	for rows.Next() {
+		b, err := scanBindingRule(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan binding rule: %w", err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list binding rules: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteBindingRule deletes the binding rule, or returns ErrNotFound. The
+// sessions it bound keep what they have until they expire.
+func (s *Store) DeleteBindingRule(ctx context.Context, id string, by Audit) error {
+	if by.Actor == "" {
+		return errors.New("delete binding rule: who is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete binding rule %s: %w", id, err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM acl_binding_rules WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete binding rule %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("delete binding rule %s: %w", id, ErrNotFound)
+	}
+	if err := s.insertChange(ctx, tx, by, "delete", "binding-rule", id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete binding rule %s: commit: %w", id, err)
+	}
+	return nil
+}
+
 // ACLChanges returns the latest changes to ACL policies and tokens, newest first.
 func (s *Store) ACLChanges(ctx context.Context, limit int) ([]ACLChange, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, accessor_id, actor, action, kind, object
+	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, accessor_id, actor, identity, action, kind, object
 		FROM acl_changes ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list acl changes: %w", err)
@@ -386,7 +621,7 @@ func (s *Store) ACLChanges(ctx context.Context, limit int) ([]ACLChange, error) 
 	for rows.Next() {
 		var c ACLChange
 		var ts string
-		if err := rows.Scan(&c.ID, &ts, &c.AccessorID, &c.Actor, &c.Action, &c.Kind, &c.Object); err != nil {
+		if err := rows.Scan(&c.ID, &ts, &c.AccessorID, &c.Actor, &c.Identity, &c.Action, &c.Kind, &c.Object); err != nil {
 			return nil, fmt.Errorf("scan acl change: %w", err)
 		}
 		if c.Time, err = parseTime(ts); err != nil {

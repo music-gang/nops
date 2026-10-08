@@ -267,3 +267,143 @@ func TestEventsRecordTheAccessor(t *testing.T) {
 		t.Errorf("accessors %q then %q, want none then acc-bob", first.AccessorID, last.AccessorID)
 	}
 }
+
+func TestBindingRuleCreateUpdateDelete(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	r, err := s.PutBindingRule(ctx, BindingRule{Description: "ops", AuthMethod: "oidc", Selector: `"ops" in list.groups`,
+		BindType: "policy", BindName: "operator"}, admin)
+	if err != nil || r.ID == "" || r.CreatedAt.IsZero() || !r.CreatedAt.Equal(r.ModifiedAt) {
+		t.Fatalf("PutBindingRule = %+v, %v, want a rule with an ID, created and modified together", r, err)
+	}
+
+	r.Selector, r.BindType, r.BindName = "", "management", ""
+	u, err := s.PutBindingRule(ctx, r, admin)
+	if err != nil || u.ID != r.ID || u.Selector != "" || u.BindType != "management" || !u.CreatedAt.Equal(r.CreatedAt) || !u.ModifiedAt.After(r.ModifiedAt) {
+		t.Errorf("after an update: %+v, %v, want the same rule, new binding, a later modification", u, err)
+	}
+	if _, err := s.PutBindingRule(ctx, BindingRule{ID: "nope", AuthMethod: "oidc", BindType: "management"}, admin); !errors.Is(err, ErrNotFound) {
+		t.Errorf("updating an unknown rule: err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := s.PutBindingRule(ctx, BindingRule{AuthMethod: "basic", BindType: "management"}, admin); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.BindingRules(ctx)
+	if err != nil || len(list) != 2 || list[0].ID != r.ID || list[1].AuthMethod != "basic" {
+		t.Errorf("BindingRules = %+v, %v, want the two rules oldest first", list, err)
+	}
+
+	if err := s.DeleteBindingRule(ctx, r.ID, admin); err != nil {
+		t.Fatalf("DeleteBindingRule: %v", err)
+	}
+	if _, err := s.BindingRule(ctx, r.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deleted rule: err = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteBindingRule(ctx, r.ID, admin); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deleting twice: err = %v, want ErrNotFound", err)
+	}
+
+	got, _ := s.ACLChanges(ctx, 10)
+	var kinds []string
+	for _, c := range got {
+		kinds = append(kinds, c.Action+" "+c.Kind)
+	}
+	want := []string{"delete binding-rule", "create binding-rule", "update binding-rule", "create binding-rule"}
+	if !slices.Equal(kinds, want) {
+		t.Errorf("changes = %v, want %v", kinds, want)
+	}
+}
+
+func TestPutBindingRuleRequiresWhatItNeeds(t *testing.T) {
+	s := newTestStore(t)
+	for name, tc := range map[string]struct {
+		r  BindingRule
+		by Audit
+	}{
+		"who":                         {BindingRule{AuthMethod: "oidc", BindType: "management"}, Audit{}},
+		"an auth method":              {BindingRule{BindType: "management"}, admin},
+		"a known bind type":           {BindingRule{AuthMethod: "oidc", BindType: "root"}, admin},
+		"a policy to bind":            {BindingRule{AuthMethod: "oidc", BindType: "policy"}, admin},
+		"no policy on management":     {BindingRule{AuthMethod: "oidc", BindType: "management", BindName: "x"}, admin},
+		"a known auth method (CHECK)": {BindingRule{AuthMethod: "ldap", BindType: "management"}, admin},
+	} {
+		if _, err := s.PutBindingRule(context.Background(), tc.r, tc.by); err == nil {
+			t.Errorf("without %s: no error", name)
+		}
+	}
+	if list, _ := s.BindingRules(context.Background()); len(list) != 0 {
+		t.Errorf("%d rules saved by refused requests", len(list))
+	}
+}
+
+func TestSessionTokensExpireAndAreDeleted(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t) // the clock advances one second per call
+	person := Audit{Actor: "alice", Identity: "basic:alice"}
+
+	sess, err := s.CreateACLToken(ctx, ACLToken{Name: "alice", Type: TokenClient, Policies: []string{"p"}, Origin: OriginLogin,
+		Identity: "basic:alice", CreatorName: "alice", CreatorIdentity: "basic:alice", ExpiresAt: t0.Add(time.Minute)}, "h-sess", person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreateACLToken(ctx, ACLToken{Name: "ci", Type: TokenManagement, ExpiresAt: t0.Add(time.Minute)}, "h-ci", admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ACLTokenBySecret(ctx, "h-sess", false)
+	if err != nil || got.Origin != OriginLogin || got.Identity != "basic:alice" || got.CreatorIdentity != "basic:alice" {
+		t.Fatalf("session = %+v, %v, want a login token for basic:alice", got, err)
+	}
+	if n, err := s.DeleteExpiredSessions(ctx); err != nil || n != 0 {
+		t.Fatalf("DeleteExpiredSessions before the expiry = %d, %v, want 0", n, err)
+	}
+
+	for range 70 {
+		s.now()
+	}
+	if n, err := s.DeleteExpiredSessions(ctx); err != nil || n != 1 {
+		t.Fatalf("DeleteExpiredSessions = %d, %v, want 1", n, err)
+	}
+	if _, err := s.ACLToken(ctx, sess.AccessorID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an expired session: err = %v, want it deleted", err)
+	}
+	if _, err := s.ACLToken(ctx, created.AccessorID); err != nil {
+		t.Errorf("an expired created token: err = %v, want it kept until someone revokes it", err)
+	}
+	var left int
+	if err := s.db.QueryRow(`SELECT count(*) FROM acl_token_policies`).Scan(&left); err != nil || left != 0 {
+		t.Errorf("%d ACL policy names left after the delete, %v; want 0", left, err)
+	}
+}
+
+func TestIdentityIsRecordedWithTheChangeAndTheEvent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	by := Audit{AccessorID: "acc-alice", Actor: "alice", Identity: "oidc:https://idp#sub-1"}
+
+	if err := s.PutACLPolicy(ctx, ACLPolicy{Name: "p", Rules: "x"}, by); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.ACLChanges(ctx, 1)
+	if err != nil || len(changes) != 1 || changes[0].Identity != by.Identity {
+		t.Errorf("ACLChanges = %+v, %v, want the identity of the person", changes, err)
+	}
+
+	d := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, d.ID, StatePendingApproval, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx = WithIdentity(WithAccessor(ctx, by.AccessorID), by.Identity)
+	if err := s.Transition(ctx, d.ID, StateRejected, Transition{From: StatePendingApproval, Actor: "alice", DecidedBy: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := s.Events(ctx, d.ID)
+	if last := events[len(events)-1]; last.Identity != by.Identity || last.AccessorID != "acc-alice" {
+		t.Errorf("last event = %+v, want the accessor and the identity", last)
+	}
+	if first := events[0]; first.Identity != "" {
+		t.Errorf("first event identity = %q, want none for Nops itself", first.Identity)
+	}
+}

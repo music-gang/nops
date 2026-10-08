@@ -37,7 +37,7 @@ func invalidf(format string, args ...any) error { return invalidInput(fmt.Sprint
 
 // auditOf is who a change is recorded as.
 func auditOf(sub *subject) store.Audit {
-	return store.Audit{AccessorID: sub.accessorID, Actor: sub.actor}
+	return store.Audit{AccessorID: sub.accessorID, Actor: sub.actor, Identity: sub.identity}
 }
 
 // putPolicy checks an ACL policy and saves it. Invalid rules save nothing.
@@ -59,6 +59,53 @@ func (s *server) putPolicy(ctx context.Context, sub *subject, p store.ACLPolicy)
 	}
 	s.log.InfoContext(ctx, "ACL policy saved", "acl_policy", p.Name, "actor", sub.actor, "accessor_id", sub.accessorID)
 	return nil
+}
+
+// maxSelector is the longest selector a binding rule takes, in bytes.
+const maxSelector = 1 << 10
+
+// maxDescription is the longest description of a binding rule, in bytes.
+const maxDescription = 200
+
+// authMethods are the names a binding rule gives an auth method.
+var authMethods = []string{"oidc", "basic"}
+
+// putBindingRule checks a binding rule and saves it: a new one when r.ID is
+// empty, else the rule with that ID. A rule that does not check saves nothing.
+func (s *server) putBindingRule(ctx context.Context, sub *subject, r store.BindingRule) (store.BindingRule, error) {
+	r.Description, r.Selector = strings.TrimSpace(r.Description), strings.TrimSpace(r.Selector)
+	if len(r.Description) > maxDescription {
+		return store.BindingRule{}, invalidf("the description holds %d bytes at most", maxDescription)
+	}
+	if !slices.Contains(authMethods, r.AuthMethod) {
+		return store.BindingRule{}, invalidf("the auth method is %s", strings.Join(authMethods, " or "))
+	}
+	if len(r.Selector) > maxSelector {
+		return store.BindingRule{}, invalidf("the selector holds %d bytes at most", maxSelector)
+	}
+	if err := acl.ValidSelector(r.Selector); err != nil {
+		return store.BindingRule{}, invalidf("%v", err)
+	}
+	switch r.BindType {
+	case acl.BindManagement:
+		if r.BindName != "" {
+			return store.BindingRule{}, invalidf("a rule that binds management binds no ACL policy")
+		}
+	case acl.BindPolicy:
+		if _, err := s.access.ACLPolicy(ctx, r.BindName); errors.Is(err, store.ErrNotFound) {
+			return store.BindingRule{}, invalidf("the ACL policy %q does not exist", r.BindName)
+		} else if err != nil {
+			return store.BindingRule{}, err
+		}
+	default:
+		return store.BindingRule{}, invalidf("the bind type is %s or %s", acl.BindPolicy, acl.BindManagement)
+	}
+	saved, err := s.access.PutBindingRule(ctx, r, auditOf(sub))
+	if err != nil {
+		return store.BindingRule{}, err
+	}
+	s.log.InfoContext(ctx, "binding rule saved", "binding_rule", saved.ID, "actor", sub.actor, "accessor_id", sub.accessorID)
+	return saved, nil
 }
 
 // newToken is what a caller asks for.
@@ -100,7 +147,7 @@ func (s *server) createToken(ctx context.Context, sub *subject, in newToken) (st
 	}
 	t := store.ACLToken{
 		Name: in.Name, Type: in.Type, Policies: slices.Compact(slices.Sorted(slices.Values(in.Policies))), ACL: s.aclOn,
-		CreatorAccessorID: sub.accessorID, CreatorName: sub.actor,
+		CreatorAccessorID: sub.accessorID, CreatorName: sub.actor, CreatorIdentity: sub.identity,
 	}
 	if in.ExpiresIn > 0 {
 		t.ExpiresAt = s.now().Add(in.ExpiresIn)

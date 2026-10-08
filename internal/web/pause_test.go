@@ -32,7 +32,7 @@ func pausedWeb() engine.Observation {
 func TestPause(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/jobs/default/web/pause", formBody(url.Values{"reason": {"db incident"}}), cookie)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
@@ -46,7 +46,7 @@ func TestPause(t *testing.T) {
 func TestResume(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	cookie := mintSession(t, ts.auth, "bob")
+	cookie := ts.session("bob")
 
 	rec := ts.do("POST", "/jobs/default/web/resume", nil, cookie)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
@@ -65,7 +65,7 @@ func TestPauseAndResumeReturnToANamedPage(t *testing.T) {
 			"": "/", "jobs": "/jobs", "job": "/jobs/default/web", "https://evil.test": "/", "//evil.test": "/",
 		} {
 			ts := newTestServer(t, &fakeStore{}, &fakeEngine{observations: []engine.Observation{obs}}, "")
-			cookie := mintSession(t, ts.auth, "alice")
+			cookie := ts.session("alice")
 			rec := ts.do("POST", "/jobs/default/web/"+action, formBody(url.Values{"back": {back}}), cookie)
 			if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != want {
 				t.Errorf("%s back=%q: status %d, Location %q, want 303 to %q", action, back, rec.Code, got, want)
@@ -92,7 +92,7 @@ func TestPauseAndResumeErrors(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ts := newTestServer(t, &fakeStore{}, c.en, "")
-			rec := ts.do("POST", "/jobs/default/web/"+c.action, nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("POST", "/jobs/default/web/"+c.action, nil, ts.session("alice"))
 			if rec.Code != c.code || !strings.Contains(rec.Body.String(), c.body) {
 				t.Fatalf("status %d, want %d with %q; body: %s", rec.Code, c.code, c.body, rec.Body)
 			}
@@ -111,7 +111,7 @@ func TestPauseAndResumeRefuseCrossOrigin(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/jobs/default/web/"+action, nil)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
-		req.AddCookie(mintSession(t, ts.auth, "alice"))
+		req.AddCookie(ts.session("alice"))
 		rec := httptest.NewRecorder()
 		ts.h.ServeHTTP(rec, req)
 
@@ -265,7 +265,7 @@ func TestApproveOfAPausedJobConflict(t *testing.T) {
 	en := &fakeEngine{approveErr: engine.ErrPaused, observations: []engine.Observation{pausedWeb()}}
 	ts := newTestServer(t, st, en, "")
 
-	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), mintSession(t, ts.auth, "alice"))
+	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), ts.session("alice"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409", rec.Code)
 	}

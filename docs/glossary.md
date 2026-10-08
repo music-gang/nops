@@ -39,7 +39,6 @@ disagrees with this one, this page wins. Code-only terms are in
 | **terminal state** | `completed`, `failed`, `rejected` or `superseded`. |
 | **approve / reject** | A person's decision on a deployment in `pending_approval`. They take it on the dashboard or through the [API](api.md). |
 | **actor** | Who did something: a user name, a token's name, or `nops` for Nops itself. |
-| **allowlist** | The users and groups allowed to log in with OIDC. |
 | **supersede** | Replace a deployment that hasn't started applying with a newer one. |
 | **revalidation** | Re-checking every pending deployment on each detection cycle. |
 | **blocked drift** | Drift Nops doesn't redeploy after a failure or a rejection. A **retry** or a new commit unblocks it. |
@@ -71,6 +70,8 @@ See [access control](acl.md).
 | **client token** | A token that can do what its ACL policies allow. |
 | **bootstrap token** | The management token Nops reads from `-acl-bootstrap-token-file` at every start. |
 | **ACL policy** | A named set of rules that grants capabilities. Never shortened to **policy**, which is a job's. |
+| **binding rule** | What a login gets: it matches the login's claims and binds an ACL policy or management. |
+| **session token** | The token a login creates. It lasts 12 hours. |
 | **capability** | One thing an ACL policy allows: `approve`, `pause`, `fetch`. |
 
 ## Hooks

@@ -1,7 +1,7 @@
 // Package web serves the dashboard and the git webhook. This file is the
-// OpenID Connect login backend; session.go holds what every login backend
-// shares (the cookie, Require, logout), auth_basic.go the local-users
-// backend. The rules are in docs/dashboard.md#authentication.
+// OpenID Connect auth method; login.go holds what every auth method shares
+// (the session token, Require, logout), auth_basic.go the local-users
+// method. The rules are in docs/dashboard.md#authentication.
 package web
 
 import (
@@ -19,12 +19,15 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+
+	"github.com/music-gang/nops/internal/acl"
 )
 
 const (
 	loginTTL     = 10 * time.Minute
 	loginCookie  = "nops_login"
 	callbackPath = "/auth/callback"
+	startPath    = "/auth/oidc"
 )
 
 // AuthOptions configures NewAuth.
@@ -33,9 +36,6 @@ type AuthOptions struct {
 	Issuer, ClientID, ClientSecret string
 	// RedirectURL is <public-url>/auth/callback.
 	RedirectURL string
-	// AllowedUsers match the preferred_username or the email of the user,
-	// AllowedGroups the values of its groups claim. A user must match one.
-	AllowedUsers, AllowedGroups []string
 	// HTTPClient talks to the provider. Nil: a client with a 10 second timeout.
 	HTTPClient *http.Client
 	// BasePath is the dashboard's base path (docs/running-nops.md#under-a-sub-path),
@@ -49,12 +49,12 @@ type AuthOptions struct {
 // Auth is the OIDC login of the dashboard. It never contacts the provider
 // before the first login: an unreachable provider must not stop the engine,
 // so discovery is tried at every login until it works. It implements
-// Authenticator; *session gives it Require and Require's Register share
-// (logout) for free.
+// Authenticator.
 type Auth struct {
 	*session
 	opts   AuthOptions
 	client *http.Client
+	host   LoginHost
 
 	mu       sync.Mutex
 	provider *oidc.Provider
@@ -65,9 +65,6 @@ type Auth struct {
 func NewAuth(o AuthOptions) (*Auth, error) {
 	if o.Issuer == "" || o.ClientID == "" || o.ClientSecret == "" {
 		return nil, errors.New("web: the OIDC issuer, client ID and client secret are required")
-	}
-	if len(o.AllowedUsers) == 0 && len(o.AllowedGroups) == 0 {
-		return nil, errors.New("web: an allowlist of users or groups is required")
 	}
 	redirect, err := url.Parse(o.RedirectURL)
 	if err != nil || redirect.Host == "" {
@@ -84,11 +81,14 @@ func NewAuth(o AuthOptions) (*Auth, error) {
 	return a, nil
 }
 
-// Register adds the OIDC login routes to mux, on top of the shared ones
-// (POST /auth/logout).
-func (a *Auth) Register(mux *http.ServeMux) {
-	a.session.Register(mux)
-	mux.HandleFunc("GET "+loginPath, a.login)
+// Method implements Authenticator.
+func (a *Auth) Method() string { return "oidc" }
+
+// Register adds the OIDC routes to mux: GET /auth/oidc sends the person to the
+// provider, and the provider sends them back to GET /auth/callback.
+func (a *Auth) Register(mux *http.ServeMux, host LoginHost) {
+	a.host = host
+	mux.HandleFunc("GET "+startPath, a.start)
 	mux.HandleFunc("GET "+callbackPath, a.callback)
 }
 
@@ -101,7 +101,7 @@ type loginState struct {
 	Expires  int64  `json:"e"`
 }
 
-func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
+func (a *Auth) start(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	cfg, _, _, err := a.discover(r.Context())
 	if err != nil {
@@ -181,18 +181,12 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	if !a.allowed(who) {
-		a.log.WarnContext(ctx, "login: user not in the allowlist", "user", who.actor())
-		http.Error(w, "you are not allowed to use nops", http.StatusForbidden)
-		return
-	}
-
-	if !a.start(w, who.actor()) {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	a.log.InfoContext(ctx, "login", "user", who.actor())
-	http.Redirect(w, r, a.base+st.Next, http.StatusFound)
+	a.host.Done(w, r, Person{
+		// The issuer and sub are what the provider never reassigns: the username is only what Nops shows.
+		Identity: "oidc:" + a.opts.Issuer + "#" + who.Subject,
+		Username: who.actor(),
+		Claims:   acl.Claims{Username: who.actor(), Sub: who.Subject, Groups: who.Groups},
+	}, st.Next)
 }
 
 // discover returns the OAuth2 configuration and the verifier, contacting the
@@ -208,16 +202,12 @@ func (a *Auth) discover(ctx context.Context) (*oauth2.Config, *oidc.Provider, *o
 		a.provider = p
 		a.verifier = p.Verifier(&oidc.Config{ClientID: a.opts.ClientID, Now: a.now})
 	}
-	scopes := []string{oidc.ScopeOpenID, "profile", "email"}
-	if len(a.opts.AllowedGroups) > 0 {
-		scopes = append(scopes, "groups")
-	}
 	return &oauth2.Config{
 		ClientID:     a.opts.ClientID,
 		ClientSecret: a.opts.ClientSecret,
 		Endpoint:     a.provider.Endpoint(),
 		RedirectURL:  a.opts.RedirectURL,
-		Scopes:       scopes,
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
 	}, a.provider, a.verifier, nil
 }
 
@@ -229,7 +219,7 @@ type user struct {
 	Groups            []string
 }
 
-// actor is the name recorded with a decision.
+// actor is the name recorded with a decision, and the username a selector reads.
 func (u user) actor() string {
 	switch {
 	case u.PreferredUsername != "":
@@ -260,10 +250,10 @@ func (c claims) merge(into *user) {
 	}
 }
 
-// identify reads the claims of the ID token and, when what the allowlist
-// needs is not in it, those of the userinfo endpoint (Authelia, for one, keeps
-// most claims out of the ID token). A userinfo answer for another subject is
-// an error.
+// identify reads the claims of the ID token and, when the groups or a name are
+// not in it, those of the userinfo endpoint (Authelia, for one, keeps most
+// claims out of the ID token). A userinfo answer for another subject is an
+// error.
 func (a *Auth) identify(ctx context.Context, p *oidc.Provider, idToken *oidc.IDToken, token *oauth2.Token) (user, error) {
 	u := user{Subject: idToken.Subject}
 	var c claims
@@ -272,7 +262,7 @@ func (a *Auth) identify(ctx context.Context, p *oidc.Provider, idToken *oidc.IDT
 	}
 	c.merge(&u)
 
-	needGroups := len(a.opts.AllowedGroups) > 0 && len(u.Groups) == 0
+	needGroups := len(u.Groups) == 0
 	needName := u.PreferredUsername == "" && u.Email == ""
 	if (needGroups || needName) && p.UserInfoEndpoint() != "" {
 		info, err := p.UserInfo(oidc.ClientContext(ctx, a.client), oauth2.StaticTokenSource(token))
@@ -289,23 +279,6 @@ func (a *Auth) identify(ctx context.Context, p *oidc.Provider, idToken *oidc.IDT
 		ic.merge(&u)
 	}
 	return u, nil
-}
-
-func (a *Auth) allowed(u user) bool {
-	for _, want := range a.opts.AllowedUsers {
-		if (u.PreferredUsername != "" && strings.EqualFold(u.PreferredUsername, want)) ||
-			(u.Email != "" && strings.EqualFold(u.Email, want)) {
-			return true
-		}
-	}
-	for _, want := range a.opts.AllowedGroups {
-		for _, g := range u.Groups {
-			if g == want {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // safeNext keeps the redirect after a login on this site: a path, never a URL.

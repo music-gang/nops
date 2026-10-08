@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,7 +19,9 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"log/slog"
+
+	"github.com/music-gang/nops/internal/secret"
+	"github.com/music-gang/nops/internal/store"
 )
 
 const (
@@ -275,42 +279,86 @@ func (p *idp) userinfo(w http.ResponseWriter, r *http.Request) {
 type app struct {
 	t     *testing.T
 	idp   *idp
+	opts  AuthOptions
 	auth  *Auth
+	srv   *server
 	mux   *http.ServeMux
+	store *store.Store
 	clock *testClock
 	logs  *syncBuffer
+	aclOn bool
+	boot  string // the bootstrap token, with the ACL on
+
+	deployments *fakeStore
+	engine      *fakeEngine
 }
 
-// newApp wires an Auth to a fake provider, with two protected routes: GET /page
-// answers with the user, POST /act with "done".
+// newApp wires an Auth to a fake provider and a whole server around it, with
+// two protected routes added: GET /page answers with the user, POST /act with
+// "done". The ACL is off: every login gets full control.
 func newApp(t *testing.T, tweak ...func(*AuthOptions)) *app {
 	t.Helper()
+	return newAppWith(t, false, tweak...)
+}
+
+// newACLApp is newApp with the ACL on: a login gets what the binding rules give.
+func newACLApp(t *testing.T, tweak ...func(*AuthOptions)) *app {
+	t.Helper()
+	return newAppWith(t, true, tweak...)
+}
+
+func newAppWith(t *testing.T, aclOn bool, tweak ...func(*AuthOptions)) *app {
+	t.Helper()
 	clock := &testClock{t: time.Now()}
-	a := &app{t: t, clock: clock, idp: newIDP(t, clock), logs: &syncBuffer{}}
-	o := AuthOptions{
+	a := &app{t: t, clock: clock, idp: newIDP(t, clock), logs: &syncBuffer{}, aclOn: aclOn,
+		deployments: &fakeStore{deployment: sampleDeployment()}, engine: &fakeEngine{}}
+	a.opts = AuthOptions{
 		Issuer: a.idp.srv.URL, ClientID: testClientID, ClientSecret: testClientSecret, RedirectURL: testRedirect,
-		AllowedUsers: []string{"alice", "bob@example.com"}, AllowedGroups: []string{"approvers"},
 		Log: slog.New(slog.NewTextHandler(a.logs, nil)),
 	}
 	for _, f := range tweak {
-		f(&o)
+		f(&a.opts)
 	}
-	auth, err := NewAuth(o)
+	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"), store.WithClock(clock.now))
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth.now = clock.now
+	t.Cleanup(func() { st.Close() })
+	a.store = st
+	if aclOn {
+		a.boot = secret.New()
+	}
+	a.start()
+	return a
+}
+
+// start builds the Auth and the server on the store: a restart does it again
+// on the same store.
+func (a *app) start() {
+	a.t.Helper()
+	auth, err := NewAuth(a.opts)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	auth.now = a.clock.now
 	a.auth = auth
-	a.mux = http.NewServeMux()
-	auth.Register(a.mux)
-	a.mux.Handle("GET /page", auth.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv, err := newServer(Options{
+		Auth: auth, Store: a.deployments, Engine: a.engine, Git: &fakeGit{}, Access: a.store,
+		ACL: a.aclOn, BootstrapToken: a.boot, BasePath: a.opts.BasePath,
+		Secure: strings.HasPrefix(a.opts.RedirectURL, "https://"), Now: a.clock.now, Log: a.opts.Log,
+	})
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	a.srv = srv
+	a.mux = srv.routes()
+	a.mux.Handle("GET /page", srv.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := UserFrom(r.Context())
 		w.Write([]byte("user=" + u))
 	})))
-	a.mux.Handle("POST /act", auth.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	a.mux.Handle("POST /act", srv.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("done"))
 	})))
-	return a
 }
 
 func (a *app) do(method, target string, cookies []*http.Cookie, headers ...string) *httptest.ResponseRecorder {
@@ -347,11 +395,11 @@ func deleted(rec *httptest.ResponseRecorder, name string) bool {
 	return false
 }
 
-// startLogin opens /auth/login and returns the provider redirect and the
+// startLogin opens /auth/oidc and returns the provider redirect and the
 // login cookie.
 func (a *app) startLogin(next string) (*url.URL, *http.Cookie) {
 	a.t.Helper()
-	target := "/auth/login"
+	target := "/auth/oidc"
 	if next != "" {
 		target += "?next=" + url.QueryEscape(next)
 	}
@@ -452,51 +500,33 @@ func TestLoginFlowWithBasePath(t *testing.T) {
 	}
 }
 
-func TestLoginAsksForTheGroupsScopeOnlyWithGroups(t *testing.T) {
+// Binding rules can select on groups, so the scope is always asked for.
+func TestLoginAsksForTheGroupsScope(t *testing.T) {
 	a := newApp(t)
 	loc, _ := a.startLogin("")
 	if got := loc.Query().Get("scope"); got != "openid profile email groups" {
-		t.Errorf("scope with a group allowlist = %q", got)
-	}
-
-	a = newApp(t, func(o *AuthOptions) { o.AllowedGroups = nil })
-	loc, _ = a.startLogin("")
-	if got := loc.Query().Get("scope"); got != "openid profile email" {
-		t.Errorf("scope without groups = %q", got)
+		t.Errorf("scope = %q", got)
 	}
 }
 
-func TestActorAndAllowlist(t *testing.T) {
+// The actor of a login is the username, else a verified email, else the sub.
+func TestActorOfALogin(t *testing.T) {
 	tests := []struct {
 		name      string
 		grant     grant
-		wantActor string // "" = refused with 403
+		wantActor string
 	}{
 		{"username", grant{claims: idClaims{Sub: "s1", PreferredUsername: "alice"}}, "alice"},
-		{"username is case-insensitive", grant{claims: idClaims{Sub: "s1", PreferredUsername: "ALICE"}}, "ALICE"},
 		{"email when there is no username", grant{claims: idClaims{Sub: "s2", Email: "bob@example.com", EmailVerified: boolp(true)}}, "bob@example.com"},
 		{"email without email_verified", grant{claims: idClaims{Sub: "s2", Email: "bob@example.com"}}, "bob@example.com"},
-		{"unverified email is no identity", grant{claims: idClaims{Sub: "s2", Email: "bob@example.com", EmailVerified: boolp(false)}}, ""},
-		{"a group alone, actor is the subject", grant{claims: idClaims{Sub: "s3", Groups: []string{"devs", "approvers"}}}, "s3"},
-		{"a group, actor is the username", grant{claims: idClaims{Sub: "s3", PreferredUsername: "carol", Groups: []string{"approvers"}}}, "carol"},
-		{"outsider", grant{claims: idClaims{Sub: "s4", PreferredUsername: "mallory", Email: "mallory@example.com", Groups: []string{"devs"}}}, ""},
-		{"groups only match exactly", grant{claims: idClaims{Sub: "s5", PreferredUsername: "eve", Groups: []string{"approvers-old"}}}, ""},
+		{"unverified email is no identity", grant{claims: idClaims{Sub: "s2", Email: "bob@example.com", EmailVerified: boolp(false)}}, "s2"},
+		{"groups alone, actor is the subject", grant{claims: idClaims{Sub: "s3", Groups: []string{"devs", "approvers"}}}, "s3"},
 		{"claims served by userinfo only", grant{claims: idClaims{Sub: "s6", PreferredUsername: "dave", Groups: []string{"approvers"}}, inUserinfo: true}, "dave"},
-		{"outsider through userinfo", grant{claims: idClaims{Sub: "s7", PreferredUsername: "eve", Groups: []string{"devs"}}, inUserinfo: true}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newApp(t)
 			rec := a.callback("", tt.grant)
-			if tt.wantActor == "" {
-				if rec.Code != http.StatusForbidden || cookie(rec, sessionCookie) != nil {
-					t.Fatalf("status %d, session %v: want 403 and no session", rec.Code, cookie(rec, sessionCookie))
-				}
-				if !strings.Contains(a.logs.String(), "not in the allowlist") {
-					t.Errorf("refusal not logged: %s", a.logs.String())
-				}
-				return
-			}
 			if rec.Code != http.StatusFound {
 				t.Fatalf("status %d, body %q", rec.Code, rec.Body.String())
 			}
@@ -607,10 +637,10 @@ func TestSessionValidity(t *testing.T) {
 		t.Errorf("tampered cookie: status %d, want the login redirect", rec.Code)
 	}
 
-	// The key lives in the process: a session of another one (a restart) is no session.
-	restarted := newApp(t)
-	if rec := restarted.do("GET", "/page", []*http.Cookie{sess}); rec.Code != http.StatusFound {
-		t.Errorf("session signed by another key: status %d, want the login redirect", rec.Code)
+	// The session is a token in the database: it survives a restart.
+	a.start()
+	if rec := a.do("GET", "/page", []*http.Cookie{sess}); rec.Code != http.StatusOK {
+		t.Errorf("the session after a restart: status %d, want 200", rec.Code)
 	}
 
 	a.clock.advance(sessionTTL - time.Minute)
@@ -689,6 +719,10 @@ func TestLogout(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !deleted(rec, sessionCookie) {
 		t.Errorf("logout: status %d, cookie deleted %v", rec.Code, deleted(rec, sessionCookie))
 	}
+	// The session token is revoked, not only forgotten by the browser.
+	if rec := a.do("GET", "/page", []*http.Cookie{sess}); rec.Code != http.StatusFound {
+		t.Errorf("the session after the logout: status %d, want the login redirect", rec.Code)
+	}
 	if rec := a.do("POST", "/auth/logout", []*http.Cookie{sess}, "Sec-Fetch-Site", "cross-site"); rec.Code != http.StatusForbidden {
 		t.Errorf("cross-site logout: status %d, want 403", rec.Code)
 	}
@@ -731,7 +765,7 @@ func TestProviderDownIsRetriedAtEveryLogin(t *testing.T) {
 	}
 	a.idp.down.Store(true)
 
-	rec := a.do("GET", "/auth/login", nil)
+	rec := a.do("GET", "/auth/oidc", nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("provider down: status %d, want 503", rec.Code)
 	}
@@ -807,7 +841,7 @@ func TestCallbackIgnoresAnOffSiteNext(t *testing.T) {
 
 func TestNewAuthValidates(t *testing.T) {
 	ok := AuthOptions{Issuer: "https://idp.example.com", ClientID: "nops", ClientSecret: "s",
-		RedirectURL: "https://nops.example.com/auth/callback", AllowedUsers: []string{"alice"}}
+		RedirectURL: "https://nops.example.com/auth/callback"}
 	if _, err := NewAuth(ok); err != nil {
 		t.Fatalf("valid options: %v", err)
 	}
@@ -815,7 +849,6 @@ func TestNewAuthValidates(t *testing.T) {
 		"no issuer":      func(o *AuthOptions) { o.Issuer = "" },
 		"no client id":   func(o *AuthOptions) { o.ClientID = "" },
 		"no secret":      func(o *AuthOptions) { o.ClientSecret = "" },
-		"no allowlist":   func(o *AuthOptions) { o.AllowedUsers = nil },
 		"bad redirect":   func(o *AuthOptions) { o.RedirectURL = "callback" },
 		"empty redirect": func(o *AuthOptions) { o.RedirectURL = "" },
 	} {
@@ -830,22 +863,5 @@ func TestNewAuthValidates(t *testing.T) {
 func TestUserFromWithoutRequire(t *testing.T) {
 	if u, ok := UserFrom(httptest.NewRequest("GET", "/", nil).Context()); ok || u != "" {
 		t.Errorf("UserFrom on a plain context = %q, %v", u, ok)
-	}
-}
-
-// The allowlist is checked at login only (docs/dashboard.md, "OpenID Connect"):
-// removing someone takes effect when their session ends, not before.
-func TestAnAllowlistChangeDoesNotEndASession(t *testing.T) {
-	a := newApp(t)
-	sess := a.loggedIn(alice())
-
-	a.auth.opts.AllowedUsers = []string{"bob@example.com"} // alice is no longer listed
-	a.auth.opts.AllowedGroups = nil
-
-	if rec := a.do("GET", "/page", []*http.Cookie{sess}); rec.Code != http.StatusOK || rec.Body.String() != "user=alice" {
-		t.Errorf("session after leaving the allowlist: status %d, %q, want it kept until it expires", rec.Code, rec.Body.String())
-	}
-	if rec := a.callback("", alice()); rec.Code != http.StatusForbidden {
-		t.Errorf("a new login after leaving the allowlist: status %d, want 403", rec.Code)
 	}
 }

@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,38 +131,25 @@ func TestAPIRequiresAValidToken(t *testing.T) {
 	}
 }
 
-// A token stays valid after its owner leaves the allowlist or the users file
-// (docs/api.md#tokens): the API reads the token, never the login.
-func TestAPITokenOutlivesItsOwnersLogin(t *testing.T) {
-	resumeAsAlice := func(t *testing.T, ts *testServer, token string) {
-		t.Helper()
-		if rec := ts.api("POST", "/api/jobs/default/web/resume", token, ""); rec.Code != http.StatusNoContent {
-			t.Fatalf("status %d, want 204: %s", rec.Code, rec.Body)
-		}
-		if calls := ts.engine.resumeCalls; len(calls) != 1 || calls[0].actor != "alice" {
-			t.Errorf("resume calls = %+v, want one as alice", calls)
-		}
+// A token stays valid after the person who created it logs out, or can no
+// longer log in (docs/api.md#tokens): the API reads the token, never the login.
+func TestAPITokenOutlivesItsCreatorsSession(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	session := ts.session("alice")
+	token, _ := makeTokenOf(t, ts, store.ACLToken{Name: "alice-ci", Type: store.TokenManagement, CreatorName: "alice", CreatorIdentity: "test:alice"})
+
+	if rec := ts.do("POST", "/auth/logout", strings.NewReader(""), session); rec.Code != http.StatusSeeOther {
+		t.Fatalf("logout: status %d", rec.Code)
 	}
-
-	t.Run("allowlist", func(t *testing.T) {
-		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-		token := apiToken(t, ts, "alice", time.Time{})
-		ts.auth.opts.AllowedUsers = []string{"bob"} // alice is no longer listed
-		resumeAsAlice(t, ts, token)
-	})
-
-	t.Run("users file", func(t *testing.T) {
-		basic, err := NewBasicAuth(BasicAuthOptions{
-			UsersFile: writeUsersFile(t, "bob:"+bcryptHash(t, "s3cret")+"\n"), // no alice
-			PublicURL: "http://nops.test",
-			Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ts := newTestServerLogin(t, &fakeStore{}, &fakeEngine{}, "", nil, "", basic)
-		resumeAsAlice(t, ts, apiToken(t, ts, "alice", time.Time{}))
-	})
+	if rec := ts.do("GET", "/", nil, session); rec.Code != http.StatusFound {
+		t.Errorf("the session after the logout: status %d, want the login redirect", rec.Code)
+	}
+	if rec := ts.api("POST", "/api/jobs/default/web/resume", token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("the token after the logout: status %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if calls := ts.engine.resumeCalls; len(calls) != 1 || calls[0].actor != "alice-ci" {
+		t.Errorf("resume calls = %+v, want one as the token alice-ci", calls)
+	}
 }
 
 // A login session opens the dashboard and a token opens the API: neither
@@ -174,7 +159,7 @@ func TestAPIAndDashboardDoNotShareTheirCredentials(t *testing.T) {
 	token := apiToken(t, ts, "alice", time.Time{})
 
 	req := httptest.NewRequest("GET", "/api/jobs", nil)
-	req.AddCookie(mintSession(t, ts.auth, "alice"))
+	req.AddCookie(ts.session("alice"))
 	rec := httptest.NewRecorder()
 	ts.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {

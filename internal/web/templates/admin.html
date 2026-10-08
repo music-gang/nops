@@ -25,7 +25,12 @@
   <div class="box__body">
     <p><strong>{{.Self.Name}}</strong> <span class="pill">{{.Self.Kind}}</span>{{if .Self.AccessorID}} <span class="muted mono">{{.Self.AccessorID}}</span>{{end}}</p>
     {{if eq .Self.Kind "client"}}<p>ACL policies: {{range $i, $p := .Self.Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">none</span>{{end}}</p>{{end}}
-    {{if .Self.Created.ISO}}<p class="muted">Created {{template "time" .Self.Created}} by {{.Self.Creator}}. {{if .Self.Expires.ISO}}Expires {{template "time" .Self.Expires}}.{{else}}Never expires.{{end}}</p>{{end}}
+    {{if .Self.Created.ISO}}<p class="muted">{{if .Self.Session}}Session started{{else}}Created{{end}} {{template "time" .Self.Created}}{{if not .Self.Session}} by {{.Self.Creator}}{{end}}. {{if .Self.Expires.ISO}}Expires {{template "time" .Self.Expires}}.{{else}}Never expires.{{end}}</p>{{end}}
+    {{if .SessionSecret}}
+    <p class="muted">To use this session from the command line, copy its secret into a file and pass it with <span class="mono">-token-file</span>. It stops working when the session ends.</p>
+    <input type="text" readonly value="{{.SessionSecret}}" id="session-secret" aria-label="The secret of your session token" class="input mono">
+    <button type="button" class="btn btn--sm" data-copy="session-secret">Copy</button>
+    {{end}}
   </div>
 </section>
 
@@ -46,11 +51,12 @@
   </form>
 </section>
 
+<p class="muted">{{if .Sessions}}Showing the session tokens that logins made. <a href="{{.Base}}/admin">Hide them</a>.{{else if .HiddenSessions}}{{.HiddenSessions}} session token{{if ne .HiddenSessions 1}}s{{end}} hidden. <a href="{{.Base}}/admin?sessions=1">Show them</a>.{{end}}</p>
 <div class="box">
   {{if .Tokens}}
   <table class="table">
     <thead>
-      <tr><th>Name</th><th>Type</th><th>ACL policies</th><th class="hide-sm">Created by</th><th>Expires</th><th></th></tr>
+      <tr><th>Name</th><th>Type</th><th>ACL policies</th><th class="hide-sm">Origin</th><th>Expires</th><th></th></tr>
     </thead>
     <tbody>
       {{range .Tokens}}
@@ -58,7 +64,7 @@
         <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span> <span class="muted mono" title="Accessor ID">{{.AccessorID}}</span></td>
         <td>{{.Kind}}</td>
         <td>{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}</td>
-        <td class="hide-sm muted">{{.Creator}}</td>
+        <td class="hide-sm muted">{{if .Session}}login{{else}}created by {{.Creator}}{{end}}</td>
         <td>{{if .Expired}}<span class="pill state-failed">Expired</span> <span class="muted">{{template "time" .Expires}}</span>{{else if .Expires.ISO}}<span class="muted">{{template "time" .Expires}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
         <td><form method="post" action="{{$.Base}}/admin/tokens/{{.AccessorID}}/revoke"><button type="submit" class="btn btn--sm btn--danger">Revoke</button></form></td>
       </tr>
@@ -103,6 +109,47 @@
 </div>
 
 <section class="box">
+  <header class="box__header"><h2 class="box__title">New binding rule</h2></header>
+  <form class="box__body" method="post" action="{{.Base}}/admin/binding-rules">
+    <input type="text" name="description" maxlength="200" placeholder="Description" aria-label="Description" class="input">
+    <select name="auth_method" aria-label="Auth method" class="input">
+      <option value="oidc"{{if eq .NewRule.AuthMethod "oidc"}} selected{{end}}>oidc</option>
+      <option value="basic"{{if eq .NewRule.AuthMethod "basic"}} selected{{end}}>basic</option>
+    </select>
+    <input type="text" name="selector" maxlength="1024" placeholder='Selector, for example "ops" in list.groups; empty matches every login' aria-label="Selector" class="input mono">
+    <select name="bind" aria-label="Binds" class="input">
+      <option value="management" selected>binds management: everything</option>
+      {{range .Policies}}<option value="policy:{{.Name}}">binds ACL policy {{.Name}}</option>{{end}}
+    </select>
+    <button type="submit" class="btn btn--sm">Save binding rule</button>
+  </form>
+</section>
+
+<div class="box">
+  {{if .Rules}}
+  <table class="table">
+    <thead>
+      <tr><th>Binding rule</th><th>Auth method</th><th>Selector</th><th>Binds</th><th class="hide-sm">Modified</th><th></th></tr>
+    </thead>
+    <tbody>
+      {{range .Rules}}
+      <tr>
+        <td><a href="{{$.Base}}/admin/binding-rules/{{.ID}}">{{if .Description}}{{.Description}}{{else}}<span class="mono">{{.ID}}</span>{{end}}</a></td>
+        <td>{{.AuthMethod}}</td>
+        <td class="mono">{{if .Selector}}{{.Selector}}{{else}}<span class="muted">every login</span>{{end}}</td>
+        <td>{{.Binds}}</td>
+        <td class="hide-sm muted">{{template "time" .Modified}}</td>
+        <td><form method="post" action="{{$.Base}}/admin/binding-rules/{{.ID}}/delete"><button type="submit" class="btn btn--sm btn--danger">Delete</button></form></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No binding rule yet: {{if .ACLOn}}no login gets a token.{{else}}the ACL is off, so every login gets full control.{{end}}</p>
+  {{end}}
+</div>
+
+<section class="box">
   <header class="box__header"><h2 class="box__title">Latest changes</h2></header>
   {{if .Changes}}
   <table class="table">
@@ -113,7 +160,7 @@
       {{range .Changes}}
       <tr>
         <td class="muted">{{template "time" .When}}</td>
-        <td>{{.Actor}}{{if .AccessorID}} <span class="muted mono" title="Accessor ID of the token used">{{.AccessorID}}</span>{{end}}</td>
+        <td>{{.Actor}}{{if .AccessorID}} <span class="muted mono" title="Accessor ID of the token used">{{.AccessorID}}</span>{{end}}{{if .Identity}} <span class="muted mono" title="Identity of the person">{{.Identity}}</span>{{end}}</td>
         <td>{{.Action}} {{.Kind}} <span class="mono">{{.Object}}</span></td>
       </tr>
       {{end}}

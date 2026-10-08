@@ -19,9 +19,13 @@ const bootstrapAccessorID = "bootstrap"
 // request has one: a token on /api/, the session on the dashboard.
 type subject struct {
 	actor      string // what the records show: a person's name or a token's name
-	accessorID string // empty for a dashboard session
+	accessorID string // empty only for a subject that has no token
+	identity   string // the person behind a session token; empty for any other token
 	token      *store.ACLToken
 	acl        *acl.ACL
+	// sessionSecret is the secret of the session token in the login cookie, for
+	// the Administration page to show. Empty for any other token.
+	sessionSecret string
 }
 
 type subjectKey struct{}
@@ -47,16 +51,6 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sessionSubject is who a dashboard session acts as. With the ACL off a login
-// can do everything, as before the ACL. With it on, a login carries no token
-// yet and can do nothing.
-func (s *server) sessionSubject(user string) *subject {
-	if !s.aclOn {
-		return &subject{actor: user, acl: acl.Management()}
-	}
-	return &subject{actor: user, acl: acl.New()}
-}
-
 // tokenSubject finds who a bearer token acts as. It returns store.ErrNotFound
 // for a token that is unknown, expired, revoked or made in the other mode.
 func (s *server) tokenSubject(ctx context.Context, secret string) (*subject, error) {
@@ -67,7 +61,7 @@ func (s *server) tokenSubject(ctx context.Context, secret string) (*subject, err
 	if err != nil {
 		return nil, err
 	}
-	sub := &subject{actor: t.Name, accessorID: t.AccessorID, token: &t}
+	sub := &subject{actor: t.Name, accessorID: t.AccessorID, identity: t.Identity, token: &t}
 	switch {
 	case !s.aclOn, t.Type == store.TokenManagement:
 		sub.acl = acl.Management()
@@ -148,11 +142,7 @@ func management() check {
 // and the events they cause carry its accessor ID.
 func (s *server) guard(c check, denied func(http.ResponseWriter, *http.Request), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sub, ok := r.Context().Value(subjectKey{}).(*subject)
-		if !ok { // a dashboard session: the token of an API request is resolved before
-			user, _ := UserFrom(r.Context())
-			sub = s.sessionSubject(user)
-		}
+		sub := subjectOf(r.Context()) // resolved before: by require on the dashboard, by requireToken on the API
 		allowed, err := c(s, r, sub)
 		if err != nil {
 			s.serverError(w, r, "check the request", err)
@@ -164,13 +154,13 @@ func (s *server) guard(c check, denied func(http.ResponseWriter, *http.Request),
 			return
 		}
 		ctx := context.WithValue(r.Context(), subjectKey{}, sub)
-		next.ServeHTTP(w, r.WithContext(store.WithAccessor(ctx, sub.accessorID)))
+		next.ServeHTTP(w, r.WithContext(store.WithIdentity(store.WithAccessor(ctx, sub.accessorID), sub.identity)))
 	})
 }
 
 // page guards a dashboard route: a login, then the check.
 func (s *server) page(c check, h http.HandlerFunc) http.Handler {
-	return s.auth.Require(s.guard(c, s.forbidden, h))
+	return s.require(s.guard(c, s.forbidden, h))
 }
 
 // forbidden renders the 403 page.
