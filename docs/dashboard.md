@@ -24,7 +24,9 @@ retry, pause, and resume deployments. Every page needs a
 - **Administration** (`/admin`): your [token](api.md#tokens) and, with a
   management token, every token, [ACL policy](acl.md#acl-policies) and
   [binding rule](acl.md#binding-rules) and the latest changes to them. Create
-  and revoke tokens and edit ACL policies and binding rules here. Copy your
+  and revoke tokens, revoke every session of a person or every token someone
+  created after seeing which ones go, and edit ACL policies and binding rules
+  here. Copy your
   session token to use it from the [command line](cli.md).
 
 Pages refresh themselves. Approving checks the spec

@@ -51,6 +51,30 @@
   </form>
 </section>
 
+{{with .Revoke}}
+<section class="box">
+  <header class="box__header"><h2 class="box__title">{{if .SessionsOf}}Revoke every session of <span class="mono">{{.SessionsOf}}</span>{{else}}Revoke every token <span class="mono">{{or .CreatorIdentity .CreatorAccessorID}}</span> created{{end}}</h2></header>
+  <div class="box__body">
+    {{if .Tokens}}
+    <p>This revokes {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}{{if not .SessionsOf}}, with the tokens they created{{end}}:</p>
+    <ul>
+      {{range .Tokens}}<li><strong>{{.Name}}</strong> <span class="pill">{{.Kind}}</span> <span class="muted mono">{{.AccessorID}}</span></li>{{end}}
+    </ul>
+    <form method="post" action="{{$.Base}}/admin/tokens/revoke">
+      {{if .SessionsOf}}<input type="hidden" name="sessions_of" value="{{.SessionsOf}}">{{end}}
+      {{if .CreatorIdentity}}<input type="hidden" name="creator_identity" value="{{.CreatorIdentity}}">{{end}}
+      {{if .CreatorAccessorID}}<input type="hidden" name="creator" value="{{.CreatorAccessorID}}">{{end}}
+      <button type="submit" class="btn btn--sm btn--danger">Revoke {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}</button>
+      <a href="{{$.Base}}/admin" class="btn btn--sm">Cancel</a>
+    </form>
+    {{else}}
+    <p class="empty">No token to revoke.</p>
+    <a href="{{$.Base}}/admin" class="btn btn--sm">Back</a>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
 <p class="muted">{{if .Sessions}}Showing the session tokens that logins made. <a href="{{.Base}}/admin">Hide them</a>.{{else if .HiddenSessions}}{{.HiddenSessions}} session token{{if ne .HiddenSessions 1}}s{{end}} hidden. <a href="{{.Base}}/admin?sessions=1">Show them</a>.{{end}}</p>
 <div class="box">
   {{if .Tokens}}
@@ -64,8 +88,8 @@
         <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span> <span class="muted mono" title="Accessor ID">{{.AccessorID}}</span></td>
         <td>{{.Kind}}</td>
         <td>{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}</td>
-        <td class="hide-sm muted">{{if .Session}}login{{else}}created by {{.Creator}}{{end}}</td>
-        <td>{{if .Expired}}<span class="pill state-failed">Expired</span> <span class="muted">{{template "time" .Expires}}</span>{{else if .Expires.ISO}}<span class="muted">{{template "time" .Expires}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
+        <td class="hide-sm muted">{{if .Session}}login{{if .Identity}} · <a href="{{$.Base}}/admin?sessions_of={{.Identity}}">Revoke their sessions</a>{{end}}{{else}}created by {{.Creator}}{{if .CreatorIdentity}} · <a href="{{$.Base}}/admin?creator_identity={{.CreatorIdentity}}">Revoke all they created</a>{{else if .CreatorAccessorID}} · <a href="{{$.Base}}/admin?creator={{.CreatorAccessorID}}">Revoke all it created</a>{{end}}{{end}}</td>
+        <td>{{if .Expires.ISO}}<span class="muted">{{template "time" .Expires}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
         <td><form method="post" action="{{$.Base}}/admin/tokens/{{.AccessorID}}/revoke"><button type="submit" class="btn btn--sm btn--danger">Revoke</button></form></td>
       </tr>
       {{end}}

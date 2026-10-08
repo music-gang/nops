@@ -171,12 +171,23 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Self: selfView{Name: "ci", Kind: "client", AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "bootstrap"},
 			Tokens: []tokenRow{
 				{selfView: selfView{Name: "ci", Kind: "client", AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "bootstrap"}},
-				{selfView: selfView{Name: "old", Kind: "management", AccessorID: "01DEF", Created: tv, Expires: tv, Creator: "alice"}, Expired: true},
+				{selfView: selfView{Name: "old", Kind: "management", AccessorID: "01DEF", Created: tv, Expires: tv, Creator: "alice"}, CreatorIdentity: "basic:alice", CreatorAccessorID: "01SES"},
+				{selfView: selfView{Name: "alice", Kind: "client", Session: true, AccessorID: "01SES", Created: tv, Expires: tv, Creator: "alice"}, Identity: "https://idp.example sub 1", CreatorIdentity: "https://idp.example sub 1"},
 				{selfView: selfView{Name: "forever", Kind: "management", AccessorID: "01GHI", Created: tv, Creator: "—"}},
 			},
 			Policies: []policyRow{{Name: "readers", Description: "see all", Modified: tv}},
 			Changes:  []changeRow{{When: tv, Actor: "alice", AccessorID: "01ABC", Action: "create", Kind: "token", Object: "01DEF"}, {When: tv, Actor: "bootstrap", Action: "update", Kind: "acl-policy", Object: "readers"}},
 			Expiry:   expiryChoices, Default: defaultExpiry, Created: &createdToken{Name: "ci", Secret: "nops_x"},
+		},
+		"admin (confirm a revocation)": adminData{
+			baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true, Expiry: expiryChoices, Default: defaultExpiry,
+			Revoke: &revokeView{Revocation: store.Revocation{CreatorAccessorID: "bootstrap"}, Tokens: []tokenRow{
+				{selfView: selfView{Name: "m", Kind: "management", AccessorID: "01M"}}, {selfView: selfView{Name: "t", Kind: "client", AccessorID: "01T"}},
+			}},
+		},
+		"admin (nothing to revoke)": adminData{
+			baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true, Expiry: expiryChoices, Default: defaultExpiry,
+			Revoke: &revokeView{Revocation: store.Revocation{SessionsOf: "basic:bob"}},
 		},
 		"admin (acl off, a login)": adminData{
 			baseData: baseData{Actor: "alice", Nav: "admin"}, Self: selfView{Name: "alice", Kind: "login"}, Expiry: expiryChoices, Default: defaultExpiry,

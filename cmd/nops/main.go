@@ -84,10 +84,10 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
-	if n, err := st.DeleteExpiredSessions(ctx); err != nil {
-		return fmt.Errorf("delete the expired sessions: %w", err)
+	if n, err := st.DeleteExpiredTokens(ctx); err != nil {
+		return fmt.Errorf("delete the expired tokens: %w", err)
 	} else if n > 0 {
-		log.Info("deleted the expired sessions", "count", n)
+		log.Info("deleted the expired tokens", "count", n)
 	}
 
 	nomadClient, err := nomadx.New(cfg.Nomad())

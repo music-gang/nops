@@ -21,12 +21,14 @@ provider.
 
 A management token creates tokens on the dashboard's *Administration* page, with
 the API, or with [`nops acl token create`](cli.md#commands). A token expires
-when you say, or never. Nops shows it once and keeps only its hash.
+when you say, or never, and Nops deletes it when it does. Nops shows it once
+and keeps only its hash.
 
 A management token sees and revokes every token. A client token sees only
 itself. A token stays valid until it expires or someone revokes it, even if
-the person who created it can no longer log in: revoke the tokens of anyone
-you remove.
+the person who created it can no longer log in. When you remove someone, revoke
+their sessions and the tokens they created, each in one action. Revoking the
+tokens a person or a token created also revokes the tokens those created.
 
 ## Endpoints
 
@@ -56,6 +58,8 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `POST /api/acl/tokens` | Create a token. Body: `{"name": "...", "type": "client", "policies": ["..."], "expires_in": "720h"}`, where `type` defaults to `client` and an empty `expires_in` never expires. Answers `201` with the token and its secret, once. Management token only. |
 | `GET /api/acl/tokens/{accessor_id}` | One token. Management token only. |
 | `DELETE /api/acl/tokens/{accessor_id}` | Revoke a token. Management token only. |
+| `POST /api/acl/tokens/revoke-sessions` | Revoke every session of a person. Body: `{"identity": "..."}`, the `identity` of one of their sessions. Answers `{"revoked": ["..."]}` with the accessor IDs. Management token only. |
+| `POST /api/acl/tokens/revoke-created` | Revoke every token a person or a token created, and the tokens those created. Body: `{"creator_identity": "..."}` or `{"creator_accessor_id": "..."}`, which is `bootstrap` for the bootstrap token. Answers like `revoke-sessions`. Management token only. |
 | `GET /api/acl/binding-rules` | Every [binding rule](acl.md#binding-rules). Management token only. |
 | `POST /api/acl/binding-rules` | Create a binding rule. Body: `{"description": "...", "auth_method": "oidc", "selector": "...", "bind_type": "policy", "bind_name": "..."}`, where `bind_type` is `policy` or `management`. Answers `201` with the rule and its ID. Management token only. |
 | `GET /api/acl/binding-rules/{id}` | One binding rule. Management token only. |

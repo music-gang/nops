@@ -131,7 +131,8 @@ func TestACLTokenExpires(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t) // the clock advances one second per call
 	exp := t0.Add(time.Minute)
-	if _, err := s.CreateACLToken(ctx, ACLToken{Name: "soon", Type: TokenManagement, ExpiresAt: exp}, "h", admin); err != nil {
+	tok, err := s.CreateACLToken(ctx, ACLToken{Name: "soon", Type: TokenManagement, ExpiresAt: exp}, "h", admin)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ACLTokenBySecret(ctx, "h", false); err != nil {
@@ -143,9 +144,12 @@ func TestACLTokenExpires(t *testing.T) {
 	if _, err := s.ACLTokenBySecret(ctx, "h", false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after it expires: err = %v, want ErrNotFound", err)
 	}
+	if _, err := s.ACLToken(ctx, tok.AccessorID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ACLToken after it expires: err = %v, want ErrNotFound", err)
+	}
 	list, err := s.ACLTokens(ctx)
-	if err != nil || len(list) != 1 || !list[0].ExpiresAt.Equal(exp) {
-		t.Errorf("ACLTokens = %+v, %v, want the expired token still listed", list, err)
+	if err != nil || len(list) != 0 {
+		t.Errorf("ACLTokens = %+v, %v, want the expired token left out", list, err)
 	}
 }
 
@@ -338,39 +342,38 @@ func TestPutBindingRuleRequiresWhatItNeeds(t *testing.T) {
 	}
 }
 
-func TestSessionTokensExpireAndAreDeleted(t *testing.T) {
+func TestExpiredTokensAreDeleted(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t) // the clock advances one second per call
 	person := Audit{Actor: "alice", Identity: "basic:alice"}
 
-	sess, err := s.CreateACLToken(ctx, ACLToken{Name: "alice", Type: TokenClient, Policies: []string{"p"}, Origin: OriginLogin,
-		Identity: "basic:alice", CreatorName: "alice", CreatorIdentity: "basic:alice", ExpiresAt: t0.Add(time.Minute)}, "h-sess", person)
-	if err != nil {
+	if _, err := s.CreateACLToken(ctx, ACLToken{Name: "alice", Type: TokenClient, Policies: []string{"p"}, Origin: OriginLogin,
+		Identity: "basic:alice", CreatorName: "alice", CreatorIdentity: "basic:alice", ExpiresAt: t0.Add(time.Minute)}, "h-sess", person); err != nil {
 		t.Fatal(err)
 	}
-	created, err := s.CreateACLToken(ctx, ACLToken{Name: "ci", Type: TokenManagement, ExpiresAt: t0.Add(time.Minute)}, "h-ci", admin)
-	if err != nil {
+	if _, err := s.CreateACLToken(ctx, ACLToken{Name: "ci", Type: TokenManagement, ExpiresAt: t0.Add(time.Minute)}, "h-ci", admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateACLToken(ctx, ACLToken{Name: "forever", Type: TokenManagement}, "h-forever", admin); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ACLTokenBySecret(ctx, "h-sess", false)
 	if err != nil || got.Origin != OriginLogin || got.Identity != "basic:alice" || got.CreatorIdentity != "basic:alice" {
 		t.Fatalf("session = %+v, %v, want a login token for basic:alice", got, err)
 	}
-	if n, err := s.DeleteExpiredSessions(ctx); err != nil || n != 0 {
-		t.Fatalf("DeleteExpiredSessions before the expiry = %d, %v, want 0", n, err)
+	if n, err := s.DeleteExpiredTokens(ctx); err != nil || n != 0 {
+		t.Fatalf("DeleteExpiredTokens before the expiry = %d, %v, want 0", n, err)
 	}
 
 	for range 70 {
 		s.now()
 	}
-	if n, err := s.DeleteExpiredSessions(ctx); err != nil || n != 1 {
-		t.Fatalf("DeleteExpiredSessions = %d, %v, want 1", n, err)
+	if n, err := s.DeleteExpiredTokens(ctx); err != nil || n != 2 {
+		t.Fatalf("DeleteExpiredTokens = %d, %v, want 2: the session and the created token", n, err)
 	}
-	if _, err := s.ACLToken(ctx, sess.AccessorID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("an expired session: err = %v, want it deleted", err)
-	}
-	if _, err := s.ACLToken(ctx, created.AccessorID); err != nil {
-		t.Errorf("an expired created token: err = %v, want it kept until someone revokes it", err)
+	var kept string
+	if err := s.db.QueryRow(`SELECT group_concat(name) FROM acl_tokens`).Scan(&kept); err != nil || kept != "forever" {
+		t.Errorf("tokens left = %q, %v; want only the one that never expires", kept, err)
 	}
 	var left int
 	if err := s.db.QueryRow(`SELECT count(*) FROM acl_token_policies`).Scan(&left); err != nil || left != 0 {
@@ -405,5 +408,115 @@ func TestIdentityIsRecordedWithTheChangeAndTheEvent(t *testing.T) {
 	}
 	if first := events[0]; first.Identity != "" {
 		t.Errorf("first event identity = %q, want none for Nops itself", first.Identity)
+	}
+}
+
+// makeToken stores a token for the revocation tests and returns its accessor ID.
+func makeToken(t *testing.T, s *Store, tok ACLToken) string {
+	t.Helper()
+	if tok.Type == "" {
+		tok.Type = TokenManagement
+	}
+	made, err := s.CreateACLToken(context.Background(), tok, "h-"+tok.Name, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return made.AccessorID
+}
+
+func namesOf(tokens []ACLToken) []string {
+	var out []string
+	for _, t := range tokens {
+		out = append(out, t.Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestRevokeEverySessionOfAPerson(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	session := func(name, identity string) string {
+		return makeToken(t, s, ACLToken{Name: name, Type: TokenClient, Origin: OriginLogin, Identity: identity,
+			CreatorName: name, CreatorIdentity: identity, ExpiresAt: t0.Add(time.Hour)})
+	}
+	session("alice-laptop", "basic:alice")
+	alicePhone := session("alice-phone", "basic:alice")
+	session("bob", "basic:bob")
+	makeToken(t, s, ACLToken{Name: "alice-ci", CreatorAccessorID: alicePhone, CreatorName: "alice", CreatorIdentity: "basic:alice"})
+
+	rev := Revocation{SessionsOf: "basic:alice"}
+	preview, err := s.TokensToRevoke(ctx, rev)
+	if err != nil || !slices.Equal(namesOf(preview), []string{"alice-laptop", "alice-phone"}) {
+		t.Fatalf("TokensToRevoke = %v, %v, want the two sessions of alice", namesOf(preview), err)
+	}
+	ids, err := s.RevokeACLTokens(ctx, rev, admin)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("RevokeACLTokens = %v, %v, want 2", ids, err)
+	}
+	left, _ := s.ACLTokens(ctx)
+	if got := namesOf(left); !slices.Equal(got, []string{"alice-ci", "bob"}) {
+		t.Errorf("left = %v, want the session of bob and the token alice created", got)
+	}
+	changes, _ := s.ACLChanges(ctx, 10)
+	if changes[0].Action != "revoke" || changes[1].Action != "revoke" || changes[0].Actor != "alice" {
+		t.Errorf("latest changes = %+v, want a revoke for each session", changes[:2])
+	}
+}
+
+func TestRevokeWhatACreatorCreatedAndWhatThoseCreated(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	// The bootstrap token creates m, m creates t; alice, by a session, creates
+	// ci, and ci creates deploy.
+	m := makeToken(t, s, ACLToken{Name: "m", CreatorAccessorID: "bootstrap", CreatorName: "bootstrap"})
+	makeToken(t, s, ACLToken{Name: "t", CreatorAccessorID: m, CreatorName: "m"})
+	sess := makeToken(t, s, ACLToken{Name: "alice", Type: TokenClient, Origin: OriginLogin, Identity: "basic:alice",
+		CreatorName: "alice", CreatorIdentity: "basic:alice", ExpiresAt: t0.Add(time.Hour)})
+	ci := makeToken(t, s, ACLToken{Name: "ci", CreatorAccessorID: sess, CreatorName: "alice", CreatorIdentity: "basic:alice"})
+	makeToken(t, s, ACLToken{Name: "deploy", CreatorAccessorID: ci, CreatorName: "ci"})
+	makeToken(t, s, ACLToken{Name: "other", CreatorAccessorID: "acc-other", CreatorName: "other"})
+
+	cases := []struct {
+		rev  Revocation
+		want []string
+	}{
+		{Revocation{CreatorAccessorID: "bootstrap"}, []string{"m", "t"}},
+		{Revocation{CreatorAccessorID: m}, []string{"t"}},
+		{Revocation{CreatorIdentity: "basic:alice"}, []string{"ci", "deploy"}}, // not her session
+		{Revocation{CreatorAccessorID: "nobody"}, nil},
+	}
+	for _, tc := range cases {
+		got, err := s.TokensToRevoke(ctx, tc.rev)
+		if err != nil || !slices.Equal(namesOf(got), tc.want) {
+			t.Errorf("TokensToRevoke(%+v) = %v, %v, want %v", tc.rev, namesOf(got), err, tc.want)
+		}
+	}
+
+	ids, err := s.RevokeACLTokens(ctx, Revocation{CreatorAccessorID: "bootstrap"}, admin)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("RevokeACLTokens = %v, %v, want m and t", ids, err)
+	}
+	left, _ := s.ACLTokens(ctx)
+	if got := namesOf(left); !slices.Equal(got, []string{"alice", "ci", "deploy", "other"}) {
+		t.Errorf("left = %v", got)
+	}
+	if ids, err := s.RevokeACLTokens(ctx, Revocation{CreatorAccessorID: "nobody"}, admin); err != nil || ids == nil || len(ids) != 0 {
+		t.Errorf("revoking nothing = %#v, %v, want an empty list and no error", ids, err)
+	}
+}
+
+func TestARevocationNamesExactlyOneSubject(t *testing.T) {
+	s := newTestStore(t)
+	for _, rev := range []Revocation{{}, {SessionsOf: "basic:a", CreatorIdentity: "basic:a"}, {CreatorIdentity: "basic:a", CreatorAccessorID: "x"}} {
+		if _, err := s.TokensToRevoke(context.Background(), rev); err == nil {
+			t.Errorf("TokensToRevoke(%+v): no error", rev)
+		}
+		if _, err := s.RevokeACLTokens(context.Background(), rev, admin); err == nil {
+			t.Errorf("RevokeACLTokens(%+v): no error", rev)
+		}
+	}
+	if _, err := s.RevokeACLTokens(context.Background(), Revocation{SessionsOf: "basic:a"}, Audit{}); err == nil {
+		t.Error("RevokeACLTokens without who: no error")
 	}
 }

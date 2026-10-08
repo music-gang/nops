@@ -320,10 +320,18 @@ func (s *Store) loadPolicies(ctx context.Context, tokens []ACLToken) error {
 	return nil
 }
 
-// ACLTokens returns every token, newest first, expired ones included: they
-// stay listed until someone revokes them.
-func (s *Store) ACLTokens(ctx context.Context) ([]ACLToken, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+aclTokenColumns+` FROM acl_tokens ORDER BY created_at DESC, accessor_id DESC`)
+// expired says whether the token has expired. Expiry is compared as times, not
+// as text: RFC3339Nano drops trailing zeros, so two stamps of one moment do not
+// always sort alike.
+func (s *Store) expired(t ACLToken) bool {
+	return !t.ExpiresAt.IsZero() && !s.now().Before(t.ExpiresAt)
+}
+
+// queryTokens returns the tokens the query selects, newest first, leaving out
+// the expired ones: an expired token is as good as deleted, and
+// DeleteExpiredTokens deletes it later.
+func (s *Store) queryTokens(ctx context.Context, query string, args ...any) ([]ACLToken, error) {
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY created_at DESC, accessor_id DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list tokens: %w", err)
 	}
@@ -334,7 +342,9 @@ func (s *Store) ACLTokens(ctx context.Context) ([]ACLToken, error) {
 			rows.Close()
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
-		out = append(out, t)
+		if !s.expired(t) {
+			out = append(out, t)
+		}
 	}
 	err = rows.Err()
 	rows.Close()
@@ -344,11 +354,16 @@ func (s *Store) ACLTokens(ctx context.Context) ([]ACLToken, error) {
 	return out, s.loadPolicies(ctx, out)
 }
 
-// ACLToken returns the token with this accessor ID, or ErrNotFound. An
-// expired one is still returned.
+// ACLTokens returns every token that has not expired, newest first.
+func (s *Store) ACLTokens(ctx context.Context) ([]ACLToken, error) {
+	return s.queryTokens(ctx, `SELECT `+aclTokenColumns+` FROM acl_tokens`)
+}
+
+// ACLToken returns the token with this accessor ID, or ErrNotFound if there is
+// none or it has expired.
 func (s *Store) ACLToken(ctx context.Context, accessorID string) (ACLToken, error) {
 	t, err := scanACLToken(s.db.QueryRowContext(ctx, `SELECT `+aclTokenColumns+` FROM acl_tokens WHERE accessor_id = ?`, accessorID))
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && s.expired(t)) {
 		return ACLToken{}, fmt.Errorf("token %s: %w", accessorID, ErrNotFound)
 	}
 	if err != nil {
@@ -372,9 +387,7 @@ func (s *Store) ACLTokenBySecret(ctx context.Context, hash string, acl bool) (AC
 	if err != nil {
 		return ACLToken{}, fmt.Errorf("read token: %w", err)
 	}
-	// Compared as times, not as text: RFC3339Nano drops trailing zeros, so two
-	// stamps of one moment do not always sort alike.
-	if t.ACL != acl || (!t.ExpiresAt.IsZero() && !s.now().Before(t.ExpiresAt)) {
+	if t.ACL != acl || s.expired(t) {
 		return ACLToken{}, ErrNotFound
 	}
 	out := []ACLToken{t}
@@ -410,40 +423,120 @@ func (s *Store) RevokeACLToken(ctx context.Context, accessorID string, by Audit)
 	return nil
 }
 
-// DeleteExpiredSessions deletes the session tokens that have expired, and
-// returns how many. An expired token that someone created stays listed until
-// someone revokes it. It is not a change to the ACL: nothing is logged.
-func (s *Store) DeleteExpiredSessions(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT accessor_id, expires_at FROM acl_tokens WHERE origin = ? AND expires_at IS NOT NULL`, OriginLogin)
+// A Revocation names the tokens to revoke in one action. Exactly one field is
+// set: the sessions of a person, or the tokens a person or a token created
+// together with, in turn, the tokens those created.
+type Revocation struct {
+	SessionsOf        string // the identity of a person
+	CreatorIdentity   string // the identity of a person
+	CreatorAccessorID string // the accessor ID of a token, "bootstrap" included
+}
+
+// Valid says whether exactly one field is set.
+func (r Revocation) Valid() bool {
+	set := 0
+	for _, f := range []string{r.SessionsOf, r.CreatorIdentity, r.CreatorAccessorID} {
+		if f != "" {
+			set++
+		}
+	}
+	return set == 1
+}
+
+// query returns the SQL that selects the tokens of r, and its argument.
+func (r Revocation) query() (string, string, error) {
+	if !r.Valid() {
+		return "", "", errors.New("revoke tokens: set exactly one of a person's sessions, a creator identity or a creator accessor ID")
+	}
+	if r.SessionsOf != "" {
+		return `SELECT ` + aclTokenColumns + ` FROM acl_tokens WHERE origin = 'login' AND identity = ?`, r.SessionsOf, nil
+	}
+	// A session records its own person as its creator: only created tokens seed
+	// the search. Each step adds the tokens the ones found so far created.
+	seed, arg := `creator_identity = ?`, r.CreatorIdentity
+	if r.CreatorAccessorID != "" {
+		seed, arg = `creator_accessor_id = ?`, r.CreatorAccessorID
+	}
+	return `WITH RECURSIVE taken (accessor_id) AS (
+			SELECT accessor_id FROM acl_tokens WHERE origin = 'created' AND ` + seed + `
+			UNION
+			SELECT t.accessor_id FROM acl_tokens t JOIN taken ON t.creator_accessor_id = taken.accessor_id
+		)
+		SELECT ` + aclTokenColumns + ` FROM acl_tokens WHERE accessor_id IN (SELECT accessor_id FROM taken)`, arg, nil
+}
+
+// TokensToRevoke returns the tokens RevokeACLTokens would revoke, newest first.
+func (s *Store) TokensToRevoke(ctx context.Context, r Revocation) ([]ACLToken, error) {
+	q, arg, err := r.query()
 	if err != nil {
-		return 0, fmt.Errorf("list sessions: %w", err)
+		return nil, err
+	}
+	return s.queryTokens(ctx, q, arg)
+}
+
+// RevokeACLTokens deletes the tokens of r in one transaction, logs a revoke
+// for each, and returns their accessor IDs, newest first. None is not an error.
+func (s *Store) RevokeACLTokens(ctx context.Context, r Revocation, by Audit) ([]string, error) {
+	if by.Actor == "" {
+		return nil, errors.New("revoke tokens: who is required")
+	}
+	tokens, err := s.TokensToRevoke(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("revoke tokens: %w", err)
+	}
+	defer tx.Rollback()
+	ids := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM acl_tokens WHERE accessor_id = ?`, t.AccessorID); err != nil {
+			return nil, fmt.Errorf("revoke token %s: %w", t.AccessorID, err)
+		}
+		if err := s.insertChange(ctx, tx, by, "revoke", "token", t.AccessorID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, t.AccessorID)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("revoke tokens: commit: %w", err)
+	}
+	return ids, nil
+}
+
+// DeleteExpiredTokens deletes the tokens that have expired, sessions and
+// created ones alike, and returns how many. It is not a change to the ACL:
+// nothing is logged.
+func (s *Store) DeleteExpiredTokens(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT accessor_id, expires_at FROM acl_tokens WHERE expires_at IS NOT NULL`)
+	if err != nil {
+		return 0, fmt.Errorf("list tokens: %w", err)
 	}
 	var expired []string
-	now := s.now()
 	for rows.Next() {
-		var id, at string
-		if err := rows.Scan(&id, &at); err != nil {
+		var t ACLToken
+		var at string
+		if err := rows.Scan(&t.AccessorID, &at); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("scan session: %w", err)
+			return 0, fmt.Errorf("scan token: %w", err)
 		}
-		// Compared as times, not as text: see ACLTokenBySecret.
-		t, err := parseTime(at)
-		if err != nil {
+		if t.ExpiresAt, err = parseTime(at); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("parse session expiry %q: %w", at, err)
+			return 0, fmt.Errorf("parse token expiry %q: %w", at, err)
 		}
-		if !now.Before(t) {
-			expired = append(expired, id)
+		if s.expired(t) {
+			expired = append(expired, t.AccessorID)
 		}
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return 0, fmt.Errorf("list sessions: %w", err)
+		return 0, fmt.Errorf("list tokens: %w", err)
 	}
 	for _, id := range expired {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM acl_tokens WHERE accessor_id = ?`, id); err != nil {
-			return 0, fmt.Errorf("delete session %s: %w", id, err)
+			return 0, fmt.Errorf("delete token %s: %w", id, err)
 		}
 	}
 	return len(expired), nil

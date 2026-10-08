@@ -339,6 +339,43 @@ func (s *server) apiRevokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// apiRevokeSessions is POST /api/acl/tokens/revoke-sessions.
+func (s *server) apiRevokeSessions(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Identity string `json:"identity"`
+	}
+	if !readBody(w, r, &b) {
+		return
+	}
+	s.apiRevokeTokens(w, r, store.Revocation{SessionsOf: b.Identity})
+}
+
+// apiRevokeCreated is POST /api/acl/tokens/revoke-created.
+func (s *server) apiRevokeCreated(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		CreatorIdentity   string `json:"creator_identity"`
+		CreatorAccessorID string `json:"creator_accessor_id"`
+	}
+	if !readBody(w, r, &b) {
+		return
+	}
+	s.apiRevokeTokens(w, r, store.Revocation{CreatorIdentity: b.CreatorIdentity, CreatorAccessorID: b.CreatorAccessorID})
+}
+
+// apiRevokeTokens answers a revocation in one action. revokeTokens checks rev.
+func (s *server) apiRevokeTokens(w http.ResponseWriter, r *http.Request, rev store.Revocation) {
+	ids, err := s.revokeTokens(r.Context(), subjectOf(r.Context()), rev)
+	var bad invalidInput
+	switch {
+	case errors.As(err, &bad):
+		apiError(w, http.StatusBadRequest, bad.Error())
+	case err != nil:
+		s.apiServerError(w, r, "revoke tokens", err)
+	default:
+		replyJSON(w, http.StatusOK, map[string][]string{"revoked": ids})
+	}
+}
+
 // apiSelfToken is GET /api/acl/token/self: the token of the request. The
 // bootstrap token has no row, so it is described here.
 func (s *server) apiSelfToken(w http.ResponseWriter, r *http.Request) {
