@@ -37,6 +37,8 @@ var commands = []command{
 	{name: "acl token info", arg: "<accessor-id>", help: "show a token", run: runTokenInfo},
 	{name: "acl token create", flags: tokenFlags, help: "create a token and print its secret once", run: runTokenCreate},
 	{name: "acl token delete", arg: "<accessor-id>", help: "revoke a token", run: action(http.MethodDelete, tokenPath, "revoked")},
+	{name: "acl token delete-sessions", arg: "<identity>", yes: true, help: "revoke every session of a person", run: runRevokeSessions},
+	{name: "acl token delete-created", yes: true, flags: revokeCreatedFlags, help: "revoke every token a person or a token created, and the tokens those created", run: runRevokeCreated},
 	{name: "acl token self", help: "show the token this client uses", run: runTokenSelf},
 	{name: "secret generate", offline: true, help: "print a new random secret, offline", run: runSecretGenerate},
 }

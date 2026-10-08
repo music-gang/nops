@@ -68,6 +68,8 @@ func (s *server) apiEndpoints() []apiEndpoint {
 		{"POST /api/acl/tokens", management(), s.apiCreateToken},
 		{"GET /api/acl/tokens/{accessor_id}", management(), s.apiGetToken},
 		{"DELETE /api/acl/tokens/{accessor_id}", management(), s.apiRevokeToken},
+		{"POST /api/acl/tokens/revoke-sessions", management(), s.apiRevokeSessions},
+		{"POST /api/acl/tokens/revoke-created", management(), s.apiRevokeCreated},
 		{"GET /api/acl/token/self", anyToken(), s.apiSelfToken},
 		{"GET /api/acl/changes", management(), s.apiChanges},
 	}

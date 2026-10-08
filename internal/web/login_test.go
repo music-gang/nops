@@ -229,12 +229,12 @@ func TestSessionsExpireAndTheNextLoginDeletesThem(t *testing.T) {
 	if rec := a.do("GET", "/page", []*http.Cookie{old}); rec.Code != http.StatusFound {
 		t.Errorf("an expired session: status %d, want the login redirect", rec.Code)
 	}
-	if _, err := a.store.ACLToken(t.Context(), tok.AccessorID); err != nil {
-		t.Fatalf("the expired session is gone before a login: %v", err)
+	if _, err := a.store.ACLToken(t.Context(), tok.AccessorID); err == nil {
+		t.Error("the expired session is still listed")
 	}
 	a.loggedIn(alice())
-	if _, err := a.store.ACLToken(t.Context(), tok.AccessorID); err == nil {
-		t.Error("the expired session is still there after a login")
+	if n, err := a.store.DeleteExpiredTokens(t.Context()); err != nil || n != 0 {
+		t.Errorf("after a login, %d expired tokens left to delete, %v; want the login to have deleted them", n, err)
 	}
 }
 

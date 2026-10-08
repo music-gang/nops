@@ -39,7 +39,8 @@ it creates the token, and keeps only its hash. There are two types:
 
 The **bootstrap token** is a management token read from
 `-acl-bootstrap-token-file` at every start. To rotate it, change the file and
-restart Nops. The tokens it created stay until someone revokes them.
+restart Nops. The tokens it created stay: if it leaked, [revoke them](api.md#tokens) in
+one action before you create new ones.
 
 ## ACL policies
 
