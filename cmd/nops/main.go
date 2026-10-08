@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -83,6 +84,11 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
+	if n, err := st.DeleteExpiredSessions(ctx); err != nil {
+		return fmt.Errorf("delete the expired sessions: %w", err)
+	} else if n > 0 {
+		log.Info("deleted the expired sessions", "count", n)
+	}
 
 	nomadClient, err := nomadx.New(cfg.Nomad())
 	if err != nil {
@@ -131,7 +137,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})
@@ -213,14 +219,12 @@ func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, 
 	case "oidc":
 		return web.NewAuth(web.AuthOptions{
 			Issuer: cfg.OIDCIssuerURL, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
-			RedirectURL:   cfg.PublicURL + "/auth/callback",
-			AllowedUsers:  cfg.OIDCAllowedUsers,
-			AllowedGroups: cfg.OIDCAllowedGroups,
-			BasePath:      cfg.BasePath,
-			Log:           log,
+			RedirectURL: cfg.PublicURL + "/auth/callback",
+			BasePath:    cfg.BasePath,
+			Log:         log,
 		})
 	case "basic":
-		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, PublicURL: cfg.PublicURL, BasePath: cfg.BasePath, Log: log})
+		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, Log: log})
 	default:
 		// config.Load's check() already refuses any other value.
 		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)

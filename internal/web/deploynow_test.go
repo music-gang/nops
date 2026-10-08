@@ -32,7 +32,7 @@ func TestDeployNow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			en := &fakeEngine{deployNowNext: c.next}
 			ts := newTestServer(t, &fakeStore{}, en, "")
-			cookie := mintSession(t, ts.auth, "alice")
+			cookie := ts.session("alice")
 
 			rec := ts.do("POST", "/jobs/default/web/deploy-now", formBody(url.Values{"spec_hash": {"h1"}}), cookie)
 			if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != c.want {
@@ -58,7 +58,7 @@ func TestDeployNowErrors(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ts := newTestServer(t, &fakeStore{}, &fakeEngine{deployNowErr: c.err}, "")
-			rec := ts.do("POST", "/jobs/default/web/deploy-now", nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("POST", "/jobs/default/web/deploy-now", nil, ts.session("alice"))
 			if rec.Code != c.code || !strings.Contains(rec.Body.String(), c.body) {
 				t.Fatalf("status %d, want %d with %q; body: %s", rec.Code, c.code, c.body, rec.Body)
 			}
@@ -76,7 +76,7 @@ func TestDeployNowRefusesCrossOriginAndNoLogin(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/jobs/default/web/deploy-now", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	req.AddCookie(mintSession(t, ts.auth, "alice"))
+	req.AddCookie(ts.session("alice"))
 	rec := httptest.NewRecorder()
 	ts.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || len(en.deployNowCalls) != 0 {

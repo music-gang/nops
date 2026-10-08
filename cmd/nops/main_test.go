@@ -35,7 +35,6 @@ func TestNewAuthenticatorPicksTheRightBackend(t *testing.T) {
 		cfg := &config.Config{
 			AuthMode: "oidc", PublicURL: "https://nops.example.com",
 			OIDCIssuerURL: "https://idp.example.com/", OIDCClientID: "nops", OIDCClientSecret: "secret",
-			OIDCAllowedUsers: []string{"alice"},
 		}
 		auth, err := newAuthenticator(cfg, discardLog())
 		if err != nil {

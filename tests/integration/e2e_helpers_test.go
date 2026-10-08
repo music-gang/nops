@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -420,7 +421,7 @@ func (d *dashboard) post(t *testing.T, path string, form url.Values) (int, strin
 // login starts a session as user and checks the dashboard now answers.
 func (d *dashboard) login(t *testing.T, user, password string) {
 	t.Helper()
-	status, _ := d.post(t, "/auth/login", url.Values{"username": {user}, "password": {password}})
+	status, _ := d.post(t, "/auth/basic", url.Values{"username": {user}, "password": {password}})
 	if status != http.StatusFound {
 		t.Fatalf("login as %s: status %d, want 302", user, status)
 	}
@@ -471,7 +472,9 @@ func newE2E(t *testing.T, env ...string) *e2eEnv {
 	t.Cleanup(func() { st.Close() })
 
 	dash := newDashboard(t, proc.baseURL)
-	dash.login(t, e2eUser, e2ePassword)
+	if !slices.Contains(env, "NOPS_ACL=true") { // with the ACL on, a login needs a binding rule first
+		dash.login(t, e2eUser, e2ePassword)
+	}
 	return &e2eEnv{t: t, nomad: c, raw: raw, repo: repo, proc: proc, st: st, dash: dash}
 }
 

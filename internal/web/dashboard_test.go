@@ -237,11 +237,12 @@ func TestOverviewLivePolls(t *testing.T) {
 func TestOverviewFetchNowNeedsATrigger(t *testing.T) {
 	// A dashboard built with no trigger does not offer what it cannot do.
 	a := newTestAuth(t)
-	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: noAccess{}, Log: slogDiscard()})
+	tokens := openTestStore(t)
+	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: tokens, Log: slogDiscard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := doWith(h, "GET", "/", mintSession(t, a, "alice"))
+	rec := doWith(h, "GET", "/", mintSession(t, tokens, false, "alice"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -343,7 +344,7 @@ func TestOverviewErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, st, &fakeEngine{}, "")
-			rec := ts.do("GET", "/", nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("GET", "/", nil, ts.session("alice"))
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("status %d, want 500", rec.Code)
 			}
@@ -471,7 +472,7 @@ func TestJobsPageEmptyAndErrors(t *testing.T) {
 	mustContain(t, ts.get("/jobs"), "No managed job observed yet.")
 
 	ts = newTestServer(t, &fakeStore{latestErr: fmt.Errorf("database is locked")}, &fakeEngine{}, "")
-	rec := ts.do("GET", "/jobs", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("GET", "/jobs", nil, ts.session("alice"))
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database is locked") {
 		t.Errorf("status %d, body leaks the error: %v", rec.Code, strings.Contains(rec.Body.String(), "database is locked"))
 	}
@@ -624,14 +625,14 @@ func TestJobPageOnlyDeploymentsRemain(t *testing.T) {
 func TestJobPageErrors(t *testing.T) {
 	t.Run("unknown job", func(t *testing.T) {
 		ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-		rec := ts.do("GET", "/jobs/default/nope", nil, mintSession(t, ts.auth, "alice"))
+		rec := ts.do("GET", "/jobs/default/nope", nil, ts.session("alice"))
 		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "This job does not exist.") {
 			t.Errorf("status %d, body %s", rec.Code, rec.Body)
 		}
 	})
 	t.Run("store error", func(t *testing.T) {
 		ts := newTestServer(t, &fakeStore{byJobErr: fmt.Errorf("database is locked")}, &fakeEngine{}, "")
-		rec := ts.do("GET", "/jobs/default/web", nil, mintSession(t, ts.auth, "alice"))
+		rec := ts.do("GET", "/jobs/default/web", nil, ts.session("alice"))
 		if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database is locked") {
 			t.Errorf("status %d, leaks the error: %v", rec.Code, strings.Contains(rec.Body.String(), "database is locked"))
 		}
@@ -640,7 +641,7 @@ func TestJobPageErrors(t *testing.T) {
 	t.Run("a diff that does not parse", func(t *testing.T) {
 		en := &fakeEngine{observations: []engine.Observation{{JobID: "web", Namespace: "default", Drift: true, PlanDiff: "not json"}}}
 		ts := newTestServer(t, &fakeStore{}, en, "")
-		rec := ts.do("GET", "/jobs/default/web", nil, mintSession(t, ts.auth, "alice"))
+		rec := ts.do("GET", "/jobs/default/web", nil, ts.session("alice"))
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("status %d, want 500", rec.Code)
 		}
@@ -717,7 +718,7 @@ func TestActivityEmptyLimitedAndErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, st, &fakeEngine{}, "")
-			rec := ts.do("GET", "/history", nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("GET", "/history", nil, ts.session("alice"))
 			if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database is locked") {
 				t.Errorf("status %d, leaks the error: %v", rec.Code, strings.Contains(rec.Body.String(), "database is locked"))
 			}
@@ -727,7 +728,7 @@ func TestActivityEmptyLimitedAndErrors(t *testing.T) {
 
 func TestDriftMovedToJobs(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-	rec := ts.do("GET", "/drift", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("GET", "/drift", nil, ts.session("alice"))
 	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/jobs" {
 		t.Errorf("status %d, Location %q, want 301 to /jobs", rec.Code, rec.Header().Get("Location"))
 	}
@@ -791,7 +792,7 @@ func TestDeploymentPageShortensLongHashes(t *testing.T) {
 
 func TestDeploymentPageFailsLoudWhenFrozenHooksCannotBeRead(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{deployment: sampleDeployment(), hooksErr: errors.New("disk on fire")}, &fakeEngine{}, "")
-	rec := ts.do("GET", "/deployments/d1", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("GET", "/deployments/d1", nil, ts.session("alice"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500: a page that cannot say what Approve will run must not offer it", rec.Code)
 	}
@@ -899,7 +900,7 @@ func TestDeploymentPageWithNothingToShow(t *testing.T) {
 func TestDeploymentPageStaleApprovalNotice(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	ts := newTestServer(t, st, &fakeEngine{approveErr: engine.ErrStaleApproval}, "")
-	rec := ts.do("POST", "/deployments/d1/approve", formBody(map[string][]string{"spec_hash": {"old"}}), mintSession(t, ts.auth, "alice"))
+	rec := ts.do("POST", "/deployments/d1/approve", formBody(map[string][]string{"spec_hash": {"old"}}), ts.session("alice"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409", rec.Code)
 	}
@@ -916,7 +917,7 @@ func TestDeploymentPageErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, st, &fakeEngine{}, "")
-			rec := ts.do("GET", "/deployments/d1", nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("GET", "/deployments/d1", nil, ts.session("alice"))
 			if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database is locked") {
 				t.Errorf("status %d, leaks the error: %v", rec.Code, strings.Contains(rec.Body.String(), "database is locked"))
 			}
@@ -927,14 +928,14 @@ func TestDeploymentPageErrors(t *testing.T) {
 
 func TestDeploymentPageNotFoundAndStoreError(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
-	rec := ts.do("GET", "/deployments/missing", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("GET", "/deployments/missing", nil, ts.session("alice"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
 	}
 	mustContain(t, rec.Body.String(), "This deployment does not exist.")
 
 	ts = newTestServer(t, &fakeStore{getErr: fmt.Errorf("database is locked")}, &fakeEngine{}, "")
-	rec = ts.do("GET", "/deployments/d1", nil, mintSession(t, ts.auth, "alice"))
+	rec = ts.do("GET", "/deployments/d1", nil, ts.session("alice"))
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database is locked") {
 		t.Errorf("status %d, leaks the error: %v", rec.Code, strings.Contains(rec.Body.String(), "database is locked"))
 	}

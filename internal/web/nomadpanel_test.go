@@ -213,7 +213,7 @@ func TestNomadPanelIsCachedForAShortTime(t *testing.T) {
 func TestPromote(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, &fakeStore{}, en, "")
-	rec := ts.do("POST", "/deployments/d1/promote", nil, mintSession(t, ts.auth, "alice"))
+	rec := ts.do("POST", "/deployments/d1/promote", nil, ts.session("alice"))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/deployments/d1" {
 		t.Fatalf("status %d, Location %q, want 303 to /deployments/d1", rec.Code, rec.Header().Get("Location"))
 	}
@@ -228,7 +228,7 @@ func TestPromoteRefreshesTheNomadPanel(t *testing.T) {
 	nom := canaryNomad()
 	ts := newTestServerWithNomad(t, &fakeStore{deployment: applyingDeployment()}, &fakeEngine{}, "", nom)
 	ts.get("/deployments/d1")
-	ts.do("POST", "/deployments/d1/promote", nil, mintSession(t, ts.auth, "alice"))
+	ts.do("POST", "/deployments/d1/promote", nil, ts.session("alice"))
 	ts.get("/deployments/d1")
 	if nom.jobCalls != 2 {
 		t.Errorf("job calls = %d, want the panel read again after the promotion", nom.jobCalls)
@@ -259,7 +259,7 @@ func TestPromoteRefusals(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, &fakeStore{}, &fakeEngine{promoteErr: tt.err}, "")
-			rec := ts.do("POST", "/deployments/d1/promote", nil, mintSession(t, ts.auth, "alice"))
+			rec := ts.do("POST", "/deployments/d1/promote", nil, ts.session("alice"))
 			if rec.Code != tt.code || !strings.Contains(rec.Body.String(), tt.body) {
 				t.Errorf("status %d, want %d with %q; body:\n%s", rec.Code, tt.code, tt.body, rec.Body)
 			}

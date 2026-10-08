@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
+	"github.com/music-gang/nops/internal/secret"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -153,11 +153,12 @@ type fakeEngine struct {
 	orphans        []engine.Orphan
 	status         engine.Status
 	accessor       string // the accessor ID the last Approve ran with
+	identity       string // the identity of the person the last Approve ran for
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
 	f.approveCalls = append(f.approveCalls, approveCall{id, specHash, actor})
-	f.accessor = store.AccessorFrom(ctx)
+	f.accessor, f.identity = store.AccessorFrom(ctx), store.IdentityFrom(ctx)
 	return f.approveErr
 }
 
@@ -221,9 +222,8 @@ func newTestAuth(t *testing.T) *Auth {
 	t.Helper()
 	a, err := NewAuth(AuthOptions{
 		Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
-		RedirectURL:  "http://nops.test/auth/callback",
-		AllowedUsers: []string{"alice"},
-		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RedirectURL: "http://nops.test/auth/callback",
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,21 +231,38 @@ func newTestAuth(t *testing.T) *Auth {
 	return a
 }
 
-// mintSession signs a session cookie directly, skipping the OIDC round trip
-// tested end to end in auth_test.go: what these tests need is a page behind
-// a valid session, not the login flow itself.
-func mintSession(t *testing.T, a *Auth, actor string) *http.Cookie {
+// openTestStore opens a real SQLite store: the tokens of a login live there.
+func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	sess := sessionData{User: actor, Expires: a.now().Add(time.Hour).Unix()}
-	if !a.setCookie(rec, sessionCookie, "/", sess, time.Hour) {
-		t.Fatal("mint session: setCookie failed")
+	st, err := store.Open(filepath.Join(t.TempDir(), "nops.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	c := cookie(rec, sessionCookie)
-	if c == nil {
-		t.Fatal("mint session: no cookie set")
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+// mintSession makes a session token in st, a management one that never expires,
+// and returns the cookie that carries it: what these tests need is a page
+// behind a valid login, not the login flow itself, which login_test.go and
+// auth_test.go cover. aclOn is whether the server runs with the ACL on.
+func mintSession(t *testing.T, st *store.Store, aclOn bool, actor string) *http.Cookie {
+	t.Helper()
+	sec := secret.New()
+	_, err := st.CreateACLToken(context.Background(), store.ACLToken{
+		Name: actor, Type: store.TokenManagement, ACL: aclOn, Origin: store.OriginLogin,
+		Identity: "test:" + actor, CreatorName: actor, CreatorIdentity: "test:" + actor,
+	}, hashToken(sec), store.Audit{Actor: actor})
+	if err != nil {
+		t.Fatal(err)
 	}
-	return c
+	return &http.Cookie{Name: sessionCookie, Value: sec}
+}
+
+// session is a login as actor on this server.
+func (ts *testServer) session(actor string) *http.Cookie {
+	ts.t.Helper()
+	return mintSession(ts.t, ts.tokens, ts.aclOn, actor)
 }
 
 // testNow is the clock every page test reads: relative times are counted from
@@ -262,35 +279,9 @@ type testServer struct {
 	git    *fakeGit
 	clock  *time.Time // what the server's clock reads: a test moves it
 	tokens *store.Store
-	aclOn  bool // the server runs with the ACL on
+	aclOn  bool         // the server runs with the ACL on
+	login  *http.Cookie // the login page() and get() carry; nil: a management login as alice
 }
-
-// noAccess is the AccessStore of a test that never calls the API: it knows no
-// ACL policy and no token.
-type noAccess struct{}
-
-func (noAccess) PutACLPolicy(context.Context, store.ACLPolicy, store.Audit) error {
-	return errors.New("noAccess: not expected")
-}
-func (noAccess) ACLPolicy(context.Context, string) (store.ACLPolicy, error) {
-	return store.ACLPolicy{}, store.ErrNotFound
-}
-func (noAccess) ACLPolicies(context.Context) ([]store.ACLPolicy, error) { return nil, nil }
-func (noAccess) DeleteACLPolicy(context.Context, string, store.Audit) error {
-	return store.ErrNotFound
-}
-func (noAccess) CreateACLToken(context.Context, store.ACLToken, string, store.Audit) (store.ACLToken, error) {
-	return store.ACLToken{}, errors.New("noAccess: not expected")
-}
-func (noAccess) ACLTokens(context.Context) ([]store.ACLToken, error) { return nil, nil }
-func (noAccess) ACLToken(context.Context, string) (store.ACLToken, error) {
-	return store.ACLToken{}, store.ErrNotFound
-}
-func (noAccess) ACLTokenBySecret(context.Context, string, bool) (store.ACLToken, error) {
-	return store.ACLToken{}, store.ErrNotFound
-}
-func (noAccess) RevokeACLToken(context.Context, string, store.Audit) error  { return store.ErrNotFound }
-func (noAccess) ACLChanges(context.Context, int) ([]store.ACLChange, error) { return nil, nil }
 
 func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testServer {
 	t.Helper()
@@ -311,7 +302,7 @@ func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string,
 }
 
 // newTestServerLogin is newTestServerOptions with the login the server runs
-// (nil: ts.auth, OpenID Connect allowing alice).
+// (nil: ts.auth, OpenID Connect).
 func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string, login Authenticator, mods ...func(*Options)) *testServer {
 	t.Helper()
 	now := testNow
@@ -369,7 +360,11 @@ func (ts *testServer) do(method, target string, body *strings.Reader, cookies ..
 // the answer is 200; it returns the body.
 func (ts *testServer) get(target string) string {
 	ts.t.Helper()
-	rec := ts.do("GET", target, nil, mintSession(ts.t, ts.auth, "alice"))
+	cookie := ts.login
+	if cookie == nil {
+		cookie = ts.session("alice")
+	}
+	rec := ts.do("GET", target, nil, cookie)
 	if rec.Code != http.StatusOK {
 		ts.t.Fatalf("GET %s: status %d, body %s", target, rec.Code, rec.Body)
 	}
@@ -478,7 +473,7 @@ func TestVersionFooter(t *testing.T) {
 		}
 	}
 
-	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: noAccess{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: ts.tokens, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +507,7 @@ func TestApprove(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), cookie)
 	if rec.Code != http.StatusSeeOther {
@@ -533,7 +528,7 @@ func TestApprovePassesOnTheHashOfTheFormNotTheStoredOne(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()} // spec-hash-1 in the store
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"what-the-page-showed"}}), cookie)
 
@@ -546,7 +541,7 @@ func TestApproveStaleSpecHashConflict(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{approveErr: engine.ErrStaleApproval}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"stale"}}), cookie)
 	if rec.Code != http.StatusConflict {
@@ -561,7 +556,7 @@ func TestApproveOfAJobThatIsNotInGitConflict(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{approveErr: fmt.Errorf("approve d1: %w", engine.ErrNotInRepo)}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), cookie)
 	if rec.Code != http.StatusConflict {
@@ -581,7 +576,7 @@ func TestApproveNotFound(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{approveErr: store.ErrNotFound}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), cookie)
 	if rec.Code != http.StatusNotFound {
@@ -593,7 +588,7 @@ func TestReject(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	rec := ts.do("POST", "/deployments/d1/reject", nil, cookie)
 	if rec.Code != http.StatusSeeOther {
@@ -611,7 +606,7 @@ func TestApproveRefusesCrossOrigin(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
-	cookie := mintSession(t, ts.auth, "alice")
+	cookie := ts.session("alice")
 
 	req := httptest.NewRequest("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
