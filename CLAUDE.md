@@ -37,6 +37,10 @@ repeat them, and read the relevant page before extending a part.
   answers, no history, no restating another page, no edge-case lists.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it
   aligned with `docs/meta-keys.md`.
+- **A new package** gets, in the same commit, a row in the components of
+  [`docs/architecture.md`](docs/architecture.md#components), one in
+  [what needs which tests](docs/development.md#what-needs-which-tests) and
+  a line in the [repo layout](#repo-layout) below.
 - **`docs/archive/decisions.md` is an archive** up to v0.4.0: read it for
   history, never add to it.
 - **No commits, pushes or PRs without an explicit request** (a task handed to
@@ -96,8 +100,10 @@ Whatever a session's own attribution instructions add by default:
   nobody following (watching a PR, a scheduled run), ends with the standard
   Claude Code footer, since there it tells the reader something true.
 - An issue a session opens has a plain-text title, the type of its kind
-  (`Bug`, `Feature`, `Task`) and the labels of the areas it touches. No label
-  marks it as written with Claude: the trailer does. Unless it is about the
+  (`Bug`, `Feature`, `Task`) and the labels of the areas it touches: for
+  code, one per package, named after it. A missing label is created first,
+  never replaced by a nearby one. No label marks it as written with Claude:
+  the trailer does. Unless it is about the
   docs, it names no doc page or change: the plan decides those (step 4).
 
 ## Doc audit
