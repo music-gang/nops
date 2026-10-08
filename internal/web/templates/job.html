@@ -32,10 +32,10 @@
     <strong>Paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
     nops starts no new deployment for this job until it is resumed. Drift is still detected and shown; a deployment already running finishes.
   </div>
-  <form method="post" action="{{.ResumePath}}">
+  {{if .ResumePath}}<form method="post" action="{{.ResumePath}}">
     <input type="hidden" name="back" value="job">
     <button type="submit" class="btn btn--sm">Resume</button>
-  </form>
+  </form>{{end}}
 </section>
 {{end}}
 
@@ -60,10 +60,10 @@
     <strong>Blocked.</strong> {{.BlockedReason}}
     <a href="{{.Base}}/deployments/{{.BlockedBy}}">See the deployment.</a>
   </div>
-  <form method="post" action="{{.RetryPath}}">
+  {{if .RetryPath}}<form method="post" action="{{.RetryPath}}">
     <input type="hidden" name="back" value="job">
     <button type="submit" class="btn btn--sm">Retry</button>
-  </form>
+  </form>{{end}}
 </section>
 {{end}}
 </div>

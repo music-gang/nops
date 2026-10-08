@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/nomad/api"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
@@ -129,7 +130,7 @@ func (s *server) latestByJob(r *http.Request) (map[string]*store.Deployment, err
 		return nil, err
 	}
 	m := make(map[string]*store.Deployment, len(list))
-	for _, d := range list {
+	for _, d := range readable(r, list) {
 		m[jobKey(d.Namespace, d.JobID)] = d
 	}
 	return m, nil
@@ -208,7 +209,7 @@ type jobsData struct {
 }
 
 func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
-	obs := s.engine.Observations()
+	obs := s.observations(r)
 	latest, err := s.latestByJob(r)
 	if err != nil {
 		s.serverError(w, r, "list latest deployments", err)
@@ -221,7 +222,7 @@ func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
 		filter = ""
 	}
 
-	orphans := s.engine.Orphans()
+	orphans := s.orphans(r)
 	data := jobsData{baseData: s.base(r, "jobs"), Total: len(obs) + len(orphans), Filter: string(filter)}
 	counts := map[syncKey]int{}
 	rows := make([]jobRow, 0, data.Total)
@@ -379,7 +380,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	data.Nomad = s.nomadPanel(r.Context(), ns, id, 0)
 	data.NomadURL = s.nomadJobURL(ns, id)
 	for _, d := range deps {
-		data.Deployments = append(data.Deployments, s.withRetry(s.card(d), d, deps[0]))
+		data.Deployments = append(data.Deployments, s.withRetry(r, s.card(d), d, deps[0]))
 	}
 	if orphan != nil {
 		data.Orphan = &orphanView{NomadStatus: orphan.NomadStatus, StopCommand: "nomad job stop -namespace " + orphan.Namespace + " " + orphan.JobID}
@@ -402,27 +403,35 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		data.File, data.Observed = obs.FilePath, s.when(obs.ObservedAt)
 		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
-		if data.Blocked {
+		if data.Blocked && allows(r, ns, acl.Retry) {
 			data.RetryPath = s.retryPath(obs.BlockedBy)
 		}
+		mayPause := allows(r, ns, acl.Pause)
 		// A pause can be lifted here; a closed sync window can be lifted for one
 		// deployment (Deploy now), and a job it holds can still be paused. What a
 		// Deploy now started is not held: the window closing again does not stop it.
 		running := latest != nil && latest.State.IsActive() && latest.WindowLiftedBy != ""
 		switch h := obs.Hold; {
 		case h != nil && h.Kind == engine.HoldPaused:
-			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since), ResumePath: s.jobPath(ns, id) + "/resume"}
+			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since)}
+			if mayPause {
+				data.Paused.ResumePath = s.jobPath(ns, id) + "/resume"
+			}
 		case h != nil && obs.Drift && !running:
 			data.Held = h.Reason
-			data.PausePath = s.jobPath(ns, id) + "/pause"
+			if mayPause {
+				data.PausePath = s.jobPath(ns, id) + "/pause"
+			}
 			switch {
 			case obs.DeployNowBy != "":
 				data.DeployNowBy = obs.DeployNowBy
-			case engine.DeployNowable(*obs, latest):
+			case engine.DeployNowable(*obs, latest) && allows(r, ns, acl.DeployNow):
 				data.DeployNow = &deployNowView{Path: s.jobPath(ns, id) + "/deploy-now", SpecHash: obs.SpecHash}
 			}
 		default:
-			data.PausePath = s.jobPath(ns, id) + "/pause"
+			if mayPause {
+				data.PausePath = s.jobPath(ns, id) + "/pause"
+			}
 		}
 		data.Window = windowOf(obs.Window)
 		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, nomadx.Summarize(diff), obs.Issues
@@ -457,7 +466,7 @@ type attentionItem struct {
 // waiting first), blocked jobs, failures nobody has retried, meta errors, paused
 // jobs. A job under policy "none" that drifts is not here: leaving it is its
 // policy.
-func (s *server) attention(obs []engine.Observation, active []*store.Deployment, latest map[string]*store.Deployment) []attentionItem {
+func (s *server) attention(r *http.Request, obs []engine.Observation, active []*store.Deployment, latest map[string]*store.Deployment) []attentionItem {
 	var items []attentionItem
 
 	for _, d := range active {
@@ -482,7 +491,10 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		blocking[o.BlockedBy] = true
 		it := attentionItem{
 			Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: o.Namespace + "/" + o.JobID,
-			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason, RetryPath: s.retryPath(o.BlockedBy),
+			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.BlockedReason,
+		}
+		if allows(r, o.Namespace, acl.Retry) {
+			it.RetryPath = s.retryPath(o.BlockedBy)
 		}
 		if d := latest[jobKey(o.Namespace, o.JobID)]; d != nil {
 			it.When = s.when(d.UpdatedAt)
@@ -505,7 +517,7 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		}
 		items = append(items, attentionItem{
 			Kind: "failed", KindLabel: "Failed", KindClass: "state-failed", Title: c.Title, Path: c.Path, Detail: detail, When: s.when(d.UpdatedAt),
-			RetryPath: s.withRetry(c, d, d).RetryPath,
+			RetryPath: s.withRetry(r, c, d, d).RetryPath,
 		})
 	}
 
@@ -528,16 +540,19 @@ func (s *server) attention(obs []engine.Observation, active []*store.Deployment,
 		if o.Hold == nil || o.Hold.Kind != engine.HoldPaused {
 			continue
 		}
-		items = append(items, attentionItem{
+		it := attentionItem{
 			Kind: "paused", KindLabel: "Paused", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
 			Path: s.jobPath(o.Namespace, o.JobID), Detail: o.Hold.Reason, When: s.when(o.Hold.Since),
-			ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume",
-		})
+		}
+		if allows(r, o.Namespace, acl.Pause) {
+			it.ResumePath = s.jobPath(o.Namespace, o.JobID) + "/resume"
+		}
+		items = append(items, it)
 	}
 
 	// Least urgent: nothing is broken, a service nobody asked for keeps
 	// running. The operator decides; nops never stops it.
-	for _, o := range s.engine.Orphans() {
+	for _, o := range s.orphans(r) {
 		items = append(items, attentionItem{
 			Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
 			Path: s.jobPath(o.Namespace, o.JobID), Detail: "Removed from git, still running in Nomad",

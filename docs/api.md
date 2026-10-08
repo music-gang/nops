@@ -11,20 +11,22 @@ curl -H "Authorization: Bearer $NOPS_API_TOKEN" https://nops.example.com/api/job
 
 From a terminal, the [command-line client](cli.md) does the same.
 
-The API does what its owner can do on the dashboard, with the same rules. Nops
-records the owner as the [actor](glossary.md#deployment-lifecycle). It works
-with both [login modes](dashboard.md#authentication) and never contacts the
-identity provider.
+The API does what the token's [ACL policies](acl.md) allow, with the
+dashboard's rules. Nops records the token as the
+[actor](glossary.md#deployment-lifecycle). It works with both
+[login modes](dashboard.md#authentication) and never contacts the identity
+provider.
 
 ## Tokens
 
-Create a token on the dashboard's *Tokens* page. A token belongs to the person
-who created it, and expires in 7, 30, 90, or 365 days, or never. Nops shows it
-once and keeps only its hash.
+A management token creates tokens on the dashboard's *Administration* page, with
+the API, or with [`nops acl token create`](cli.md#commands). A token expires
+when you say, or never. Nops shows it once and keeps only its hash.
 
-Every logged-in user sees every token and can revoke any of them. A token stays
-valid until it expires or someone revokes it, even if its owner leaves the
-allowlist or the users file: revoke the tokens of anyone you remove.
+A management token sees and revokes every token. A client token sees only
+itself. A token stays valid until it expires or someone revokes it, even if
+the person who created it leaves the allowlist or the users file: revoke the
+tokens of anyone you remove.
 
 ## Endpoints
 
@@ -46,11 +48,22 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `POST /api/jobs/{namespace}/{job}/resume` | Resume a job. |
 | `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. Answers `{"deployment_id": "..."}`, empty when the next detection cycle starts it. |
 | `POST /api/fetch` | Ask for a git poll now. |
+| `GET /api/acl/policies` | The [ACL policies](acl.md#acl-policies): all with a management token, the token's own otherwise. |
+| `GET /api/acl/policies/{name}` | One ACL policy with its rules. |
+| `PUT /api/acl/policies/{name}` | Create or replace an ACL policy. Body: `{"description": "...", "rules": "..."}`. Management token only. |
+| `DELETE /api/acl/policies/{name}` | Delete an ACL policy. Management token only. |
+| `GET /api/acl/tokens` | Every token. Management token only. |
+| `POST /api/acl/tokens` | Create a token. Body: `{"name": "...", "type": "client", "policies": ["..."], "expires_in": "720h"}`, where `type` defaults to `client` and an empty `expires_in` never expires. Answers `201` with the token and its secret, once. Management token only. |
+| `GET /api/acl/tokens/{accessor_id}` | One token. Management token only. |
+| `DELETE /api/acl/tokens/{accessor_id}` | Revoke a token. Management token only. |
+| `GET /api/acl/token/self` | The token of the request. |
+| `GET /api/acl/changes` | The latest changes to ACL policies and tokens. Management token only. |
 | `GET /api/openapi.json` | The [OpenAPI](https://spec.openapis.org/oas/v3.1.0) description of these endpoints. |
 
 ## Errors
 
 An error answers `{"error": "..."}` with the status the dashboard would show:
-`401` without a valid token, `404` for something that doesn't exist, `409`
-when the state moved since you read it, and `400` for a bad request. An
+`401` without a valid token, `403` for an action the token doesn't allow,
+`404` for something that doesn't exist, `409` when the state moved since you
+read it, and `400` for a bad request. An
 approval with an old spec hash, or for a paused job, is a `409`.

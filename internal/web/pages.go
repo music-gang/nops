@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/nomad/api"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/nomadx"
@@ -67,7 +68,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "list latest deployments", err)
 		return
 	}
-	all := append(append([]*store.Deployment{}, active...), past...)
+	all := readable(r, append(append([]*store.Deployment{}, active...), past...))
 	sort.Slice(all, func(i, j int) bool {
 		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
 			return all[i].CreatedAt.After(all[j].CreatedAt)
@@ -97,7 +98,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 			data.Days = append(data.Days, activityDay{Label: label})
 		}
 		day := &data.Days[len(data.Days)-1]
-		day.Rows = append(day.Rows, s.withRetry(s.card(d), d, latest[jobKey(d.Namespace, d.JobID)]))
+		day.Rows = append(day.Rows, s.withRetry(r, s.card(d), d, latest[jobKey(d.Namespace, d.JobID)]))
 	}
 	data.Filters = append(data.Filters, filterLink{Label: "All", Count: len(all), Active: filter == ""})
 	for _, f := range activityFilters {
@@ -204,7 +205,9 @@ type deploymentDetailData struct {
 	Steps                         []planStep // what Approve will do; only while it can be approved
 	Events                        []eventView
 	HookRuns                      []hookRunView
-	CanDecide                     bool   // state is pending_approval: show Approve/Reject
+	CanDecide                     bool   // state is pending_approval: show the review
+	MayDecide                     bool   // and the subject may approve: show Approve/Reject
+	MayPromote                    bool   // the subject may promote: show Promote
 	Notice                        string // set after a stale-approval conflict
 	OOB                           bool   // the status fragment: the side column swaps out of band
 }
@@ -275,8 +278,10 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		Diff:          diff,
 		Summary:       nomadx.Summarize(diff),
 		CanDecide:     d.State == store.StatePendingApproval,
+		MayDecide:     allows(r, d.Namespace, acl.Approve),
 		Notice:        notice,
 		PromotionWait: d.State == store.StateApplying && !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero(),
+		MayPromote:    allows(r, d.Namespace, acl.Promote),
 	}
 	data.NomadURL, data.NomadDeploymentsURL = s.nomadJobURL(d.Namespace, d.JobID), s.nomadDeploymentsURL(d.Namespace, d.JobID)
 	if d.State == store.StateApplying {
@@ -292,13 +297,19 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 	retryable := s.engine.Retryable(d, latest)
 	for _, o := range s.engine.Observations() {
 		if o.BlockedBy == d.ID {
-			data.Blocking = &blockingView{Reason: o.BlockedReason, RetryPath: s.retryPath(d.ID)}
+			data.Blocking = &blockingView{Reason: o.BlockedReason}
+			if allows(r, d.Namespace, acl.Retry) {
+				data.Blocking.RetryPath = s.retryPath(d.ID)
+			}
 		}
-		if retryable && data.Blocking == nil && o.Namespace == d.Namespace && o.JobID == d.JobID {
+		if retryable && data.Blocking == nil && o.Namespace == d.Namespace && o.JobID == d.JobID && allows(r, d.Namespace, acl.Retry) {
 			data.Retry = &retryView{Path: s.retryPath(d.ID), Rerun: !o.Drift}
 		}
 		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil && o.Hold.Kind == engine.HoldPaused {
-			data.Paused = &heldView{Reason: o.Hold.Reason, ResumePath: s.jobPath(o.Namespace, o.JobID) + "/resume"}
+			data.Paused = &heldView{Reason: o.Hold.Reason}
+			if allows(r, d.Namespace, acl.Pause) {
+				data.Paused.ResumePath = s.jobPath(o.Namespace, o.JobID) + "/resume"
+			}
 		}
 	}
 	if !d.RetriedAt.IsZero() {

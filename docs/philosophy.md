@@ -17,9 +17,10 @@ No change may break these rules. The tests that try to break them are in
    *Why:* time passes between detection and apply, especially while a
    deployment waits for approval. Nops never overwrites a manual change.
 
-3. **Never auto-apply under policy `approval`.** Only a person, logged in or
-   with their [API token](api.md), moves a deployment past
-   `pending_approval`, and the approval is valid only for the spec they saw.
+3. **Never auto-apply under policy `approval`.** Nops never moves a
+   deployment past `pending_approval` on its own: it takes an authenticated
+   request from a [token](acl.md#tokens) with `approve` on the job's
+   namespace, and the approval is valid only for the spec it saw.
    *Why:* that's the point of the policy.
 
 4. **Git is the source of truth for Nops's behaviour.** Policy and hooks come

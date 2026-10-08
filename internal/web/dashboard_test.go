@@ -237,7 +237,7 @@ func TestOverviewLivePolls(t *testing.T) {
 func TestOverviewFetchNowNeedsATrigger(t *testing.T) {
 	// A dashboard built with no trigger does not offer what it cannot do.
 	a := newTestAuth(t)
-	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{}, Log: slogDiscard()})
+	h, err := New(Options{Auth: a, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: noAccess{}, Log: slogDiscard()})
 	if err != nil {
 		t.Fatal(err)
 	}

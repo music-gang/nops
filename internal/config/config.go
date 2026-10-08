@@ -26,6 +26,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/music-gang/nops/internal/secret"
 )
 
 // Config holds every setting nops needs. Load fills and validates it.
@@ -83,6 +84,12 @@ type Config struct {
 	// like /healthz.
 	MetricsTokenFile string
 	MetricsToken     string
+
+	// ACL turns the access control on (docs/acl.md). The bootstrap token is
+	// its management token, read from a file at every start.
+	ACL                   bool
+	ACLBootstrapTokenFile string
+	ACLBootstrapToken     string
 
 	// Notification adapters: each one is on when its URL is set. URLs that
 	// carry a token and every token are read from files by Load.
@@ -233,6 +240,15 @@ var options = []option{
 			return
 		}},
 
+	{name: "acl", def: "false", boolean: true, usage: "turn on the access control: tokens and ACL policies decide what each request may do (needs -acl-bootstrap-token-file)",
+		set: func(c *Config, v string) (err error) { c.ACL, err = strconv.ParseBool(v); return }},
+	{name: "acl-bootstrap-token-file", usage: "file holding the bootstrap token, a management token made by \"nops secret generate\" (required with -acl)",
+		set: func(c *Config, v string) (err error) {
+			c.ACLBootstrapTokenFile = v
+			c.ACLBootstrapToken, err = secretFile(v)
+			return
+		}},
+
 	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyWebhookURLFile = v
@@ -378,6 +394,8 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
+	{envVar: "NOPS_ACL_BOOTSTRAP_TOKEN",
+		get: func(c *Config) string { return c.ACLBootstrapToken }, set: func(c *Config, v string) { c.ACLBootstrapToken = v }},
 	{envVar: "NOPS_METRICS_TOKEN",
 		get: func(c *Config) string { return c.MetricsToken }, set: func(c *Config, v string) { c.MetricsToken = v }},
 	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
@@ -477,6 +495,14 @@ func (c *Config) check() []error {
 		if oidcSet {
 			errs = append(errs, errors.New("the -oidc-* options are only used with -auth-mode=oidc"))
 		}
+	}
+	switch {
+	case c.ACL && c.ACLBootstrapToken == "":
+		errs = append(errs, errors.New("-acl needs a bootstrap token (-acl-bootstrap-token-file or NOPS_ACL_BOOTSTRAP_TOKEN), made by \"nops secret generate\""))
+	case !c.ACL && c.ACLBootstrapToken != "":
+		errs = append(errs, errors.New("a bootstrap token is set without -acl"))
+	case c.ACL && !secret.Valid(c.ACLBootstrapToken):
+		errs = append(errs, errors.New("the bootstrap token is not a secret made by \"nops secret generate\""))
 	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))

@@ -11,15 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/store"
 )
 
-// The JSON API under /api/ (docs/api.md). A bearer token stands for its owner:
-// requireToken puts them in the request's context where a session would, so
+// The JSON API under /api/ (docs/api.md). A bearer token acts as itself:
+// requireToken puts it in the request's context where a session would, so
 // every action below calls the engine as the dashboard does, with the same
-// rules and the same actor. There is no cookie here and so nothing for another
+// rules, and the token's name as the actor. There is no cookie here and so nothing for another
 // site to ride on, which is why this does not use the cross-origin check.
 
 // openAPIFile is the OpenAPI description of the API.
@@ -31,43 +32,60 @@ var openAPIFile []byte
 // reason of 500 bytes.
 const maxAPIBody = 64 << 10
 
-// apiEndpoint is a route of the API, as the mux takes it ("GET /api/jobs").
-// openapi.json describes each one, and a test keeps the two equal.
+// apiEndpoint is a route of the API, as the mux takes it ("GET /api/jobs"),
+// with what its token needs. openapi.json describes each one, and a test keeps
+// the two equal.
 type apiEndpoint struct {
 	pattern string
+	check   check
 	handler http.HandlerFunc
 }
 
 func (s *server) apiEndpoints() []apiEndpoint {
 	endpoints := []apiEndpoint{
-		{"GET /api/openapi.json", s.apiOpenAPI},
-		{"GET /api/jobs", s.apiListJobs},
-		{"GET /api/jobs/{namespace}/{job}", s.apiGetJob},
-		{"GET /api/deployments", s.apiListDeployments},
-		{"GET /api/deployments/{id}", s.apiGetDeployment},
-		{"POST /api/deployments/{id}/approve", s.apiApprove},
-		{"POST /api/deployments/{id}/reject", s.apiReject},
-		{"POST /api/deployments/{id}/promote", s.apiPromote},
-		{"POST /api/deployments/{id}/retry", s.apiRetry},
-		{"POST /api/jobs/{namespace}/{job}/pause", s.apiPause},
-		{"POST /api/jobs/{namespace}/{job}/resume", s.apiResume},
-		{"POST /api/jobs/{namespace}/{job}/deploy-now", s.apiDeployNow},
+		{"GET /api/openapi.json", anyToken(), s.apiOpenAPI},
+		{"GET /api/jobs", anyToken(), s.apiListJobs},
+		{"GET /api/jobs/{namespace}/{job}", inNamespace(acl.Read), s.apiGetJob},
+		{"GET /api/deployments", anyToken(), s.apiListDeployments},
+		{"GET /api/deployments/{id}", onDeployment(acl.Read), s.apiGetDeployment},
+		{"POST /api/deployments/{id}/approve", onDeployment(acl.Approve), s.apiApprove},
+		{"POST /api/deployments/{id}/reject", onDeployment(acl.Approve), s.apiReject},
+		{"POST /api/deployments/{id}/promote", onDeployment(acl.Promote), s.apiPromote},
+		{"POST /api/deployments/{id}/retry", onDeployment(acl.Retry), s.apiRetry},
+		{"POST /api/jobs/{namespace}/{job}/pause", inNamespace(acl.Pause), s.apiPause},
+		{"POST /api/jobs/{namespace}/{job}/resume", inNamespace(acl.Pause), s.apiResume},
+		{"POST /api/jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.apiDeployNow},
+		{"GET /api/acl/policies", anyToken(), s.apiListPolicies},
+		{"GET /api/acl/policies/{name}", anyToken(), s.apiGetPolicy},
+		{"PUT /api/acl/policies/{name}", management(), s.apiPutPolicy},
+		{"DELETE /api/acl/policies/{name}", management(), s.apiDeletePolicy},
+		{"GET /api/acl/tokens", management(), s.apiListTokens},
+		{"POST /api/acl/tokens", management(), s.apiCreateToken},
+		{"GET /api/acl/tokens/{accessor_id}", management(), s.apiGetToken},
+		{"DELETE /api/acl/tokens/{accessor_id}", management(), s.apiRevokeToken},
+		{"GET /api/acl/token/self", anyToken(), s.apiSelfToken},
+		{"GET /api/acl/changes", management(), s.apiChanges},
 	}
 	if s.trigger != nil {
-		endpoints = append(endpoints, apiEndpoint{"POST /api/fetch", s.apiFetch})
+		endpoints = append(endpoints, apiEndpoint{"POST /api/fetch", globally(acl.Fetch), s.apiFetch})
 	}
 	return endpoints
 }
 
 func (s *server) apiRoutes(mux *http.ServeMux) {
 	for _, e := range s.apiEndpoints() {
-		mux.Handle(e.pattern, s.requireToken(e.handler))
+		mux.Handle(e.pattern, s.requireToken(s.guard(e.check, apiForbidden, e.handler)))
 	}
 	// Anything else under /api/ is a JSON 404, behind the token like the rest:
 	// whoever has none learns nothing about which paths exist.
 	mux.Handle("/api/", s.requireToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "no such endpoint")
 	})))
+}
+
+// apiForbidden answers the 403 of a token that may not do what it asked.
+func apiForbidden(w http.ResponseWriter, r *http.Request) {
+	apiError(w, http.StatusForbidden, "this token does not allow that")
 }
 
 // apiOpenAPI serves the OpenAPI description of the API: a file with no secret,
@@ -78,24 +96,25 @@ func (s *server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireToken lets a request through only with a valid bearer token, and puts
-// the token's owner in its context (UserFrom).
+// who it stands for in its context: the subject, and the actor (UserFrom).
 func (s *server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scheme, secret, _ := strings.Cut(r.Header.Get("Authorization"), " ")
 		if !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(secret) == "" {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			apiError(w, http.StatusUnauthorized, "an API token is required: send it as \"Authorization: Bearer <token>\"")
+			apiError(w, http.StatusUnauthorized, "a token is required: send it as \"Authorization: Bearer <token>\"")
 			return
 		}
-		owner, err := s.tokens.TokenOwner(r.Context(), hashToken(strings.TrimSpace(secret)))
+		sub, err := s.tokenSubject(r.Context(), strings.TrimSpace(secret))
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			apiError(w, http.StatusUnauthorized, "the API token is not valid: it is unknown, expired, or revoked")
+			apiError(w, http.StatusUnauthorized, "the token is not valid: it is unknown, expired, or revoked")
 		case err != nil:
-			s.apiServerError(w, r, "read the API token", err)
+			s.apiServerError(w, r, "read the token", err)
 		default:
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, owner)))
+			ctx := context.WithValue(r.Context(), subjectKey{}, sub)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userKey{}, sub.actor)))
 		}
 	})
 }
@@ -247,10 +266,10 @@ func (s *server) apiListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobs := []apiJob{}
-	for _, o := range s.engine.Observations() {
+	for _, o := range s.observations(r) {
 		jobs = append(jobs, jobOf(o, latest[jobKey(o.Namespace, o.JobID)]))
 	}
-	for _, o := range s.engine.Orphans() {
+	for _, o := range s.orphans(r) {
 		jobs = append(jobs, orphanJob(o, latest[jobKey(o.Namespace, o.JobID)]))
 	}
 	sort.SliceStable(jobs, func(i, j int) bool {
@@ -326,7 +345,7 @@ func (s *server) apiListDeployments(w http.ResponseWriter, r *http.Request) {
 		s.apiServerError(w, r, "list active deployments", err)
 		return
 	}
-	all := append(append([]*store.Deployment{}, active...), list...)
+	all := readable(r, append(append([]*store.Deployment{}, active...), list...))
 	sort.Slice(all, func(i, j int) bool {
 		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
 			return all[i].CreatedAt.After(all[j].CreatedAt)
@@ -337,11 +356,13 @@ func (s *server) apiListDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiEvent struct {
-	Time    time.Time `json:"time"`
-	From    string    `json:"from"`
-	To      string    `json:"to"`
-	Actor   string    `json:"actor"`
-	Message string    `json:"message,omitempty"`
+	Time  time.Time `json:"time"`
+	From  string    `json:"from"`
+	To    string    `json:"to"`
+	Actor string    `json:"actor"`
+	// AccessorID is the token the action was made with; absent for Nops itself.
+	AccessorID string `json:"accessor_id,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 type apiHookRun struct {
@@ -387,7 +408,7 @@ func (s *server) apiGetDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range events {
-		detail.Events = append(detail.Events, apiEvent{Time: e.Time, From: string(e.From), To: string(e.To), Actor: e.Actor, Message: e.Message})
+		detail.Events = append(detail.Events, apiEvent{Time: e.Time, From: string(e.From), To: string(e.To), Actor: e.Actor, AccessorID: e.AccessorID, Message: e.Message})
 	}
 	runs, err := s.store.ListHookRuns(r.Context(), id)
 	if err != nil {

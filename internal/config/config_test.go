@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/cli"
+	"github.com/music-gang/nops/internal/secret"
 )
 
 const repo = "https://git.example.com/ops/jobs.git"
@@ -142,6 +143,8 @@ func TestLoadEveryOption(t *testing.T) {
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
 	metricsTok := writeFile(t, "metrics-token", "metrics-secret\n")
+	bootstrap := secret.New()
+	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
 
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
@@ -168,6 +171,8 @@ func TestLoadEveryOption(t *testing.T) {
 		"listen-addr":               "127.0.0.1:9000",
 		"webhook-secret-file":       webhookSecret,
 		"metrics-token-file":        metricsTok,
+		"acl":                       "true",
+		"acl-bootstrap-token-file":  bootstrapTok,
 		"notify-webhook-url-file":   webhookURL,
 		"notify-webhook-token-file": webhookTok,
 		"notify-discord-url-file":   discordURL,
@@ -208,6 +213,9 @@ func TestLoadEveryOption(t *testing.T) {
 		WebhookSecret:          "webhook-shared-secret",
 		MetricsTokenFile:       metricsTok,
 		MetricsToken:           "metrics-secret",
+		ACL:                    true,
+		ACLBootstrapTokenFile:  bootstrapTok,
+		ACLBootstrapToken:      bootstrap,
 		NotifyWebhookURLFile:   webhookURL,
 		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
 		NotifyWebhookTokenFile: webhookTok,
@@ -580,6 +588,7 @@ func checkErr(t *testing.T, err error, prefix, want string) {
 func TestLoadCrossChecks(t *testing.T) {
 	tok := writeFile(t, "token", "secret")
 	cert := writeFile(t, "cert.pem", "cert")
+	boot := writeFile(t, "bootstrap", secret.New())
 	tests := []struct {
 		name string
 		args []string
@@ -593,6 +602,9 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"webhook token without url", []string{"-git-url", repo, "-notify-webhook-token-file", tok}, "a webhook token is set without a webhook URL (-notify-webhook-url-file)"},
 		{"ntfy token without url", []string{"-git-url", repo, "-notify-ntfy-token-file", tok}, "a ntfy token is set without a ntfy URL (-notify-ntfy-url)"},
 		{"gotify token without url", []string{"-git-url", repo, "-notify-gotify-token-file", tok}, "a gotify token is set without a gotify URL (-notify-gotify-url)"},
+		{"acl without a bootstrap token", []string{"-git-url", repo, "-acl"}, "-acl needs a bootstrap token"},
+		{"a bootstrap token without acl", []string{"-git-url", repo, "-acl-bootstrap-token-file", boot}, "a bootstrap token is set without -acl"},
+		{"a bootstrap token that is not generated", []string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", tok}, "not a secret made by"},
 		{"gotify url without token", []string{"-git-url", repo, "-notify-gotify-url", "https://gotify.example.com"}, "a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"},
 	}
 	for _, tt := range tests {
@@ -608,6 +620,11 @@ func TestLoadCrossChecks(t *testing.T) {
 	secretURL := writeFile(t, "discord-url", "discord.com/api/webhooks/1/do-not-print")
 	if _, err := Load([]string{"-git-url", repo, "-notify-discord-url-file", secretURL}, envOf(nil), io.Discard); err == nil || strings.Contains(err.Error(), "do-not-print") {
 		t.Errorf("err = %v: missing, or it prints the URL", err)
+	}
+
+	// A bootstrap token made by nops secret generate turns the ACL on.
+	if c, err := Load([]string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", boot}, envOf(nil), io.Discard); err != nil || !c.ACL {
+		t.Errorf("acl with a bootstrap token: ACL = %v, %v", c != nil && c.ACL, err)
 	}
 
 	// Without a token, an ssh URL is accepted: a public repo needs no auth.
@@ -921,6 +938,8 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
+		{"NOPS_ACL_BOOTSTRAP_TOKEN", secret.New(), func(c *Config) string { return c.ACLBootstrapToken },
+			map[string]string{"NOPS_ACL": "true"}},
 		{"NOPS_METRICS_TOKEN", "plain-metrics-token", func(c *Config) string { return c.MetricsToken }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
