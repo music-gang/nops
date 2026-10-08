@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"image/png"
 	"io/fs"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -81,6 +82,29 @@ func TestPagesLinkVersionedAssets(t *testing.T) {
 	if !strings.Contains(login, `href="`+css+`"`) || strings.Contains(login, `"/static/app.css"`) {
 		t.Errorf("the login page does not link the versioned stylesheet %s", css)
 	}
+}
+
+// htmx swaps only 2xx answers, so the page a boosted form or link gets back
+// for an error shows only if errors.js lets it: every page that is boosted
+// loads it, the error pages included.
+func TestPagesLoadTheErrorPagesScript(t *testing.T) {
+	js, err := asset("errors.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := sampleDeployment()
+	d.State = store.StateCompleted
+	ts := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "")
+	for _, p := range []string{"/", "/jobs", "/history", "/deployments/d1"} {
+		mustContain(t, ts.get(p), `src="`+js+`"`)
+	}
+
+	rec := ts.do("GET", "/jobs/default/nope", nil, ts.session("alice"))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("a missing page: status %d, want 404", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `src="`+js+`"`)
 }
 
 // Every page offers the favicon (16 and 32 px) and the touch icon, the login
