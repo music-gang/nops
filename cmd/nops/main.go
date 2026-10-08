@@ -74,6 +74,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.NomadTLSSkipVerify {
 		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
 	}
+	if !cfg.ACL {
+		log.Warn("the ACL is off: everyone who logs in, and every token, has full control (-acl turns it on)")
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -128,7 +131,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Tokens: st, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: watcher, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
 		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})
@@ -196,6 +199,7 @@ func startupAttrs(cfg *config.Config) []any {
 		"git_branch", cfg.GitBranch,
 		"git_path", cfg.GitPath,
 		"auth_mode", cfg.AuthMode,
+		"acl", cfg.ACL,
 		"db_path", cfg.DBPath,
 		"base_path", cfg.BasePath,
 		"sync_window_time_zone", cfg.SyncWindowLocation.String(),

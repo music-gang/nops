@@ -1,13 +1,13 @@
 # Command-line client
 
 Inspect and act on Nops from a terminal. The client is the same `nops` binary
-and calls the [API](api.md): it does what the token's owner can do on the
-dashboard, with the same rules, and Nops records the owner as the
+and calls the [API](api.md): it does what the token allows, with the
+dashboard's rules, and Nops records the token as the
 [actor](glossary.md#deployment-lifecycle). `nops serve` runs the server.
 
 ## Configuration
 
-Create a token on the dashboard's *Tokens* page, as for the [API](api.md#tokens).
+Get a token as for the [API](api.md#tokens).
 
 | Flag | Variable | Meaning |
 |---|---|---|
@@ -36,6 +36,15 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops resume <job>` | Resume a job. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
+| `nops acl policy list` | List the [ACL policies](acl.md#acl-policies). |
+| `nops acl policy info <name>` | Show an ACL policy with its rules. |
+| `nops acl policy apply <name> <file>` | Create or replace an ACL policy from a file of rules. |
+| `nops acl policy delete <name>` | Delete an ACL policy. |
+| `nops acl token list` | List the tokens. |
+| `nops acl token info <accessor-id>` | Show a token. |
+| `nops acl token create` | Create a token and print its secret once. `-name`, `-type` (`client` by default, or `management`), `-policy` (repeat it), and `-expires` set it. |
+| `nops acl token delete <accessor-id>` | Revoke a token. |
+| `nops acl token self` | Show the token the client uses. |
 | `nops secret generate` | Print a new random secret for a file Nops reads, such as the [metrics token](metrics.md#scraping). It runs offline: it needs no `-addr` and no token. |
 
 `approve` and `deploy-now` send the spec hash of the diff they showed, so a

@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/music-gang/nops/internal/version"
@@ -46,20 +47,24 @@ var errAborted = errors.New("aborted: nothing was changed")
 type call struct {
 	ctx         context.Context
 	client      *client
-	arg         string // the deployment ID or the job ID the command takes
+	arg         string // the first argument: a deployment ID, a job ID, a name
+	args        []string
 	namespace   string
 	asJSON, yes bool
 	reason      string
+	flags       aclFlags
 	in          *bufio.Reader
 	out, errOut io.Writer
 }
 
 type command struct {
-	name string // one word, or two ("secret generate")
-	arg  string // the placeholder of the argument it takes: "", "<id>" or "<job>"
+	name string // one word, or up to three ("secret generate", "acl token create")
+	arg  string // the placeholders of the arguments it takes, such as "", "<id>", "<job>" or "<name> <file>"
 	help string
 	yes  bool // takes -yes
 	why  bool // takes -reason
+	// flags adds the flags that only this command takes.
+	flags func(fs *flag.FlagSet, k *call)
 	// offline runs without the API: no -addr, no token and no -json.
 	offline bool
 	run     func(*call) error
@@ -89,9 +94,11 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 	}
 	cmd, rest := find(args)
 	if cmd == nil {
-		if subs := subcommands(args[0]); len(subs) > 0 {
-			fmt.Fprintf(stderr, "nops: %s takes a subcommand: %s\n", args[0], strings.Join(subs, ", "))
-			return exitUsage
+		for n := min(len(args), 2); n > 0; n-- {
+			if subs := subcommands(args[:n]); len(subs) > 0 {
+				fmt.Fprintf(stderr, "nops: %s takes a subcommand: %s\n", strings.Join(args[:n], " "), strings.Join(subs, ", "))
+				return exitUsage
+			}
 		}
 		fmt.Fprintf(stderr, "nops: unknown command %q\n\n", args[0])
 		usage(stderr)
@@ -131,6 +138,9 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	if c.why {
 		fs.StringVar(&k.reason, "reason", "", "why, up to 500 bytes")
 	}
+	if c.flags != nil {
+		c.flags(fs, k)
+	}
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: nops %s [flags]%s\n\n%s\n\n", c.name, strings.TrimRight(" "+c.arg, " "), c.help)
 		fs.PrintDefaults()
@@ -141,10 +151,7 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 		}
 		return usageError{"see nops " + c.name + " -h"}
 	}
-	want := 0
-	if c.arg != "" {
-		want = 1
-	}
+	want := len(strings.Fields(c.arg))
 	if fs.NArg() != want {
 		hint := ""
 		for _, a := range fs.Args() {
@@ -155,10 +162,14 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 		if want == 0 {
 			return usageErrorf("takes no argument%s", hint)
 		}
-		return usageErrorf("takes one argument, %s%s", c.arg, hint)
+		if want == 1 {
+			return usageErrorf("takes one argument, %s%s", c.arg, hint)
+		}
+		return usageErrorf("takes %d arguments, %s%s", want, c.arg, hint)
 	}
-	if want == 1 {
-		k.arg = fs.Arg(0)
+	k.args = fs.Args()
+	if want > 0 {
+		k.arg = k.args[0]
 	}
 	k.namespace = first(s.namespace, getenv("NOPS_NAMESPACE"), "default")
 
@@ -172,8 +183,8 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	return c.run(k)
 }
 
-// find is the command args start with, matched on its one or two words, and
-// the arguments after them.
+// find is the command args start with, matched on its words, and the arguments
+// after them.
 func find(args []string) (*command, []string) {
 	for i := range commands {
 		words := strings.Fields(commands[i].name)
@@ -184,13 +195,15 @@ func find(args []string) (*command, []string) {
 	return nil, nil
 }
 
-// subcommands are the second words of the commands whose first word is group,
-// such as "generate" for "secret", or none if group is not one.
-func subcommands(group string) []string {
+// subcommands are the words that follow group in the names of the commands,
+// such as "generate" after "secret" or "policy" and "token" after "acl", or
+// none if group is not the start of a longer name.
+func subcommands(group []string) []string {
 	var subs []string
 	for _, c := range commands {
-		if words := strings.Fields(c.name); len(words) == 2 && words[0] == group {
-			subs = append(subs, words[1])
+		words := strings.Fields(c.name)
+		if len(words) > len(group) && slices.Equal(words[:len(group)], group) && !slices.Contains(subs, words[len(group)]) {
+			subs = append(subs, words[len(group)])
 		}
 	}
 	return subs
@@ -206,7 +219,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "\"nops <command> -h\" lists their flags.")
 	fmt.Fprintln(w)
 	for _, c := range commands {
-		fmt.Fprintf(w, "  %-22s %s\n", strings.TrimRight(c.name+" "+c.arg, " "), c.help)
+		fmt.Fprintf(w, "  %-34s %s\n", strings.TrimRight(c.name+" "+c.arg, " "), c.help)
 	}
 }
 

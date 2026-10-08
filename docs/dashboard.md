@@ -21,8 +21,9 @@ retry, pause, and resume deployments. Every page needs a
   *Approve* and *Reject* buttons. *Promote* appears when Nomad waits for you
   to promote canaries.
 - **Activity** (`/history`): every deployment, newest first, grouped by day.
-- **Tokens** (`/tokens`): every [API token](api.md#tokens). Create yours with
-  an expiry, copy it once, and revoke any.
+- **Administration** (`/admin`): your [token](api.md#tokens) and, with a
+  management token, every token and [ACL policy](acl.md#acl-policies) and the
+  latest changes to them. Create and revoke tokens and edit ACL policies here.
 
 Pages refresh themselves. Approving checks the spec
 hash you reviewed: if the diff changed since you loaded the page, Nops refuses

@@ -152,10 +152,12 @@ type fakeEngine struct {
 	observations   []engine.Observation
 	orphans        []engine.Orphan
 	status         engine.Status
+	accessor       string // the accessor ID the last Approve ran with
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
 	f.approveCalls = append(f.approveCalls, approveCall{id, specHash, actor})
+	f.accessor = store.AccessorFrom(ctx)
 	return f.approveErr
 }
 
@@ -260,19 +262,35 @@ type testServer struct {
 	git    *fakeGit
 	clock  *time.Time // what the server's clock reads: a test moves it
 	tokens *store.Store
+	aclOn  bool // the server runs with the ACL on
 }
 
-// noTokens is the Tokens of a test that never calls the API: it knows none.
-type noTokens struct{}
+// noAccess is the AccessStore of a test that never calls the API: it knows no
+// ACL policy and no token.
+type noAccess struct{}
 
-func (noTokens) CreateToken(context.Context, string, string, string, time.Time) (store.Token, error) {
-	return store.Token{}, errors.New("noTokens: not expected")
+func (noAccess) PutACLPolicy(context.Context, store.ACLPolicy, store.Audit) error {
+	return errors.New("noAccess: not expected")
 }
-func (noTokens) Tokens(context.Context) ([]store.Token, error) { return nil, nil }
-func (noTokens) RevokeToken(context.Context, string) error     { return store.ErrNotFound }
-func (noTokens) TokenOwner(context.Context, string) (string, error) {
-	return "", store.ErrNotFound
+func (noAccess) ACLPolicy(context.Context, string) (store.ACLPolicy, error) {
+	return store.ACLPolicy{}, store.ErrNotFound
 }
+func (noAccess) ACLPolicies(context.Context) ([]store.ACLPolicy, error) { return nil, nil }
+func (noAccess) DeleteACLPolicy(context.Context, string, store.Audit) error {
+	return store.ErrNotFound
+}
+func (noAccess) CreateACLToken(context.Context, store.ACLToken, string, store.Audit) (store.ACLToken, error) {
+	return store.ACLToken{}, errors.New("noAccess: not expected")
+}
+func (noAccess) ACLTokens(context.Context) ([]store.ACLToken, error) { return nil, nil }
+func (noAccess) ACLToken(context.Context, string) (store.ACLToken, error) {
+	return store.ACLToken{}, store.ErrNotFound
+}
+func (noAccess) ACLTokenBySecret(context.Context, string, bool) (store.ACLToken, error) {
+	return store.ACLToken{}, store.ErrNotFound
+}
+func (noAccess) RevokeACLToken(context.Context, string, store.Audit) error  { return store.ErrNotFound }
+func (noAccess) ACLChanges(context.Context, int) ([]store.ACLChange, error) { return nil, nil }
 
 func newTestServer(t *testing.T, st Store, en *fakeEngine, secret string) *testServer {
 	t.Helper()
@@ -294,7 +312,7 @@ func newTestServerOptions(t *testing.T, st Store, en *fakeEngine, secret string,
 
 // newTestServerLogin is newTestServerOptions with the login the server runs
 // (nil: ts.auth, OpenID Connect allowing alice).
-func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string, login Authenticator) *testServer {
+func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, nomad Nomad, nomadUI string, login Authenticator, mods ...func(*Options)) *testServer {
 	t.Helper()
 	now := testNow
 	ts := &testServer{t: t, auth: newTestAuth(t), logs: &syncBuffer{}, engine: en, git: &fakeGit{}, clock: &now}
@@ -310,14 +328,19 @@ func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, n
 	if login == nil {
 		login = ts.auth
 	}
-	h, err := New(Options{
-		Auth: login, Store: st, Engine: en, Git: ts.git, Tokens: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
+	opts := Options{
+		Auth: login, Store: st, Engine: en, Git: ts.git, Access: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
 		Trigger:   func() { ts.trig++ },
 		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
 		Now:       func() time.Time { return *ts.clock },
 		Version:   "v0.0.0-test",
 		Log:       log,
-	})
+	}
+	for _, mod := range mods {
+		mod(&opts)
+	}
+	ts.aclOn = opts.ACL
+	h, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +427,7 @@ func TestPagesRequireLogin(t *testing.T) {
 	en := &fakeEngine{}
 	ts := newTestServer(t, st, en, "")
 
-	getPaths := []string{"/", "/jobs", "/jobs/default/web", "/history", "/drift", "/deployments/d1", "/deployments/d1/status"}
+	getPaths := []string{"/", "/jobs", "/jobs/default/web", "/history", "/drift", "/deployments/d1", "/deployments/d1/status", "/admin", "/admin/policies/readers"}
 	for _, p := range getPaths {
 		rec := ts.do("GET", p, nil)
 		if rec.Code != http.StatusFound {
@@ -415,7 +438,7 @@ func TestPagesRequireLogin(t *testing.T) {
 		}
 	}
 
-	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject", "/deployments/d1/retry", "/fetch"}
+	postPaths := []string{"/deployments/d1/approve", "/deployments/d1/reject", "/deployments/d1/retry", "/fetch", "/admin/policies", "/admin/tokens", "/admin/tokens/x/revoke", "/admin/policies/x/delete"}
 	for _, p := range postPaths {
 		rec := ts.do("POST", p, nil)
 		if rec.Code != http.StatusUnauthorized {
@@ -455,7 +478,7 @@ func TestVersionFooter(t *testing.T) {
 		}
 	}
 
-	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Tokens: noTokens{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h, err := New(Options{Auth: ts.auth, Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{}, Access: noAccess{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}

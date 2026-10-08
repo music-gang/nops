@@ -76,7 +76,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 	}
 	summary := nomadx.Summarize(diff)
 	dd := deploymentDetailData{
-		baseData: baseData{Actor: "alice"}, Deployment: dc, Diff: diff, Summary: summary, CanDecide: true, Notice: "review again",
+		baseData: baseData{Actor: "alice"}, Deployment: dc, Diff: diff, Summary: summary, CanDecide: true, MayDecide: true, MayPromote: true, Notice: "review again",
 		Steps: []planStep{{Kind: "pre", Job: "h", Timeout: "5m"}, {Kind: "register", Text: "Update"}, {Kind: "health"}, {Kind: "post", Job: "p", Timeout: "1m"}},
 		Events: []eventView{
 			{Time: tv, From: store.StateDetected, To: store.StatePendingApproval, Actor: "nops", Msg: "drift"},
@@ -166,6 +166,26 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		"deployment (no nomad dep)":      ddNone,
 		"status_fragment":                oob,
 		"error":                          errorData{baseData: baseData{}, Status: 404, Title: "Not found", Message: "gone"},
+		"admin": adminData{
+			baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true,
+			Self: selfView{Name: "ci", Kind: "client", AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "bootstrap"},
+			Tokens: []tokenRow{
+				{selfView: selfView{Name: "ci", Kind: "client", AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "bootstrap"}},
+				{selfView: selfView{Name: "old", Kind: "management", AccessorID: "01DEF", Created: tv, Expires: tv, Creator: "alice"}, Expired: true},
+				{selfView: selfView{Name: "forever", Kind: "management", AccessorID: "01GHI", Created: tv, Creator: "—"}},
+			},
+			Policies: []policyRow{{Name: "readers", Description: "see all", Modified: tv}},
+			Changes:  []changeRow{{When: tv, Actor: "alice", AccessorID: "01ABC", Action: "create", Kind: "token", Object: "01DEF"}, {When: tv, Actor: "bootstrap", Action: "update", Kind: "acl-policy", Object: "readers"}},
+			Expiry:   expiryChoices, Default: defaultExpiry, Created: &createdToken{Name: "ci", Secret: "nops_x"},
+		},
+		"admin (acl off, a login)": adminData{
+			baseData: baseData{Actor: "alice", Nav: "admin"}, Self: selfView{Name: "alice", Kind: "login"}, Expiry: expiryChoices, Default: defaultExpiry,
+		},
+		"admin (the bootstrap token)": adminData{
+			baseData: baseData{Actor: "bootstrap", Nav: "admin"}, ACLOn: true, Self: selfView{Name: "bootstrap", Kind: "management", AccessorID: "bootstrap", Creator: "the configuration"},
+		},
+		"admin_policy":         policyPageData{baseData: baseData{Actor: "alice", Nav: "admin"}, Form: policyForm{Name: "readers", Description: "d", Rules: "namespace \"*\" {}", Existing: true}},
+		"admin_policy (error)": policyPageData{baseData: baseData{Actor: "alice", Nav: "admin"}, Form: policyForm{Name: "x", Rules: "{{"}, Error: "line 1: bad"},
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

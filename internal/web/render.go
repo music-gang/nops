@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -207,9 +208,10 @@ func (s *server) deploymentPath(id string) string {
 func (s *server) retryPath(id string) string { return s.deploymentPath(id) + "/retry" }
 
 // withRetry puts the "Retry" button on the card of d if the engine would take
-// it, d being the latest deployment of its job when it is latest.
-func (s *server) withRetry(c deploymentCard, d, latest *store.Deployment) deploymentCard {
-	if s.engine.Retryable(d, latest) {
+// it and the subject may retry in its namespace, d being the latest deployment
+// of its job when it is latest.
+func (s *server) withRetry(r *http.Request, c deploymentCard, d, latest *store.Deployment) deploymentCard {
+	if allows(r, d.Namespace, acl.Retry) && s.engine.Retryable(d, latest) {
 		c.RetryPath = s.retryPath(d.ID)
 	}
 	return c

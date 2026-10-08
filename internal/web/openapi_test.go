@@ -170,6 +170,12 @@ func TestOpenAPISchemasMatchTheAnswers(t *testing.T) {
 		"DeploymentDetail": reflect.TypeOf(apiDeploymentDetail{}),
 		"SpecHash":         reflect.TypeOf(specBody{}),
 		"Pause":            reflect.TypeOf(pauseBody{}),
+		"ACLPolicy":        reflect.TypeOf(apiACLPolicy{}),
+		"ACLPolicyBody":    reflect.TypeOf(policyBody{}),
+		"ACLToken":         reflect.TypeOf(apiACLToken{}),
+		"NewACLToken":      reflect.TypeOf(apiNewACLToken{}),
+		"ACLTokenBody":     reflect.TypeOf(tokenBody{}),
+		"Change":           reflect.TypeOf(apiChange{}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			schema, ok := spec.Schemas[name]
@@ -224,7 +230,7 @@ func TestAPIDocsTableMatchesOpenAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := regexp.MustCompile("(?m)^\\| `((?:GET|POST) /api/[^`]*)` \\|")
+	row := regexp.MustCompile("(?m)^\\| `((?:GET|POST|PUT|DELETE) /api/[^`]*)` \\|")
 	var rows []string
 	for _, m := range row.FindAllSubmatch(page, -1) {
 		rows = append(rows, string(m[1]))

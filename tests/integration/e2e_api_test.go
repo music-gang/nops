@@ -38,25 +38,28 @@ func apiCall(t *testing.T, base, method, path, token, body string) (int, string)
 	return resp.StatusCode, string(b)
 }
 
-// apiToken makes an API token on the dashboard, as its logged-in user.
+// e2eToken is the name of the token apiToken makes.
+const e2eToken = "e2e"
+
+// apiToken makes a token on the Administration page, as its logged-in user: with
+// the ACL off, a login can do everything, and so can the token.
 func (e *e2eEnv) apiToken(t *testing.T) string {
 	t.Helper()
-	status, page := e.dash.post(t, "/tokens", url.Values{"name": {"e2e"}, "expires": {"7"}})
+	status, page := e.dash.post(t, "/admin/tokens", url.Values{"name": {e2eToken}, "expires": {"7"}})
 	if status != http.StatusOK {
 		t.Fatalf("create a token: status %d, want 200", status)
 	}
 	token := apiSecret.FindString(page)
 	if token == "" {
-		t.Fatalf("the Tokens page shows no token:\n%s", page)
+		t.Fatalf("the Administration page shows no token:\n%s", page)
 	}
 	return token
 }
 
-// TestE2EAPITokenApprovesAsItsOwner: a token made on the dashboard moves a
+// TestE2EAPITokenApprovesAsItself: a token made on the dashboard moves a
 // deployment past pending_approval without a session, under the same rule: the
-// spec hash the caller saw. Nops records the token's owner as the one who
-// decided.
-func TestE2EAPITokenApprovesAsItsOwner(t *testing.T) {
+// spec hash the caller saw. Nops records the token as the one who decided.
+func TestE2EAPITokenApprovesAsItself(t *testing.T) {
 	e := newE2E(t)
 	jobID := uniqueID(t, e.raw, "api")
 	e.repo.commit(t, "job "+jobID, map[string]string{file(jobID): e2eJob{id: jobID, policy: "approval", version: "1"}.hcl()})
@@ -81,8 +84,8 @@ func TestE2EAPITokenApprovesAsItsOwner(t *testing.T) {
 		t.Fatalf("approve: status %d, body %s, want 204", status, body)
 	}
 	done := e.waitState(d.ID, store.StateCompleted)
-	if done.DecidedBy != e2eUser {
-		t.Errorf("decided_by = %q, want the token's owner %q", done.DecidedBy, e2eUser)
+	if done.DecidedBy != e2eToken {
+		t.Errorf("decided_by = %q, want the token %q", done.DecidedBy, e2eToken)
 	}
 	if got := e.liveVersion(jobID); got != "1" {
 		t.Errorf("live version = %q after the approval, want 1", got)
@@ -91,7 +94,7 @@ func TestE2EAPITokenApprovesAsItsOwner(t *testing.T) {
 
 // TestE2ECLIApprovesWhatItShowed: the built binary, with a token and the URL in
 // its environment, shows a deployment and approves it. A deployment it has not
-// shown is not approved without the answer, and Nops records the token's owner.
+// shown is not approved without the answer, and Nops records the token.
 func TestE2ECLIApprovesWhatItShowed(t *testing.T) {
 	e := newE2E(t)
 	jobID := uniqueID(t, e.raw, "cli")
@@ -128,7 +131,7 @@ func TestE2ECLIApprovesWhatItShowed(t *testing.T) {
 		t.Fatalf("nops approve: %v\n%s", err, errOut)
 	}
 	done := e.waitState(d.ID, store.StateCompleted)
-	if done.DecidedBy != e2eUser {
-		t.Errorf("decided_by = %q, want the token's owner %q", done.DecidedBy, e2eUser)
+	if done.DecidedBy != e2eToken {
+		t.Errorf("decided_by = %q, want the token %q", done.DecidedBy, e2eToken)
 	}
 }
