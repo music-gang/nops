@@ -4,7 +4,8 @@ Nops is a semi-automatic GitOps controller for HashiCorp Nomad (Go, module
 `github.com/music-gang/nops`). It reads HCL jobs from a git repo and applies
 them according to a per-job policy (`auto` / `approval` / `none`), with state in
 SQLite, an approval dashboard and pre/post deployment hooks. Self-hosted
-cluster, personal use: **no overengineering**.
+cluster, personal use: **grow with the need**
+([`docs/philosophy.md`](docs/philosophy.md)).
 
 This file holds **only what an agent needs on top of the docs**. How Nops
 works is in [`docs/`](docs/README.md); how anyone contributes (the flow of a
