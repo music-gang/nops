@@ -39,7 +39,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops fetch` | Ask for a git poll now. |
 | `nops acl policy list` | List the [ACL policies](acl.md#acl-policies). |
 | `nops acl policy info <name>` | Show an ACL policy with its rules. |
-| `nops acl policy apply <name> <file>` | Create or replace an ACL policy from a file of rules. |
+| `nops acl policy apply <name> <file>` | Create or replace an ACL policy from a file of rules. `-description` sets its description. |
 | `nops acl policy delete <name>` | Delete an ACL policy. |
 | `nops acl binding-rule list` | List the [binding rules](acl.md#binding-rules). |
 | `nops acl binding-rule info <id>` | Show a binding rule. |
