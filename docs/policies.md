@@ -52,9 +52,10 @@ during an incident. While a job is paused:
 - you can't approve its pending deployment, but you can reject it;
 - a deployment already running finishes.
 
-**Resume** releases the job, and Nops plans again from git. Any logged-in
-user can pause and resume, from the dashboard or the [API](api.md), and Nops
-records who did it.
+**Resume** releases the job, and Nops plans again from git. Anyone whose
+token has `pause` on the job's namespace ([ACL](acl.md#acl-policies)) can
+pause and resume, from the dashboard or the [API](api.md), and Nops records
+who did it.
 
 ## Approval
 
