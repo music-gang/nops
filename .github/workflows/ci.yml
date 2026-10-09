@@ -54,9 +54,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Pinned version: bump it by hand (Dependabot does not track `go run` targets).
+      # A tool in go.mod: Dependabot bumps it with the other modules.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags integration ./...
+        run: go tool staticcheck -tags integration ./...
       # scripts/release.sh cuts the releases; shellcheck is preinstalled on the runner.
       - name: release script
         run: |

@@ -74,8 +74,7 @@ with what is specific to a session:
    goes in a comment on that issue.
 6. Run the checks ([commands](docs/development.md#commands)). If `nomad` is
    not installed, CI runs the integration tests: wait for green checks and
-   fix what is red. staticcheck needs the toolchain of `go.mod`
-   (`GOTOOLCHAIN=go<version>` if the local Go is older).
+   fix what is red.
 7. **Cloud:** commit (unsigned), push and open the PR once there is something
    to review. **Local:** prepare the branch, stage the files and write the
    message to a file; the maintainer commits with his GPG key.
