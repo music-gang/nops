@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,6 +53,13 @@ type LoginHost interface {
 	Done(w http.ResponseWriter, r *http.Request, p Person, next string)
 	// Fail answers a login that did not work with the login page and a message.
 	Fail(w http.ResponseWriter, r *http.Request, status int, message, next string)
+	// CLIToken ends a login typed in a terminal (cli_login.go): it makes the
+	// session like Done and answers with its secret as JSON, not a cookie.
+	CLIToken(w http.ResponseWriter, r *http.Request, p Person)
+	// CLIRedirect ends a login that came from the command line through the
+	// browser: it makes the session like Done and sends the browser back to the
+	// command line with a one-time code for the secret.
+	CLIRedirect(w http.ResponseWriter, r *http.Request, p Person, c cliLogin)
 }
 
 // Person is who an auth method says logged in.
@@ -105,16 +113,18 @@ func (s *server) Fail(w http.ResponseWriter, _ *http.Request, status int, messag
 	s.renderLogin(w, status, message, next)
 }
 
-// Done implements LoginHost.
-func (s *server) Done(w http.ResponseWriter, r *http.Request, p Person, next string) {
-	noStore(w)
-	ctx := r.Context()
+// errNoBinding is a login that no binding rule matches: it gets no session.
+var errNoBinding = errors.New("no binding rule matches your login")
+
+// newLoginSession makes the session token of a person who proved who they are:
+// the binding rules decide what it allows. It returns errNoBinding when no rule
+// matches, and the secret only once: the store keeps its hash.
+func (s *server) newLoginSession(ctx context.Context, p Person) (string, store.ACLToken, error) {
 	granted := acl.Granted{Management: true} // with the ACL off every login can do everything
 	if s.aclOn {
 		rules, err := s.access.BindingRules(ctx)
 		if err != nil {
-			s.serverError(w, r, "read the binding rules", err)
-			return
+			return "", store.ACLToken{}, fmt.Errorf("read the binding rules: %w", err)
 		}
 		var bindings []acl.Binding
 		for _, b := range rules {
@@ -126,8 +136,7 @@ func (s *server) Done(w http.ResponseWriter, r *http.Request, p Person, next str
 		}
 		if !granted.Any() {
 			s.log.WarnContext(ctx, "login: no binding rule matches", "user", p.Username, "identity", p.Identity)
-			http.Error(w, "no binding rule matches your login", http.StatusForbidden)
-			return
+			return "", store.ACLToken{}, errNoBinding
 		}
 	}
 
@@ -145,7 +154,22 @@ func (s *server) Done(w http.ResponseWriter, r *http.Request, p Person, next str
 	sec := secret.New()
 	t, err := s.access.CreateACLToken(ctx, t, hashToken(sec), store.Audit{Actor: p.Username, Identity: p.Identity})
 	if err != nil {
-		s.serverError(w, r, "create the session token", err)
+		return "", store.ACLToken{}, fmt.Errorf("create the session token: %w", err)
+	}
+	return sec, t, nil
+}
+
+// Done implements LoginHost.
+func (s *server) Done(w http.ResponseWriter, r *http.Request, p Person, next string) {
+	noStore(w)
+	ctx := r.Context()
+	sec, t, err := s.newLoginSession(ctx, p)
+	switch {
+	case errors.Is(err, errNoBinding):
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	case err != nil:
+		s.serverError(w, r, "log in", err)
 		return
 	}
 	s.clearLoginCookie(w, tokenCookie)

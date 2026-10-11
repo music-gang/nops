@@ -1,0 +1,25 @@
+{{define "cli_done"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command-line login · Nops</title>
+{{template "head_icons" .}}
+<link rel="stylesheet" href="{{.Base}}{{asset "app.css"}}">
+</head>
+<body>
+<main class="login">
+  <img class="login__logo" src="{{.Base}}{{asset "logo-192x192.png"}}" alt="" width="96" height="96">
+  {{if .Failed}}
+  <h1 class="login__title">Login not finished</h1>
+  <p class="login__error">The command line could not finish the login. Go back to the terminal to see why.</p>
+  {{else}}
+  <h1 class="login__title">You’re logged in</h1>
+  <div class="login__box"><p>Go back to the terminal: the command line is now logged in to Nops. You can close this tab.</p></div>
+  {{end}}
+  <p class="login__after"><a href="{{.Base}}/">Open the dashboard</a></p>
+</main>
+</body>
+</html>
+{{end}}

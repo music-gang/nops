@@ -167,6 +167,8 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		"deployment (no nomad dep)":      ddNone,
 		"status_fragment":                oob,
 		"error":                          errorData{baseData: baseData{}, Status: 404, Title: "Not found", Message: "gone"},
+		"cli_done":                       cliDoneData{Base: "/nops"},
+		"cli_done (failed)":              cliDoneData{Failed: true},
 		"admin": adminSelfData{
 			adminBase:     adminBase{baseData: baseData{Actor: "alice", Nav: "admin"}, ACLOn: true, Manage: true, Section: "self"},
 			Self:          selfView{Name: "alice", Kind: "client", Session: true, AccessorID: "01ABC", Policies: []string{"readers"}, Created: tv, Expires: tv, Creator: "alice"},

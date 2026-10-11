@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -165,32 +166,58 @@ func (b *BasicAuth) Method() string { return "basic" }
 func (b *BasicAuth) Register(mux *http.ServeMux, host LoginHost) {
 	b.host = host
 	mux.Handle("POST "+basicPath, b.xorigin.Handler(http.HandlerFunc(b.login)))
+	mux.Handle("POST "+cliBasicPath, b.xorigin.Handler(http.HandlerFunc(b.cliLogin)))
 }
 
-// login checks the submitted credentials and, on success, hands the username
-// and the groups of the groups file to the server as the claims.
+// check compares the credentials with the users file and, on success, returns
+// the person with the groups of the groups file as the claims.
+func (b *BasicAuth) check(ctx context.Context, username, password string) (Person, bool) {
+	hash, known := b.users[username]
+	if !known {
+		hash = b.dummy // compare against something anyway: see timingSafetyPassword
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil || !known {
+		b.log.WarnContext(ctx, "login: invalid credentials", "user", username)
+		return Person{}, false
+	}
+	return Person{
+		Identity: "basic:" + username,
+		Username: username,
+		Claims:   acl.Claims{Username: username, Groups: b.groups[username]},
+	}, true
+}
+
+// login handles the form of the login page.
 func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	username := r.PostFormValue("username")
-	password := r.PostFormValue("password")
 	next := safeNext(r.PostFormValue("next"))
-
-	hash, known := b.users[username]
-	if !known {
-		hash = b.dummy // compare against something anyway: see timingSafetyPassword
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil || !known {
-		b.log.WarnContext(r.Context(), "login: invalid credentials", "user", username)
+	p, ok := b.check(r.Context(), r.PostFormValue("username"), r.PostFormValue("password"))
+	if !ok {
 		b.host.Fail(w, r, http.StatusUnauthorized, "Invalid username or password.", next)
 		return
 	}
-	b.host.Done(w, r, Person{
-		Identity: "basic:" + username,
-		Username: username,
-		Claims:   acl.Claims{Username: username, Groups: b.groups[username]},
-	}, next)
+	b.host.Done(w, r, p, next)
+}
+
+// cliLogin is POST /auth/cli/basic: the same check for the command line, with a
+// JSON body and a JSON answer (cli_login.go).
+func (b *BasicAuth) cliLogin(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	p, ok := b.check(r.Context(), body.Username, body.Password)
+	if !ok {
+		apiError(w, http.StatusUnauthorized, "invalid username or password")
+		return
+	}
+	b.host.CLIToken(w, r, p)
 }

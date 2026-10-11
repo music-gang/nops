@@ -183,6 +183,7 @@ type server struct {
 	aclOn     bool
 	bootstrap string
 	secure    bool // cookies are Secure
+	cliCodes  cliCodes
 	xorigin   *http.CrossOriginProtection
 	nomad     Nomad  // nil: no Nomad panel
 	nomadUI   string // "": no links into the Nomad UI
@@ -297,6 +298,7 @@ func (s *server) routes() *http.ServeMux {
 
 	s.auth.Register(mux, s) // the /auth/* routes of the auth method
 	mux.HandleFunc("GET "+loginPath, s.loginPage)
+	s.registerCLILogin(mux)
 	mux.Handle("POST "+tokenPath, s.xorigin.Handler(http.HandlerFunc(s.pasteToken)))
 	mux.Handle("POST "+logoutPath, s.xorigin.Handler(http.HandlerFunc(s.logout)))
 

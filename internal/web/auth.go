@@ -99,10 +99,17 @@ type loginState struct {
 	Verifier string `json:"v"`
 	Next     string `json:"x"`
 	Expires  int64  `json:"e"`
+	// CLI is set when the command line started this login (cli_login.go).
+	CLI *cliLogin `json:"c,omitempty"`
 }
 
 func (a *Auth) start(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	cli, err := parseCLILogin(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	cfg, _, _, err := a.discover(r.Context())
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "login: identity provider unavailable", "issuer", a.opts.Issuer, "error", err)
@@ -115,6 +122,7 @@ func (a *Auth) start(w http.ResponseWriter, r *http.Request) {
 		Verifier: oauth2.GenerateVerifier(),
 		Next:     safeNext(r.URL.Query().Get("next")),
 		Expires:  a.now().Add(loginTTL).Unix(),
+		CLI:      cli,
 	}
 	if !a.setCookie(w, loginCookie, a.base+"/auth", st, loginTTL) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -181,12 +189,17 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	a.host.Done(w, r, Person{
+	person := Person{
 		// The issuer and sub are what the provider never reassigns: the username is only what Nops shows.
 		Identity: "oidc:" + a.opts.Issuer + "#" + who.Subject,
 		Username: who.actor(),
 		Claims:   acl.Claims{Username: who.actor(), Sub: who.Subject, Groups: who.Groups},
-	}, st.Next)
+	}
+	if st.CLI != nil {
+		a.host.CLIRedirect(w, r, person, *st.CLI)
+		return
+	}
+	a.host.Done(w, r, person, st.Next)
 }
 
 // discover returns the OAuth2 configuration and the verifier, contacting the
