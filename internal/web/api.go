@@ -71,6 +71,7 @@ func (s *server) apiEndpoints() []apiEndpoint {
 		{"POST /api/acl/tokens/revoke-sessions", management(), s.apiRevokeSessions},
 		{"POST /api/acl/tokens/revoke-created", management(), s.apiRevokeCreated},
 		{"GET /api/acl/token/self", anyToken(), s.apiSelfToken},
+		{"DELETE /api/acl/token/self", anyToken(), s.apiRevokeSelf},
 		{"GET /api/acl/changes", management(), s.apiChanges},
 	}
 	if s.trigger != nil {

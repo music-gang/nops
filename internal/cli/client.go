@@ -29,25 +29,45 @@ type settings struct {
 
 // client calls the API of docs/api.md with a bearer token.
 type client struct {
-	base  string // without trailing slash; may carry a sub path
-	token string
-	http  *http.Client
+	base    string // without trailing slash; may carry a sub path
+	token   string // empty for the login, which has none yet
+	session bool   // the token is the one nops login saved
+	http    *http.Client
 }
 
-// newClient resolves the URL and the token, or says which of them is missing.
-// The token comes from a file (a flag, or NOPS_TOKEN_FILE) before NOPS_TOKEN,
-// and it is never part of an error message.
-func newClient(s settings, getenv func(string) string) (*client, error) {
-	addr := first(s.addr, getenv("NOPS_ADDR"))
+// statusError is an answer of Nops with a status of 300 or more.
+type statusError struct {
+	status  int
+	message string
+}
+
+func (e *statusError) Error() string { return e.message }
+
+// resolveAddr is the URL of Nops, from a flag or NOPS_ADDR, without a trailing slash.
+func resolveAddr(flagAddr string, getenv func(string) string) (string, error) {
+	addr := first(flagAddr, getenv("NOPS_ADDR"))
 	if addr == "" {
-		return nil, usageErrorf("the URL of Nops is missing: set -addr or NOPS_ADDR")
+		return "", usageErrorf("the URL of Nops is missing: set -addr or NOPS_ADDR")
 	}
 	u, err := url.Parse(addr)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, usageErrorf("the URL of Nops must be http:// or https:// with a host, got %q", addr)
+		return "", usageErrorf("the URL of Nops must be http:// or https:// with a host, got %q", addr)
+	}
+	return strings.TrimRight(addr, "/"), nil
+}
+
+// newClient resolves the URL and the token, or says which of them is missing.
+// The token comes from a file (a flag, or NOPS_TOKEN_FILE), then NOPS_TOKEN,
+// then the session nops login saved for the same URL. It is never part of an
+// error message.
+func newClient(s settings, getenv func(string) string) (*client, error) {
+	addr, err := resolveAddr(s.addr, getenv)
+	if err != nil {
+		return nil, err
 	}
 
 	var token string
+	fromSession := false
 	if file := first(s.tokenFile, getenv("NOPS_TOKEN_FILE")); file != "" {
 		b, err := os.ReadFile(file)
 		if err != nil {
@@ -60,10 +80,24 @@ func newClient(s settings, getenv func(string) string) (*client, error) {
 	} else {
 		token = strings.TrimSpace(getenv("NOPS_TOKEN"))
 	}
+	hint := ""
 	if token == "" {
-		return nil, usageErrorf("the API token is missing: set -token-file, NOPS_TOKEN_FILE or NOPS_TOKEN")
+		saved, err := loadSession()
+		switch {
+		case err != nil:
+			return nil, err
+		case saved != nil && saved.Addr == addr && time.Now().After(saved.ExpiresAt):
+			return nil, usageErrorf("your session at %s ended %s: run nops login", addr, stamp(saved.ExpiresAt))
+		case saved != nil && saved.Addr == addr:
+			token, fromSession = saved.Secret, true
+		case saved != nil:
+			hint = fmt.Sprintf(" (the saved session is for %s)", saved.Addr)
+		}
 	}
-	return &client{base: strings.TrimRight(addr, "/"), token: token, http: &http.Client{Timeout: requestTimeout}}, nil
+	if token == "" {
+		return nil, usageErrorf("the API token is missing: set -token-file, NOPS_TOKEN_FILE or NOPS_TOKEN, or run nops login%s", hint)
+	}
+	return &client{base: addr, token: token, session: fromSession, http: &http.Client{Timeout: requestTimeout}}, nil
 }
 
 func first(vals ...string) string {
@@ -90,7 +124,9 @@ func (c *client) do(ctx context.Context, method, path string, body any) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -112,10 +148,14 @@ func (c *client) do(ctx context.Context, method, path string, body any) ([]byte,
 		var e struct {
 			Error string `json:"error"`
 		}
+		msg := fmt.Sprintf("nops answered %d %s: is the URL the one of Nops?", resp.StatusCode, http.StatusText(resp.StatusCode))
 		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			return nil, fmt.Errorf("nops answered %d: %s", resp.StatusCode, e.Error)
+			msg = fmt.Sprintf("nops answered %d: %s", resp.StatusCode, e.Error)
 		}
-		return nil, fmt.Errorf("nops answered %d %s: is the URL the one of Nops?", resp.StatusCode, http.StatusText(resp.StatusCode))
+		if resp.StatusCode == http.StatusUnauthorized && c.session {
+			msg += ": your session ended or was revoked: run nops login"
+		}
+		return nil, &statusError{status: resp.StatusCode, message: msg}
 	}
 	return b, nil
 }

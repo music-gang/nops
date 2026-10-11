@@ -387,6 +387,22 @@ func (s *server) apiSelfToken(w http.ResponseWriter, r *http.Request) {
 	replyJSON(w, http.StatusOK, apiACLToken{AccessorID: sub.accessorID, Name: sub.actor, Type: store.TokenManagement, Origin: store.OriginCreated, Policies: []string{}})
 }
 
+// apiRevokeSelf is DELETE /api/acl/token/self: the token of the request revokes
+// itself, which is how the command line logs out. The bootstrap token has no
+// row and lives in the configuration, so there is nothing to revoke.
+func (s *server) apiRevokeSelf(w http.ResponseWriter, r *http.Request) {
+	sub := subjectOf(r.Context())
+	if sub.token == nil {
+		apiError(w, http.StatusBadRequest, "the bootstrap token lives in the configuration: it cannot be revoked")
+		return
+	}
+	if err := s.access.RevokeACLToken(r.Context(), sub.accessorID, auditOf(sub)); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.apiServerError(w, r, "revoke the token of the request", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // apiChanges is GET /api/acl/changes: the latest changes to ACL policies and tokens.
 func (s *server) apiChanges(w http.ResponseWriter, r *http.Request) {
 	list, err := s.access.ACLChanges(r.Context(), changesShown)

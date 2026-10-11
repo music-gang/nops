@@ -492,6 +492,16 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
+      },
+      "delete": {
+        "summary": "Revoke the token of the request",
+        "operationId": "revokeSelfACLToken",
+        "responses": {
+          "204": { "description": "Revoked." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
       }
     },
     "/api/acl/changes": {

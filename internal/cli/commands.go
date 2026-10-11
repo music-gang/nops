@@ -24,6 +24,8 @@ var commands = []command{
 	{name: "resume", arg: "<job>", help: "resume a paused job", run: action(http.MethodPost, jobAction("resume"), "resumed")},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
+	{name: "login", own: true, flags: loginFlags, help: "log in and save the session", run: runLogin},
+	{name: "logout", own: true, help: "revoke the saved session and forget it", run: runLogout},
 	{name: "acl policy list", help: "list the ACL policies", run: runPolicyList},
 	{name: "acl policy info", arg: "<name>", help: "show an ACL policy with its rules", run: runPolicyInfo},
 	{name: "acl policy apply", arg: "<name> <file>", flags: policyFlags, help: "create or replace an ACL policy from a file of rules", run: runPolicyApply},

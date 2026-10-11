@@ -3,11 +3,13 @@
 package integration
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -133,5 +135,66 @@ func TestE2ECLIApprovesWhatItShowed(t *testing.T) {
 	done := e.waitState(d.ID, store.StateCompleted)
 	if done.DecidedBy != e2eToken {
 		t.Errorf("decided_by = %q, want the token %q", done.DecidedBy, e2eToken)
+	}
+}
+
+// TestE2ECLILoginAndLogout: the built binary logs in with the username and the
+// password of the dashboard, uses the session it saved with no token anywhere,
+// and logs out: the session is revoked in Nops, not only forgotten.
+func TestE2ECLILoginAndLogout(t *testing.T) {
+	e := newE2E(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+
+	nops := func(stdin string, args ...string) (string, string, error) {
+		cmd := exec.Command(buildNopsBinary(t), args...)
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "NOPS_") { // a token of the shell must not hide the session
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		cmd.Env = append(cmd.Env, "NOPS_ADDR="+e.dash.base)
+		cmd.Stdin = strings.NewReader(stdin)
+		var out, errOut strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errOut
+		err := cmd.Run()
+		return out.String(), errOut.String(), err
+	}
+
+	if _, _, err := nops("", "jobs"); err == nil {
+		t.Fatal("nops jobs with no token and no session: want a refusal")
+	}
+	if out, errOut, err := nops(e2eUser+"\n"+e2ePassword+"\n", "login"); err != nil || !strings.Contains(out, "Logged in to "+e.dash.base+" as "+e2eUser) {
+		t.Fatalf("nops login: %v, stdout %q\n%s", err, out, errOut)
+	}
+	if out, errOut, err := nops("", "acl", "token", "self"); err != nil || !strings.Contains(out, "basic:"+e2eUser) {
+		t.Fatalf("nops acl token self: %v, stdout %q\n%s", err, out, errOut)
+	}
+
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "nops", "session"))
+	if err != nil {
+		t.Fatalf("the session file: %v", err)
+	}
+	var saved struct{ Secret string }
+	if err := json.Unmarshal(raw, &saved); err != nil || saved.Secret == "" {
+		t.Fatalf("the session file = %q: %v", raw, err)
+	}
+	if status, _ := apiCall(t, e.dash.base, "GET", "/api/jobs", saved.Secret, ""); status != http.StatusOK {
+		t.Fatalf("the saved session on the API: status %d, want 200", status)
+	}
+
+	if out, errOut, err := nops("", "logout"); err != nil || !strings.Contains(out, "Logged out of") {
+		t.Fatalf("nops logout: %v, stdout %q\n%s", err, out, errOut)
+	}
+	if status, _ := apiCall(t, e.dash.base, "GET", "/api/jobs", saved.Secret, ""); status != http.StatusUnauthorized {
+		t.Errorf("the session after the logout: status %d, want 401: it was forgotten, not revoked", status)
+	}
+	if _, errOut, err := nops("", "jobs"); err == nil || !strings.Contains(errOut, "nops login") {
+		t.Errorf("nops jobs after the logout: %v, stderr %q, want a hint to log in", err, errOut)
 	}
 }

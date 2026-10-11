@@ -54,6 +54,9 @@ type call struct {
 	reason      string
 	flags       aclFlags
 	in          *bufio.Reader
+	stdin       io.Reader
+	getenv      func(string) string
+	addr        string // the -addr of a command that builds its own client
 	out, errOut io.Writer
 }
 
@@ -67,7 +70,10 @@ type command struct {
 	flags func(fs *flag.FlagSet, k *call)
 	// offline runs without the API: no -addr, no token and no -json.
 	offline bool
-	run     func(*call) error
+	// own builds its own client, from the session nops login saved: it gets
+	// none of the shared flags, and adds -addr itself when it needs one.
+	own bool
+	run func(*call) error
 }
 
 // takesJob is whether the command names a job, and so takes -namespace.
@@ -121,10 +127,10 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 
 func (c *command) exec(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var s settings
-	k := &call{ctx: ctx, in: bufio.NewReader(stdin), out: stdout, errOut: stderr}
+	k := &call{ctx: ctx, in: bufio.NewReader(stdin), stdin: stdin, getenv: getenv, out: stdout, errOut: stderr}
 	fs := flag.NewFlagSet("nops "+c.name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	if !c.offline {
+	if !c.offline && !c.own {
 		fs.StringVar(&s.addr, "addr", "", "URL of Nops (NOPS_ADDR)")
 		fs.StringVar(&s.tokenFile, "token-file", "", "file holding the API token (NOPS_TOKEN_FILE, or NOPS_TOKEN)")
 		fs.BoolVar(&k.asJSON, "json", false, "print the answer of the API as JSON")
@@ -173,7 +179,7 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	}
 	k.namespace = first(s.namespace, getenv("NOPS_NAMESPACE"), "default")
 
-	if !c.offline {
+	if !c.offline && !c.own {
 		cl, err := newClient(s, getenv)
 		if err != nil {
 			return err
@@ -215,7 +221,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "       nops -version")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "serve runs the server. The other commands call its API, except the ones that")
-	fmt.Fprintln(w, "say they run offline: set NOPS_ADDR and NOPS_TOKEN_FILE (or NOPS_TOKEN).")
+	fmt.Fprintln(w, "say they run offline: set NOPS_ADDR and NOPS_TOKEN_FILE (or NOPS_TOKEN), or")
+	fmt.Fprintln(w, "run \"nops login\".")
 	fmt.Fprintln(w, "\"nops <command> -h\" lists their flags.")
 	fmt.Fprintln(w)
 	for _, c := range commands {

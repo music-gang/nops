@@ -7,17 +7,19 @@ dashboard's rules, and Nops records the token as the
 
 ## Configuration
 
-Get a token as for the [API](api.md#tokens), or copy your session token from
-the dashboard's *Administration* page.
+Log in with `nops login`, or get a token as for the [API](api.md#tokens).
 
 | Flag | Variable | Meaning |
 |---|---|---|
 | `-addr` | `NOPS_ADDR` | **Required.** The URL of Nops, such as `https://nops.example.com`. |
-| `-token-file` | `NOPS_TOKEN_FILE` | **Required**, unless `NOPS_TOKEN` is set. File holding the token. |
+| `-token-file` | `NOPS_TOKEN_FILE` | File holding the token. |
 | none | `NOPS_TOKEN` | The token itself. It has no flag, so it never shows in `ps`. The file wins. |
 | `-namespace` | `NOPS_NAMESPACE` | The namespace of the job a command names. Default `default`. |
 
 A flag wins over its variable. Put flags before arguments.
+
+Without a token file or `NOPS_TOKEN`, the client uses the session that
+`nops login` saved for the same URL.
 
 ## Commands
 
@@ -37,6 +39,8 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops resume <job>` | Resume a job. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
+| `nops login` | Log in with the [login mode](dashboard.md#authentication) of Nops and save the session for its URL, in `nops/session` under your user configuration directory. Basic asks for the username and password. OIDC opens the browser, which must run on the same machine. The session lasts 12 hours. |
+| `nops logout` | Revoke the session `nops login` saved and forget it. |
 | `nops acl policy list` | List the [ACL policies](acl.md#acl-policies). |
 | `nops acl policy info <name>` | Show an ACL policy with its rules. |
 | `nops acl policy apply <name> <file>` | Create or replace an ACL policy from a file of rules. `-description` sets its description. |

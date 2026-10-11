@@ -66,6 +66,7 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `PUT /api/acl/binding-rules/{id}` | Replace a binding rule, with the same body. Management token only. |
 | `DELETE /api/acl/binding-rules/{id}` | Delete a binding rule. Management token only. |
 | `GET /api/acl/token/self` | The token of the request. |
+| `DELETE /api/acl/token/self` | Revoke the token of the request. |
 | `GET /api/acl/changes` | The latest changes to ACL policies, binding rules, and tokens. Management token only. |
 | `GET /api/openapi.json` | The [OpenAPI](https://spec.openapis.org/oas/v3.1.0) description of these endpoints. |
 

@@ -642,6 +642,8 @@ legend.field__label + .field__caption { margin: -4px 0 8px; }
 }
 .login .btn { width: 100%; }
 /* "or" between the two ways in, on a line. */
+.login__after { margin-top: 16px; text-align: center; }
+.login__box p { margin: 0; }
 .login__or { display: flex; align-items: center; gap: 12px; margin: 24px 0; color: var(--fg-muted); font-size: 12px; }
 .login__or::before, .login__or::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 
