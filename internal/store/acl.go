@@ -84,16 +84,17 @@ type ACLToken struct {
 	CreatorIdentity   string // the person who created the token, when it was one
 }
 
-// ACLChange is one row of the log of changes to ACL policies and tokens.
+// ACLChange is one row of the log of changes to ACL policies and tokens, and of
+// the backups taken.
 type ACLChange struct {
 	ID         int64
 	Time       time.Time
 	AccessorID string
 	Actor      string
 	Identity   string
-	Action     string // "create", "update", "delete" or "revoke"
-	Kind       string // "acl-policy", "binding-rule" or "token"
-	Object     string // the name of an ACL policy, the ID of a binding rule, or the accessor ID of a token
+	Action     string // "create", "update", "delete", "revoke" or "backup"
+	Kind       string // "acl-policy", "binding-rule", "token" or "database"
+	Object     string // the name of an ACL policy, the ID of a binding rule, or the accessor ID of a token; empty for a backup
 }
 
 func (s *Store) insertChange(ctx context.Context, tx *sql.Tx, by Audit, action, kind, object string) error {

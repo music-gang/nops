@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/music-gang/nops/internal/secret"
@@ -24,6 +26,7 @@ var commands = []command{
 	{name: "resume", arg: "<job>", all: true, help: "resume a paused job, or every job with -all", run: runResume},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
+	{name: "backup", arg: "<file>", help: "save a backup of the database to a file", run: runBackup},
 	{name: "login", own: true, flags: loginFlags, help: "log in and save the session", run: runLogin},
 	{name: "logout", own: true, help: "revoke the saved session and forget it", run: runLogout},
 	{name: "acl policy list", help: "list the ACL policies", run: runPolicyList},
@@ -48,6 +51,40 @@ var commands = []command{
 func runSecretGenerate(k *call) error {
 	_, err := fmt.Fprintln(k.out, secret.New())
 	return err
+}
+
+// runBackup saves the backup to a temporary file beside the target and renames
+// it over the target, so a failure leaves no half-written file and an existing
+// file stays as it was. The backup holds every secret of the job specs: the
+// file is private to the user.
+func runBackup(k *call) error {
+	dir, base := filepath.Split(k.arg)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, base+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("save the backup: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if err := k.client.download(k.ctx, "/api/backup", tmp); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("save the backup: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("save the backup: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), k.arg); err != nil {
+		return fmt.Errorf("save the backup: %w", err)
+	}
+	if !k.asJSON {
+		fmt.Fprintln(k.out, "saved the backup to", k.arg)
+	}
+	return nil
 }
 
 func deploymentAction(verb string) func(*call) string {

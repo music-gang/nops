@@ -213,6 +213,7 @@ type Transition struct {
 // Store is a SQLite-backed store. It is safe for concurrent use.
 type Store struct {
 	db    *sql.DB
+	path  string
 	now   func() time.Time
 	newID func() string
 }
@@ -245,6 +246,7 @@ func Open(path string, opts ...Option) (*Store, error) {
 
 	s := &Store{
 		db:    db,
+		path:  path,
 		now:   time.Now,
 		newID: func() string { return ulid.Make().String() },
 	}

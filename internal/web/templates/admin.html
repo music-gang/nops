@@ -23,6 +23,9 @@
     <a class="settings-nav__item{{if eq .Section "rules"}} is-active{{end}}" href="{{.Base}}/admin/binding-rules"{{if eq .Section "rules"}} aria-current="page"{{end}}>Binding rules</a>
     <a class="settings-nav__item{{if eq .Section "changes"}} is-active{{end}}" href="{{.Base}}/admin/changes"{{if eq .Section "changes"}} aria-current="page"{{end}}>Changes</a>
     {{end}}
+    {{if .CanBackup}}
+    <a class="settings-nav__item{{if eq .Section "backup"}} is-active{{end}}" href="{{.Base}}/admin/backup"{{if eq .Section "backup"}} aria-current="page"{{end}}>Backup</a>
+    {{end}}
   </nav>
   <div class="settings__main">
 {{end}}
@@ -67,6 +70,27 @@
   </div>
 </section>
 {{end}}
+{{template "admin_close" .}}
+{{end}}
+
+{{define "admin_backup"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <h2 class="subhead__title">Backup</h2>
+    <p class="subhead__desc">A copy of the database: every job spec with its secrets, and the ACL. Keep it as safe as the database. <a href="https://github.com/music-gang/nops/blob/main/docs/running-nops.md#backups">How to restore it.</a></p>
+  </div>
+</div>
+
+<section class="box">
+  <div class="box__body">
+    {{/* Not boosted: the answer is a file for the browser to save, not a page for htmx to swap in. */}}
+    <form method="post" action="{{.Base}}/admin/backup" hx-boost="false">
+      <button type="submit" class="btn btn--primary">Download backup</button>
+    </form>
+    <p class="muted">Nops logs each backup with the changes to the ACL.</p>
+  </div>
+</section>
 {{template "admin_close" .}}
 {{end}}
 

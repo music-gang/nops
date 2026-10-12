@@ -39,6 +39,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops resume <job>` | Resume a job, or every job with `-all`. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
+| `nops backup <file>` | Save a [backup](running-nops.md#backups) of the database to the file. |
 | `nops login` | Log in with the [login mode](dashboard.md#authentication) of Nops and save the session for its URL, in `nops/session` under your user configuration directory. Basic asks for the username and password. OIDC opens the browser, which must run on the same machine. The session lasts 12 hours. |
 | `nops logout` | Revoke the session `nops login` saved and forget it. |
 | `nops acl policy list` | List the [ACL policies](acl.md#acl-policies). |

@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -92,6 +93,7 @@ type AccessStore interface {
 	TokensToRevoke(ctx context.Context, r store.Revocation) ([]store.ACLToken, error)
 	RevokeACLTokens(ctx context.Context, r store.Revocation, by store.Audit) ([]string, error)
 	ACLChanges(ctx context.Context, limit int) ([]store.ACLChange, error)
+	Backup(ctx context.Context, by store.Audit) (*os.File, error)
 	DeleteExpiredTokens(ctx context.Context) (int, error)
 	PutBindingRule(ctx context.Context, r store.BindingRule, by store.Audit) (store.BindingRule, error)
 	BindingRule(ctx context.Context, id string) (store.BindingRule, error)
@@ -336,6 +338,8 @@ func (s *server) routes() *http.ServeMux {
 		mux.Handle("POST /fetch", s.page(globally(acl.Fetch), s.fetchNow))
 	}
 	mux.Handle("GET /admin", s.page(anyToken(), s.adminPage))
+	mux.Handle("GET /admin/backup", s.page(globally(acl.Backup), s.backupPage))
+	mux.Handle("POST /admin/backup", s.page(globally(acl.Backup), s.backupDownload))
 	mux.Handle("GET /admin/tokens", s.page(management(), s.tokensPage))
 	mux.Handle("GET /admin/tokens/new", s.page(management(), s.newTokenPage))
 	mux.Handle("GET /admin/policies", s.page(management(), s.policiesPage))

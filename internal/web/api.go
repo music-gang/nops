@@ -57,6 +57,7 @@ func (s *server) apiEndpoints() []apiEndpoint {
 		{"POST /api/jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.apiDeployNow},
 		{"POST /api/pause", globally(acl.Pause), s.apiPauseAll},
 		{"POST /api/resume", globally(acl.Pause), s.apiResumeAll},
+		{"GET /api/backup", globally(acl.Backup), s.apiBackup},
 		{"GET /api/acl/policies", anyToken(), s.apiListPolicies},
 		{"GET /api/acl/policies/{name}", anyToken(), s.apiGetPolicy},
 		{"PUT /api/acl/policies/{name}", management(), s.apiPutPolicy},

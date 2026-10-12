@@ -109,9 +109,10 @@ func first(vals ...string) string {
 	return ""
 }
 
-// do sends a request and returns the body of a 2xx answer. A body, when given,
-// is sent as JSON. Any other status is an error carrying the API's message.
-func (c *client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+// send sends a request and returns the answer of a 2xx status, whose body the
+// caller closes. A body, when given, is sent as JSON. Any other status is an
+// error carrying the API's message.
+func (c *client) send(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -139,25 +140,58 @@ func (c *client) do(ctx context.Context, method, path string, body any) ([]byte,
 		}
 		return nil, fmt.Errorf("%s %s: %w", method, path, err)
 	}
+	if resp.StatusCode < 300 {
+		return resp, nil
+	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: read the answer: %w", method, path, err)
 	}
-	if resp.StatusCode >= 300 {
-		var e struct {
-			Error string `json:"error"`
-		}
-		msg := fmt.Sprintf("nops answered %d %s: is the URL the one of Nops?", resp.StatusCode, http.StatusText(resp.StatusCode))
-		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			msg = fmt.Sprintf("nops answered %d: %s", resp.StatusCode, e.Error)
-		}
-		if resp.StatusCode == http.StatusUnauthorized && c.session {
-			msg += ": your session ended or was revoked: run nops login"
-		}
-		return nil, &statusError{status: resp.StatusCode, message: msg}
+	var e struct {
+		Error string `json:"error"`
+	}
+	msg := fmt.Sprintf("nops answered %d %s: is the URL the one of Nops?", resp.StatusCode, http.StatusText(resp.StatusCode))
+	if json.Unmarshal(b, &e) == nil && e.Error != "" {
+		msg = fmt.Sprintf("nops answered %d: %s", resp.StatusCode, e.Error)
+	}
+	if resp.StatusCode == http.StatusUnauthorized && c.session {
+		msg += ": your session ended or was revoked: run nops login"
+	}
+	return nil, &statusError{status: resp.StatusCode, message: msg}
+}
+
+// do sends a request and returns the body of a 2xx answer.
+func (c *client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	resp, err := c.send(ctx, method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: read the answer: %w", method, path, err)
 	}
 	return b, nil
+}
+
+// download copies the body of a GET to w. A backup is as large as the
+// database, so neither the size nor the time of the whole request is bounded:
+// the context ends it.
+func (c *client) download(ctx context.Context, path string, w io.Writer) error {
+	patient := *c
+	hc := *c.http
+	hc.Timeout = 0
+	patient.http = &hc
+	resp, err := patient.send(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("GET %s: read the answer: %w", path, err)
+	}
+	return nil
 }
 
 // get decodes a JSON answer into v and returns it raw too, for -json.
