@@ -297,11 +297,21 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	for _, name := range names {
+	versions := make([]int, len(names))
+	for i, name := range names {
 		v, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
 		if err != nil {
 			return fmt.Errorf("migration %s: bad version prefix: %w", name, err)
 		}
+		versions[i] = v
+	}
+	// A newer database was migrated by a later Nops: its tables are not the
+	// ones this build reads and writes.
+	if n := len(versions); n > 0 && current > versions[n-1] {
+		return fmt.Errorf("database schema version %d is newer than the latest this Nops knows (%d)", current, versions[n-1])
+	}
+	for i, name := range names {
+		v := versions[i]
 		if v <= current {
 			continue
 		}

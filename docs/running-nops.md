@@ -159,3 +159,5 @@ anything else.
   says what to change in its *Upgrade notes*.
 - Pin a minor (`X.Y`) or an exact version, never `latest`: before `v1`, a new
   minor may break the configuration or the database.
+- Back up the database before upgrading: an older Nops refuses to start on a
+  database a newer one migrated.
