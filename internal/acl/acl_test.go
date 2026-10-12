@@ -173,3 +173,31 @@ func TestManagementAllowsEverything(t *testing.T) {
 		t.Error("a management ACL refused something")
 	}
 }
+
+// The pause outside the namespaces pauses every job; the one of a namespace
+// pauses a job. Neither grants the other, and write does not reach the global one.
+func TestPauseOfEveryJobIsNotThePauseOfAJob(t *testing.T) {
+	global := New(mustParse(t, `capabilities = ["fetch", "pause"]`))
+	if !global.Global(Pause) || !global.Global(Fetch) {
+		t.Error("the top-level list should grant fetch and pause")
+	}
+	if global.Allow("default", Pause) {
+		t.Error("the pause of every job granted the pause of a job")
+	}
+
+	job := New(mustParse(t, `namespace "*" { policy = "write" }`))
+	if job.Global(Pause) {
+		t.Error("write on every namespace granted the pause of every job")
+	}
+	if !job.Allow("default", Pause) {
+		t.Error("write should grant the pause of a job")
+	}
+
+	p := mustParse(t, `capabilities = ["pause", "pause", "fetch"]`)
+	if !slices.Equal(p.Global, []Capability{Pause, Fetch}) {
+		t.Errorf("global = %v, want [pause fetch] with no repeat", p.Global)
+	}
+	if !Management().Global(Pause) {
+		t.Error("a management ACL refused the pause of every job")
+	}
+}

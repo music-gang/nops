@@ -234,6 +234,9 @@ func TestActionsPostToTheirEndpoint(t *testing.T) {
 		{[]string{"pause", "-reason", "db move", "web"}, "/api/jobs/default/web/pause", `{"reason":"db move"}`, answer{204, ""}, "paused web\n"},
 		{[]string{"pause", "web"}, "/api/jobs/default/web/pause", "", answer{204, ""}, "paused web\n"},
 		{[]string{"resume", "web"}, "/api/jobs/default/web/resume", "", answer{204, ""}, "resumed web\n"},
+		{[]string{"pause", "-all", "-reason", "nomad upgrade"}, "/api/pause", `{"reason":"nomad upgrade"}`, answer{204, ""}, "paused every job\n"},
+		{[]string{"pause", "-all"}, "/api/pause", "", answer{204, ""}, "paused every job\n"},
+		{[]string{"resume", "-all"}, "/api/resume", "", answer{204, ""}, "resumed every job\n"},
 		{[]string{"fetch"}, "/api/fetch", "", answer{202, ""}, "asked for a poll\n"},
 	}
 	for _, tt := range tests {
@@ -449,6 +452,26 @@ func TestSecretGenerateTakesNoAPIFlags(t *testing.T) {
 	} {
 		if code, out, _ := run(t, nil, "", args...); code != 2 || out != "" {
 			t.Errorf("%v: exit %d, stdout %q, want 2 and nothing", args, code, out)
+		}
+	}
+}
+
+// -all is every job, so a job beside it is a mistake, not a pause of the one.
+func TestAllTakesNoJob(t *testing.T) {
+	for _, args := range [][]string{{"pause", "-all", "web"}, {"resume", "-all", "web"}} {
+		s, addr := newStub(t, nil)
+		code, _, errOut := run(t, envFor(addr), "", args...)
+		if code != exitUsage || !strings.Contains(errOut, "-all takes no job") || len(s.seen) != 0 {
+			t.Errorf("%v: exit %d, stderr %q, %d requests; want a usage error and none", args, code, errOut, len(s.seen))
+		}
+	}
+}
+
+func TestPauseAndResumeNeedAJobWithoutAll(t *testing.T) {
+	for _, cmd := range []string{"pause", "resume"} {
+		s, addr := newStub(t, nil)
+		if code, _, _ := run(t, envFor(addr), "", cmd); code != exitUsage || len(s.seen) != 0 {
+			t.Errorf("nops %s with no job: exit %d, %d requests; want a usage error and none", cmd, code, len(s.seen))
 		}
 	}
 }

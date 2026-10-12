@@ -20,8 +20,8 @@ var commands = []command{
 	{name: "reject", arg: "<id>", help: "reject a deployment", run: action(http.MethodPost, deploymentAction("reject"), "rejected")},
 	{name: "promote", arg: "<id>", help: "promote the canaries of a deployment", run: action(http.MethodPost, deploymentAction("promote"), "promoted")},
 	{name: "retry", arg: "<id>", help: "retry a failed or rejected deployment", run: runRetry},
-	{name: "pause", arg: "<job>", why: true, help: "pause a job", run: runPause},
-	{name: "resume", arg: "<job>", help: "resume a paused job", run: action(http.MethodPost, jobAction("resume"), "resumed")},
+	{name: "pause", arg: "<job>", why: true, all: true, help: "pause a job, or every job with -all", run: runPause},
+	{name: "resume", arg: "<job>", all: true, help: "resume a paused job, or every job with -all", run: runResume},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
 	{name: "login", own: true, flags: loginFlags, help: "log in and save the session", run: runLogin},
@@ -166,11 +166,28 @@ func runPause(k *call) error {
 	if k.reason != "" {
 		body = map[string]string{"reason": k.reason}
 	}
-	if _, err := k.client.do(k.ctx, http.MethodPost, jobPath(k.namespace, k.arg)+"/pause", body); err != nil {
+	path, what := jobPath(k.namespace, k.arg)+"/pause", k.arg
+	if k.all {
+		path, what = "/api/pause", "every job"
+	}
+	if _, err := k.client.do(k.ctx, http.MethodPost, path, body); err != nil {
 		return err
 	}
 	if !k.asJSON {
-		fmt.Fprintf(k.out, "paused %s\n", k.arg)
+		fmt.Fprintf(k.out, "paused %s\n", what)
+	}
+	return nil
+}
+
+func runResume(k *call) error {
+	if !k.all {
+		return action(http.MethodPost, jobAction("resume"), "resumed")(k)
+	}
+	if _, err := k.client.do(k.ctx, http.MethodPost, "/api/resume", nil); err != nil {
+		return err
+	}
+	if !k.asJSON {
+		fmt.Fprintln(k.out, "resumed every job")
 	}
 	return nil
 }

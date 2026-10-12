@@ -334,6 +334,25 @@ p + .input-group { margin-top: 8px; }
 .strip__meta { flex: none; color: var(--fg-muted); white-space: nowrap; }
 .strip__action { flex: none; }
 
+/* A button that opens a small form under it, with no script: a <details>. */
+.popover { position: relative; }
+.popover > summary { list-style: none; }
+.popover > summary::-webkit-details-marker { display: none; }
+.popover__body {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.15);
+}
+.popover__body p { margin: 0; }
+
 /* -- rows: one thing per line ----------------------------------------------------------- */
 
 .row {

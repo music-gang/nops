@@ -28,8 +28,13 @@ const (
 	Pause     Capability = "pause" // pause and resume
 )
 
-// Fetch is the one global capability: asking for a git poll.
+// Fetch is the global capability to ask for a git poll. Pause, which names
+// the capability of a namespace too, is also a global one when it stands outside
+// the namespace blocks: it pauses and resumes every job.
 const Fetch Capability = "fetch"
+
+// globalCapabilities are the ones the top-level list of a policy takes.
+var globalCapabilities = []Capability{Fetch, Pause}
 
 // namespaceCapabilities is what the shorthand "write" stands for. A new
 // capability of a namespace joins it, so a list written by hand never gains one.
@@ -99,11 +104,11 @@ func Parse(rules string) (*Policy, error) {
 		p.Rules = append(p.Rules, r)
 	}
 	for _, c := range in.Capabilities {
-		if Capability(c) != Fetch {
-			return nil, fmt.Errorf("capability %q: the only one outside a namespace is %q", c, Fetch)
+		if !slices.Contains(globalCapabilities, Capability(c)) {
+			return nil, fmt.Errorf("capability %q: the ones outside a namespace are %q and %q", c, Fetch, Pause)
 		}
-		if !slices.Contains(p.Global, Fetch) {
-			p.Global = append(p.Global, Fetch)
+		if !slices.Contains(p.Global, Capability(c)) {
+			p.Global = append(p.Global, Capability(c))
 		}
 	}
 	return p, nil

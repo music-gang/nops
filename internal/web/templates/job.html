@@ -29,8 +29,9 @@
 {{with .Paused}}
 <section class="flash flash--warn flash--action">
   <div>
-    <strong>Paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
-    nops starts no new deployment for this job until it is resumed. Drift is still detected and shown; a deployment already running finishes.
+    {{if .All}}<strong>Every job is paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
+    nops starts no new deployment for this job until every job is resumed. Drift is still detected and shown; a deployment already running finishes.{{else}}<strong>Paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
+    nops starts no new deployment for this job until it is resumed. Drift is still detected and shown; a deployment already running finishes.{{end}}
   </div>
   {{if .ResumePath}}<form method="post" action="{{.ResumePath}}">
     <input type="hidden" name="back" value="job">

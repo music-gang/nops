@@ -37,6 +37,9 @@ type Hold struct {
 	Since time.Time
 	// Note is what the person wrote when they set it, if anything.
 	Note string
+	// All is set when the pause is the one of every job (Engine.PauseAll), not
+	// of this job.
+	All bool
 }
 
 // ErrPaused is returned by Approve when the deployment's job is paused: the
@@ -63,6 +66,14 @@ func pauseHold(p store.Pause) *Hold {
 		reason += ": " + p.Reason
 	}
 	return &Hold{Kind: HoldPaused, Reason: reason, By: p.PausedBy, Since: p.PausedAt, Note: p.Reason}
+}
+
+// allHold is the Hold the pause of every job makes.
+func allHold(p store.Pause) *Hold {
+	h := pauseHold(p)
+	h.Reason = "every job " + h.Reason
+	h.All = true
+	return h
 }
 
 // WindowStatus is where a job's sync window stands right now, for the page and
@@ -150,18 +161,31 @@ func holds(pauses []store.Pause) map[jobKey]*Hold {
 	return out
 }
 
-// pauseOf reads a job's pause straight from the store, for the paths that act
-// between two detection cycles (Approve, the apply loop's first step). It
-// returns nil when the job is not paused.
+// pauseOf reads a job's pause, or else the pause of every job, straight from
+// the store, for the paths that act between two detection cycles (Approve, the
+// apply loop's first step). It returns nil when the job is not paused.
 func (e *Engine) pauseOf(ctx context.Context, namespace, jobID string) (*Hold, error) {
 	p, err := e.store.PauseOf(ctx, namespace, jobID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return e.allPause(ctx)
+	case err != nil:
+		return nil, err
+	}
+	return pauseHold(p), nil
+}
+
+// allPause reads the pause of every job straight from the store. It returns nil
+// when there is none.
+func (e *Engine) allPause(ctx context.Context) (*Hold, error) {
+	p, err := e.store.AllPause(ctx)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, nil
 	case err != nil:
 		return nil, err
 	}
-	return pauseHold(p), nil
+	return allHold(p), nil
 }
 
 // Pause holds a job: nops starts no new deployment for it and does not advance
@@ -230,4 +254,99 @@ func (e *Engine) Resume(ctx context.Context, namespace, jobID, actor string) err
 	e.setHold(jobKey{namespace, jobID}, nil)
 	e.kickDetection()
 	return nil
+}
+
+// PauseAll holds every job: nops starts no new deployment for any job, the ones
+// added to git meanwhile included, until ResumeAll. It is Pause for the moment
+// a Nomad upgrade or an incident needs nops to leave all jobs alone. A job
+// paused on its own keeps its own pause. The pause is persisted before anything
+// else (invariant 7), the detection loop is asked for a cycle, and the
+// notification goes out after.
+//
+// It returns store.ErrAlreadyPaused if every job is already paused and
+// ErrPauseNoteTooLong for a reason over maxPauseNote bytes.
+func (e *Engine) PauseAll(ctx context.Context, actor, note string) error {
+	if actor == "" {
+		return errors.New("pause every job: actor is required")
+	}
+	note = strings.TrimSpace(note)
+	if len(note) > maxPauseNote {
+		return fmt.Errorf("pause every job: %w", ErrPauseNoteTooLong)
+	}
+	if err := e.store.PauseAll(ctx, actor, note); err != nil {
+		return err
+	}
+	e.log.InfoContext(ctx, "every job paused", "actor", actor, "reason", note)
+	// The page the person is sent back to reads the last cycle's observations:
+	// say so in them now rather than when the cycle asked for below ends.
+	if p, err := e.store.AllPause(ctx); err != nil {
+		e.log.ErrorContext(ctx, "read the pause just written", "error", err)
+	} else {
+		e.setAllHold(allHold(p))
+	}
+	e.kickDetection()
+	e.notifyPause(ctx, false, actor, note)
+	return nil
+}
+
+// ResumeAll lifts the pause of every job: the next detection cycle, asked for
+// now, plans each job afresh. A job paused on its own stays paused. It returns
+// store.ErrNotPaused if there is no pause of every job.
+func (e *Engine) ResumeAll(ctx context.Context, actor string) error {
+	if actor == "" {
+		return errors.New("resume every job: actor is required")
+	}
+	if err := e.store.ResumeAll(ctx, actor); err != nil {
+		return err
+	}
+	e.log.InfoContext(ctx, "every job resumed", "actor", actor)
+	e.setAllHold(nil)
+	e.kickDetection()
+	e.notifyPause(ctx, true, actor, "")
+	return nil
+}
+
+// PausedAll is the pause of every job as of the last detection cycle or the
+// last PauseAll or ResumeAll, nil when there is none. It is what the banner of
+// every page shows.
+func (e *Engine) PausedAll() *Hold {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.all
+}
+
+// setAllHold puts the pause of every job (nil: none) on the engine and on the
+// last observations, ahead of the next cycle, which recomputes them from the
+// store anyway. A job's own pause stays what holds it, and a lifted pause
+// leaves a job's sync window to the next cycle.
+func (e *Engine) setAllHold(h *Hold) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.all = h
+	for key, o := range e.observations {
+		switch {
+		case h != nil && (o.Hold == nil || o.Hold.Kind == HoldWindow):
+			o.Hold = h
+		case h == nil && o.Hold != nil && o.Hold.All:
+			o.Hold = nil
+		default:
+			continue
+		}
+		e.observations[key] = o
+	}
+}
+
+// notifyPause tells people that every job was paused, or resumed.
+func (e *Engine) notifyPause(ctx context.Context, resumed bool, actor, reason string) {
+	if e.notifier == nil {
+		return
+	}
+	go e.notifier.NotifyPause(context.WithoutCancel(ctx), resumed, actor, reason)
+}
+
+// setAll records the pause of every job (nil: none) the detection cycle read.
+func (e *Engine) setAll(h *Hold) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.all = h
 }

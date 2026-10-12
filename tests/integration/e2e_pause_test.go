@@ -118,3 +118,48 @@ func TestE2EPausedJobCannotBeApproved(t *testing.T) {
 		t.Errorf("live version = %q after approval, want 1", got)
 	}
 }
+
+// TestE2EPausedNopsLeavesEveryJobAlone is the maintenance case: one action stops
+// Nops for every job, the one added to git meanwhile included, and Resume lets
+// each deploy what git says.
+func TestE2EPausedNopsLeavesEveryJobAlone(t *testing.T) {
+	e := newE2E(t)
+	first := uniqueID(t, e.raw, "pauseall")
+	second := uniqueID(t, e.raw, "pauseall")
+	page := "/jobs/default/" + first
+
+	e.repo.commit(t, "job "+first, map[string]string{file(first): e2eJob{id: first, policy: "auto", version: "git"}.hcl()})
+	d1 := e.waitNew(first, "", store.StateCompleted)
+
+	if status, _ := e.dash.post(t, "/pause", url.Values{"reason": {"nomad upgrade"}}); status != http.StatusSeeOther {
+		t.Fatalf("pause: status %d, want 303", status)
+	}
+	e.editOutsideNops(first, e2eJob{id: first, policy: "auto", version: "hand-edited"}.hcl())
+	e.repo.commit(t, "job "+second, map[string]string{file(second): e2eJob{id: second, policy: "auto", version: "git"}.hcl()})
+
+	// Every page says so, and the drift is still shown.
+	e.waitPage(page, "the pause of every job", func(b string) bool {
+		return strings.Contains(b, "Nops is paused") && strings.Contains(b, "nomad upgrade") && !strings.Contains(b, "In sync with git.")
+	})
+
+	time.Sleep(quiet)
+	if n := e.deploymentsOf(first); n != 1 {
+		t.Errorf("%d deployments of %s while Nops is paused, want only the first one", n, first)
+	}
+	if n := e.deploymentsOf(second); n != 0 {
+		t.Errorf("%d deployments of %s, a job added while Nops is paused, want none", n, second)
+	}
+	if got := e.liveVersion(first); got != "hand-edited" {
+		t.Errorf("live version = %q while paused, want the hand edit to stand", got)
+	}
+
+	if status, _ := e.dash.post(t, "/resume", nil); status != http.StatusSeeOther {
+		t.Fatalf("resume: status %d, want 303", status)
+	}
+	e.waitNew(first, d1.ID, store.StateCompleted)
+	e.waitNew(second, "", store.StateCompleted)
+	if got := e.liveVersion(first); got != "git" {
+		t.Errorf("live version = %q after the resume, want git's", got)
+	}
+	e.waitPage(page, "no banner after the resume", func(b string) bool { return !strings.Contains(b, "Nops is paused") })
+}

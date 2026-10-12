@@ -80,6 +80,12 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		return st, fmt.Errorf("list active pauses: %w", err)
 	}
 	held := holds(pauses)
+	// So is the pause of every job, which holds the jobs without one of their own.
+	all, err := e.allPause(ctx)
+	if err != nil {
+		return st, fmt.Errorf("read the pause of every job: %w", err)
+	}
+	e.setAll(all)
 	// So is a Deploy now request: it was accepted, and one that cannot be read is
 	// not one that may be ignored (invariant 7).
 	lifts, err := e.store.WindowLifts(ctx)
@@ -102,7 +108,11 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		if l, ok := asked[key]; ok {
 			lift = &l
 		}
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], held[key], window, lift)
+		pause := held[key]
+		if pause == nil {
+			pause = all
+		}
+		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], pause, window, lift)
 		if err != nil {
 			return st, err
 		}

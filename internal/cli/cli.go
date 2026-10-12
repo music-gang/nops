@@ -52,6 +52,7 @@ type call struct {
 	namespace   string
 	asJSON, yes bool
 	reason      string
+	all         bool // -all: every job, no job argument
 	flags       aclFlags
 	in          *bufio.Reader
 	stdin       io.Reader
@@ -66,6 +67,7 @@ type command struct {
 	help string
 	yes  bool // takes -yes
 	why  bool // takes -reason
+	all  bool // takes -all, which stands for every job and replaces the argument
 	// flags adds the flags that only this command takes.
 	flags func(fs *flag.FlagSet, k *call)
 	// offline runs without the API: no -addr, no token and no -json.
@@ -144,6 +146,9 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	if c.why {
 		fs.StringVar(&k.reason, "reason", "", "why, up to 500 bytes")
 	}
+	if c.all {
+		fs.BoolVar(&k.all, "all", false, "every job, instead of the one named")
+	}
 	if c.flags != nil {
 		c.flags(fs, k)
 	}
@@ -158,12 +163,18 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 		return usageError{"see nops " + c.name + " -h"}
 	}
 	want := len(strings.Fields(c.arg))
+	if k.all {
+		want = 0
+	}
 	if fs.NArg() != want {
 		hint := ""
 		for _, a := range fs.Args() {
 			if strings.HasPrefix(a, "-") {
 				hint = ": put the flags before the argument"
 			}
+		}
+		if k.all {
+			return usageErrorf("-all takes no job: it is every job%s", hint)
 		}
 		if want == 0 {
 			return usageErrorf("takes no argument%s", hint)

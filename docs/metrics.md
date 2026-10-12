@@ -41,6 +41,7 @@ at the bare path.
 | `nops_unparsed_files` | | Files the last detection cycle couldn't parse. |
 | `nops_detection_skipped_jobs` | | Jobs the last cycle couldn't plan because of a Nomad error. |
 | `nops_orphan_jobs` | | [Orphans](architecture.md#orphan-jobs): removed from git, still running. |
+| `nops_paused` | | 1 if someone paused every job. |
 | `nops_job_info` | `namespace`, `job`, `policy` | Always 1, one per managed job. |
 | `nops_job_drift` | `namespace`, `job` | 1 if the job differs from git. |
 | `nops_job_paused` | `namespace`, `job` | 1 if someone paused the job. |

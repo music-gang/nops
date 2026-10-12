@@ -110,3 +110,76 @@ func TestActivePausesOldestFirst(t *testing.T) {
 		t.Errorf("ActivePauses = %+v, want web then db", got)
 	}
 }
+
+func TestPauseAllAndResumeAll(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.AllPause(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AllPause before any pause: err = %v, want ErrNotFound", err)
+	}
+	if err := s.PauseAll(ctx, "alice", "nomad upgrade"); err != nil {
+		t.Fatalf("PauseAll: %v", err)
+	}
+	p, err := s.AllPause(ctx)
+	if err != nil {
+		t.Fatalf("AllPause: %v", err)
+	}
+	if p.PausedBy != "alice" || p.Reason != "nomad upgrade" || p.PausedAt.IsZero() || !p.ResumedAt.IsZero() {
+		t.Errorf("AllPause = %+v, want a pause by alice for a nomad upgrade, not resumed", p)
+	}
+
+	if err := s.PauseAll(ctx, "bob", ""); !errors.Is(err, ErrAlreadyPaused) {
+		t.Errorf("second PauseAll: err = %v, want ErrAlreadyPaused", err)
+	}
+
+	if err := s.ResumeAll(ctx, "bob"); err != nil {
+		t.Fatalf("ResumeAll: %v", err)
+	}
+	if _, err := s.AllPause(ctx); !errors.Is(err, ErrNotFound) {
+		t.Errorf("AllPause after the resume: err = %v, want ErrNotFound", err)
+	}
+	if err := s.ResumeAll(ctx, "bob"); !errors.Is(err, ErrNotPaused) {
+		t.Errorf("second ResumeAll: err = %v, want ErrNotPaused", err)
+	}
+
+	// It can be paused again, and the resumed pause stays as the record.
+	if err := s.PauseAll(ctx, "carol", ""); err != nil {
+		t.Fatalf("PauseAll after the resume: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nops_pauses WHERE resumed_at IS NOT NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("resumed pauses kept = %d, want 1", n)
+	}
+}
+
+func TestPauseAllIsIndependentOfAJobPause(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.PauseJob(ctx, "default", "web", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PauseAll(ctx, "bob", ""); err != nil {
+		t.Fatalf("PauseAll with a job paused: %v", err)
+	}
+	if err := s.ResumeAll(ctx, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PauseOf(ctx, "default", "web"); err != nil {
+		t.Errorf("job pause after ResumeAll: %v, want it kept", err)
+	}
+}
+
+func TestPauseAllRequiresAnActor(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.PauseAll(ctx, "", ""); err == nil {
+		t.Error("PauseAll with no actor succeeded")
+	}
+	if err := s.ResumeAll(ctx, ""); err == nil {
+		t.Error("ResumeAll with no actor succeeded")
+	}
+}

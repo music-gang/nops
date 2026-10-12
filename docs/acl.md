@@ -78,8 +78,12 @@ capability of their own:
 | `deploy-now` | Deploy a job outside its sync window. |
 | `pause` | Pause and resume a job. |
 
-The top-level `capabilities` list holds the ones that belong to no namespace.
-`fetch` asks for a git poll.
+The top-level `capabilities` list holds the ones that belong to no namespace:
+
+| Capability | Allows |
+|---|---|
+| `fetch` | Ask for a git poll. |
+| `pause` | Pause and resume [every job](policies.md#pausing-a-job). |
 
 For a request on a namespace, Nops takes the most specific rule that matches
 across all the token's ACL policies, so `prod` comes before `pr*`, and `pr*`

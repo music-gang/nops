@@ -44,7 +44,7 @@ disagrees with this one, this page wins. Code-only terms are in
 | **blocked drift** | Drift Nops doesn't redeploy after a failure or a rejection. A **retry** or a new commit unblocks it. |
 | **retry** | A person trying a failed or rejected deployment again. The new deployment follows the policy. |
 | **hold** | Something that keeps Nops from starting a deployment for a job: a **pause** or a closed **sync window**. |
-| **pause / resume** | A person holding a job and releasing it. |
+| **pause / resume** | A person holding a job, or every job, and releasing it. |
 | **sync window** | When an `auto` job may deploy on its own ([policies](policies.md#sync-window)). |
 | **deploy now** | A person deploying a job held by its sync window once, without waiting for the window to open. |
 | **sync state** | Where a job stands against git, in one word ([dashboard](dashboard.md#sync-state-of-a-job)). |

@@ -307,7 +307,7 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 		}
 		if o.Namespace == d.Namespace && o.JobID == d.JobID && o.Hold != nil && o.Hold.Kind == engine.HoldPaused {
 			data.Paused = &heldView{Reason: o.Hold.Reason}
-			if allows(r, d.Namespace, acl.Pause) {
+			if !o.Hold.All && allows(r, d.Namespace, acl.Pause) {
 				data.Paused.ResumePath = s.jobPath(o.Namespace, o.JobID) + "/resume"
 			}
 		}

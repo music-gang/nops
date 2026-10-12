@@ -33,6 +33,8 @@ type noopNotifier struct{}
 
 func (noopNotifier) Notify(context.Context, *store.Deployment, string) {}
 
+func (noopNotifier) NotifyPause(context.Context, bool, string, string) {}
+
 // managedEnvHCL is a managed batch job with a pre-hook and a secret
 // environment variable, to exercise redaction end to end.
 func managedEnvHCL(id, hookID, secret string) string {

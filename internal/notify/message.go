@@ -29,6 +29,12 @@ var phaseLabels = map[string]string{
 
 // emoji is the same in every adapter.
 func emoji(e Event) string {
+	switch e.Event {
+	case EventPaused:
+		return "⏸"
+	case EventResumed:
+		return "▶️"
+	}
 	if e.Waiting == WaitingCanaryPromotion {
 		return "🐤"
 	}
@@ -45,6 +51,12 @@ func emoji(e Event) string {
 
 // headline says what happened and, for a failure, where.
 func headline(e Event) string {
+	switch e.Event {
+	case EventPaused:
+		return "Nops paused"
+	case EventResumed:
+		return "Nops resumed"
+	}
 	if e.Waiting == WaitingCanaryPromotion {
 		return e.Job + " canaries need promotion"
 	}
@@ -73,6 +85,15 @@ func title(e Event) string {
 // lead is the first line of the body, which a system notification shows under
 // the title: what to do next, or the commit or the error that matters.
 func lead(e Event) string {
+	switch e.Event {
+	case EventPaused:
+		if e.Reason != "" {
+			return truncate(e.Reason, leadMax)
+		}
+		return "no job is deployed until it is resumed"
+	case EventResumed:
+		return "jobs are planned again from git"
+	}
 	if e.Waiting == WaitingCanaryPromotion {
 		return "promote them in Nomad"
 	}
@@ -123,6 +144,9 @@ type fact struct{ name, value string }
 // who approved it, what it retries and who deployed it now. A fact with no
 // value is left out, but the namespace.
 func facts(e Event) []fact {
+	if pauseEvent(e) {
+		return []fact{{"By", orDash(e.Actor)}}
+	}
 	out := []fact{{"Namespace", orDash(e.Namespace)}}
 	for _, f := range []fact{{"Policy", e.Policy}, {"Approved by", e.ApprovedBy}, {"Retry of", e.RetryOf}, {"Deployed now by", e.DeployedNowBy}} {
 		if f.value != "" {
@@ -154,11 +178,13 @@ func text(e Event, withLinks bool) string {
 	if l != "" {
 		lines = append(lines, l)
 	}
-	commit := "Commit: " + orDash(shortCommit(e.Commit))
-	if d := commitDetail(e); d != "" {
-		commit += " " + d
+	if !pauseEvent(e) {
+		commit := "Commit: " + orDash(shortCommit(e.Commit))
+		if d := commitDetail(e); d != "" {
+			commit += " " + d
+		}
+		lines = append(lines, commit)
 	}
-	lines = append(lines, commit)
 	var fs []string
 	for _, f := range facts(e) {
 		fs = append(fs, f.name+": "+f.value)

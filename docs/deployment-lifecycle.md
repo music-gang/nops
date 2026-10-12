@@ -49,7 +49,8 @@ job changes, so Nomad's `auto_revert` can't cause an apply and revert loop.
 ## Holding a job
 
 A **hold** keeps Nops from starting a deployment for a job. It comes from a
-person's **pause** or from a closed [sync window](policies.md#sync-window).
+person's **pause**, of the job or of every job, or from a closed
+[sync window](policies.md#sync-window).
 While a job is held:
 
 - Nops still shows the drift but creates no deployment;
@@ -71,6 +72,7 @@ The migrations in `internal/store/migrations/` define the tables:
 | `deployment_hooks` | The hooks each deployment froze when it was created. |
 | `hook_runs` | One run of one hook of one deployment. |
 | `job_pauses` | Pauses and resumes. Each records who did it and why. |
+| `nops_pauses` | Pauses and resumes of every job, with the same record. |
 | `window_lifts` | Deploy now requests detection hasn't used yet. |
 | `events` | The audit log of every deployment. |
 

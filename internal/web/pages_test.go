@@ -131,6 +131,8 @@ type promoteCall struct{ id, actor string }
 type pauseCall struct{ namespace, job, actor, reason string }
 type resumeCall struct{ namespace, job, actor string }
 
+type pauseAllCall struct{ actor, reason string }
+
 type fakeEngine struct {
 	approveErr     error
 	rejectErr      error
@@ -140,6 +142,11 @@ type fakeEngine struct {
 	promoteErr     error
 	pauseErr       error
 	resumeErr      error
+	pauseAllErr    error
+	resumeAllErr   error
+	allPause       *engine.Hold // what PausedAll answers
+	pauseAllCalls  []pauseAllCall
+	resumeAllCalls []string // the actor of each ResumeAll
 	deployNowErr   error
 	deployNowNext  string // what DeployNow answers: the deployment it created, none if empty
 	pauseCalls     []pauseCall
@@ -203,6 +210,18 @@ func (f *fakeEngine) Resume(ctx context.Context, namespace, jobID, actor string)
 	f.resumeCalls = append(f.resumeCalls, resumeCall{namespace, jobID, actor})
 	return f.resumeErr
 }
+
+func (f *fakeEngine) PauseAll(ctx context.Context, actor, reason string) error {
+	f.pauseAllCalls = append(f.pauseAllCalls, pauseAllCall{actor, reason})
+	return f.pauseAllErr
+}
+
+func (f *fakeEngine) ResumeAll(ctx context.Context, actor string) error {
+	f.resumeAllCalls = append(f.resumeAllCalls, actor)
+	return f.resumeAllErr
+}
+
+func (f *fakeEngine) PausedAll() *engine.Hold { return f.allPause }
 
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }
 func (f *fakeEngine) Orphans() []engine.Orphan           { return f.orphans }
