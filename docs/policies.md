@@ -57,6 +57,13 @@ token has `pause` on the job's namespace ([ACL](acl.md#acl-policies)) can
 pause and resume, from the dashboard or the [API](api.md), and Nops records
 who did it.
 
+**Pause** in the Overview pauses every job at once, for a Nomad upgrade or
+an incident that spans several jobs. It holds the jobs added to git in the
+meantime too. Every page says that Nops is paused, since when, and by whom.
+**Resume** releases it, and a job paused on its own stays paused. It needs
+the `pause` capability outside the namespaces
+([ACL](acl.md#acl-policies)).
+
 ## Approval
 
 Approve or reject a deployment from its dashboard page, which shows the diff

@@ -208,6 +208,8 @@ func TestAPIActionsActAsTheToken(t *testing.T) {
 		{"retry", "/api/deployments/d1/retry", "", http.StatusOK, `{"deployment_id":"d2"}`},
 		{"pause", "/api/jobs/default/web/pause", `{"reason":"db incident"}`, http.StatusNoContent, ""},
 		{"resume", "/api/jobs/default/web/resume", "", http.StatusNoContent, ""},
+		{"pause every job", "/api/pause", `{"reason":"nomad upgrade"}`, http.StatusNoContent, ""},
+		{"resume every job", "/api/resume", "", http.StatusNoContent, ""},
 		{"deploy now", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h2"}`, http.StatusOK, `{"deployment_id":"d3"}`},
 	} {
 		rec := ts.api("POST", c.target, token, c.body)
@@ -236,6 +238,12 @@ func TestAPIActionsActAsTheToken(t *testing.T) {
 	}
 	if got, want := fmt.Sprint(en.resumeCalls), fmt.Sprint([]resumeCall{{"default", "web", "carol"}}); got != want {
 		t.Errorf("resume calls = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(en.pauseAllCalls), fmt.Sprint([]pauseAllCall{{"carol", "nomad upgrade"}}); got != want {
+		t.Errorf("pause every job calls = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(en.resumeAllCalls), fmt.Sprint([]string{"carol"}); got != want {
+		t.Errorf("resume every job calls = %s, want %s", got, want)
 	}
 	if got, want := fmt.Sprint(en.deployNowCalls), fmt.Sprint([]deployNowCall{{"default", "web", "h2", "carol"}}); got != want {
 		t.Errorf("deploy now calls = %s, want %s", got, want)
@@ -314,6 +322,11 @@ func TestAPIAnswersWhatTheEngineRefuses(t *testing.T) {
 		{"pause, reason too long", "/api/jobs/default/web/pause", "", func(e *fakeEngine, err error) { e.pauseErr = err }, engine.ErrPauseNoteTooLong, 400},
 		{"resume, not paused", "/api/jobs/default/web/resume", "", func(e *fakeEngine, err error) { e.resumeErr = err }, store.ErrNotPaused, 409},
 		{"resume, unknown", "/api/jobs/default/web/resume", "", func(e *fakeEngine, err error) { e.resumeErr = err }, store.ErrNotFound, 404},
+		{"pause every job, already paused", "/api/pause", "", func(e *fakeEngine, err error) { e.pauseAllErr = err }, store.ErrAlreadyPaused, 409},
+		{"pause every job, reason too long", "/api/pause", "", func(e *fakeEngine, err error) { e.pauseAllErr = err }, engine.ErrPauseNoteTooLong, 400},
+		{"pause every job, store down", "/api/pause", "", func(e *fakeEngine, err error) { e.pauseAllErr = err }, errors.New("disk on fire"), 500},
+		{"resume every job, not paused", "/api/resume", "", func(e *fakeEngine, err error) { e.resumeAllErr = err }, store.ErrNotPaused, 409},
+		{"resume every job, store down", "/api/resume", "", func(e *fakeEngine, err error) { e.resumeAllErr = err }, errors.New("disk on fire"), 500},
 		{"deploy now, not deployable", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.deployNowErr = err }, engine.ErrNotDeployable, 409},
 		{"deploy now, unknown", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.deployNowErr = err }, store.ErrNotFound, 404},
 	} {

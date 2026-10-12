@@ -226,6 +226,36 @@
         }
       }
     },
+    "/api/pause": {
+      "post": {
+        "summary": "Pause every job",
+        "operationId": "pauseNops",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pause" } } }
+        },
+        "responses": {
+          "204": { "description": "Paused." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/resume": {
+      "post": {
+        "summary": "Resume every job",
+        "operationId": "resumeNops",
+        "responses": {
+          "204": { "description": "Resumed." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/fetch": {
       "post": {
         "summary": "Ask for a git poll now",

@@ -22,6 +22,8 @@ Nops sends a notification when a deployment:
 - completes, only for jobs with `nops_notify_completed = "true"`
   ([meta keys](meta-keys.md)).
 
+Nops also sends one when someone pauses or resumes every job.
+
 Turn on one or more adapters in [configuration](configuration.md#notifications):
 
 | Adapter | Sends |
@@ -34,6 +36,7 @@ Turn on one or more adapters in [configuration](configuration.md#notifications):
 
 ```json
 {
+  "event": "deployment",
   "deployment_id": "01J8ZX4N6Q9V3T2K5M7P8R1S0W",
   "job": "web",
   "namespace": "apps",
@@ -56,6 +59,8 @@ A notification waiting for a promotion also has `"waiting": "canary_promotion"`.
 One waiting for approval also has `changes`, such as `"2 groups, 3 tasks changed"`,
 one for a retry has `retry_of`, the ID of the deployment it retries, and one a
 person deployed outside its sync window has `deployed_now_by`, who asked.
+When someone pauses or resumes every job, `event` is `paused` or `resumed`,
+with `actor` and `reason`, and the deployment fields are empty.
 
 Nops tries each notification once, with no retry. A failed delivery logs a
 WARN and never stops a deployment. The log never contains the adapter URL,

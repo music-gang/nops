@@ -41,6 +41,7 @@ type Engine interface {
 	Status() engine.Status
 	ApplySucceededAt() time.Time
 	Observations() []engine.Observation
+	PausedAll() *engine.Hold
 }
 
 // Git is how the git watcher's polls went. *gitwatch.Watcher implements it.
@@ -143,7 +144,7 @@ type collector struct {
 	o Options
 
 	buildInfo, loopSuccess, deployments, waitingSince *prometheus.Desc
-	unparsedFiles, skippedJobs, orphanJobs            *prometheus.Desc
+	unparsedFiles, skippedJobs, orphanJobs, paused    *prometheus.Desc
 	jobInfo, jobDrift, jobPaused, jobBlocked, jobMeta *prometheus.Desc
 	notificationsFailed                               *prometheus.Desc
 }
@@ -168,6 +169,8 @@ func newCollector(o Options) *collector {
 			"Managed jobs the last detection cycle could not plan because of a Nomad failure.", nil, nil),
 		orphanJobs: prometheus.NewDesc("nops_orphan_jobs",
 			"Jobs nops deployed that are gone from the repository but still run in Nomad.", nil, nil),
+		paused: prometheus.NewDesc("nops_paused",
+			"1 if a person paused every job.", nil, nil),
 		jobInfo: prometheus.NewDesc("nops_job_info",
 			"Always 1, one per managed job of the last detection cycle; the policy label is its effective policy.",
 			append(job, "policy"), nil),
@@ -187,7 +190,7 @@ func newCollector(o Options) *collector {
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{
 		c.buildInfo, c.loopSuccess, c.deployments, c.waitingSince,
-		c.unparsedFiles, c.skippedJobs, c.orphanJobs,
+		c.unparsedFiles, c.skippedJobs, c.orphanJobs, c.paused,
 		c.jobInfo, c.jobDrift, c.jobPaused, c.jobBlocked, c.jobMeta,
 		c.notificationsFailed,
 	} {
@@ -218,8 +221,10 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.NewInvalidMetric(c.deployments, err)
 	}
 
-	// The counts of a cycle are only known once one has run.
+	// The counts of a cycle, and whether every job is paused, are only known once
+	// one has run.
 	if !st.At.IsZero() {
+		gauge(c.paused, boolValue(c.o.Engine.PausedAll() != nil))
 		gauge(c.unparsedFiles, float64(st.Unparsed))
 		gauge(c.skippedJobs, float64(st.Skipped))
 		gauge(c.orphanJobs, float64(st.Orphans))
@@ -229,7 +234,8 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		ns, job := obs.Namespace, obs.JobID
 		gauge(c.jobInfo, 1, ns, job, string(obs.Policy))
 		gauge(c.jobDrift, boolValue(obs.Drift), ns, job)
-		gauge(c.jobPaused, boolValue(obs.Hold != nil && obs.Hold.Kind == engine.HoldPaused), ns, job)
+		// The pause of every job is nops_paused, not one of each job's.
+		gauge(c.jobPaused, boolValue(obs.Hold != nil && obs.Hold.Kind == engine.HoldPaused && !obs.Hold.All), ns, job)
 		gauge(c.jobBlocked, boolValue(obs.BlockedBy != ""), ns, job)
 		gauge(c.jobMeta, boolValue(invalidMeta(obs.Issues)), ns, job)
 	}

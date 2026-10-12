@@ -55,6 +55,8 @@ func (s *server) apiEndpoints() []apiEndpoint {
 		{"POST /api/jobs/{namespace}/{job}/pause", inNamespace(acl.Pause), s.apiPause},
 		{"POST /api/jobs/{namespace}/{job}/resume", inNamespace(acl.Pause), s.apiResume},
 		{"POST /api/jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.apiDeployNow},
+		{"POST /api/pause", globally(acl.Pause), s.apiPauseAll},
+		{"POST /api/resume", globally(acl.Pause), s.apiResumeAll},
 		{"GET /api/acl/policies", anyToken(), s.apiListPolicies},
 		{"GET /api/acl/policies/{name}", anyToken(), s.apiGetPolicy},
 		{"PUT /api/acl/policies/{name}", management(), s.apiPutPolicy},
@@ -555,6 +557,38 @@ func (s *server) apiResume(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusConflict, "this job is not paused")
 	default:
 		s.apiServerError(w, r, "resume job", err)
+	}
+}
+
+func (s *server) apiPauseAll(w http.ResponseWriter, r *http.Request) {
+	var b pauseBody
+	if !readBody(w, r, &b) {
+		return
+	}
+	actor, _ := UserFrom(r.Context())
+	err := s.engine.PauseAll(r.Context(), actor, b.Reason)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrAlreadyPaused):
+		apiError(w, http.StatusConflict, "every job is already paused")
+	case errors.Is(err, engine.ErrPauseNoteTooLong):
+		apiError(w, http.StatusBadRequest, "the reason for a pause can be 500 bytes at most")
+	default:
+		s.apiServerError(w, r, "pause every job", err)
+	}
+}
+
+func (s *server) apiResumeAll(w http.ResponseWriter, r *http.Request) {
+	actor, _ := UserFrom(r.Context())
+	err := s.engine.ResumeAll(r.Context(), actor)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotPaused):
+		apiError(w, http.StatusConflict, "every job is not paused")
+	default:
+		s.apiServerError(w, r, "resume every job", err)
 	}
 }
 

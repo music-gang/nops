@@ -205,6 +205,8 @@ func TestEveryActionNeedsItsCapability(t *testing.T) {
 		{"resume", "/api/jobs/default/web/resume", ``, acl.Pause, false},
 		{"deploy now", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, acl.DeployNow, false},
 		{"fetch", "/api/fetch", ``, acl.Fetch, true},
+		{"pause every job", "/api/pause", ``, acl.Pause, true},
+		{"resume every job", "/api/resume", ``, acl.Pause, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rules := `namespace "default" { capabilities = ["` + string(c.need) + `"] }`
@@ -217,7 +219,14 @@ func TestEveryActionNeedsItsCapability(t *testing.T) {
 			}
 			others := `namespace "default" { capabilities = [` + strings.Join(rest, ", ") + `] }`
 			if c.global {
-				rules, others = `capabilities = ["fetch"]`, `namespace "*" { policy = "write" }`
+				// write on every namespace, and the other global capability, do not stand in.
+				other := acl.Pause
+				if c.need == acl.Pause {
+					other = acl.Fetch
+				}
+				rules = `capabilities = ["` + string(c.need) + `"]`
+				others = `namespace "*" { policy = "write" }
+capabilities = ["` + string(other) + `"]`
 			}
 			with := s.clientWith(rules)
 			if rec := s.api("POST", c.target, with, c.body); rec.Code == http.StatusForbidden {

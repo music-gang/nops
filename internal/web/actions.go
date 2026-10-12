@@ -107,6 +107,52 @@ func (s *server) resume(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// pauseAll is POST /pause: hold every job (Engine.PauseAll). The form's optional
+// "reason" is kept with who paused and when.
+func (s *server) pauseAll(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	err := s.engine.PauseAll(r.Context(), actor, r.FormValue("reason"))
+	switch {
+	case err == nil:
+		http.Redirect(w, r, s.basePath+"/", http.StatusSeeOther)
+	case errors.Is(err, store.ErrAlreadyPaused):
+		s.conflict(w, r, "Already paused", "Every job is already paused: someone paused it since the page was rendered.")
+	case errors.Is(err, engine.ErrPauseNoteTooLong):
+		w.WriteHeader(http.StatusBadRequest)
+		s.render(w, r, "error", errorData{
+			baseData: s.base(r, ""),
+			Status:   http.StatusBadRequest,
+			Title:    "Reason too long",
+			Message:  "The reason for a pause can be 500 bytes at most. Go back and shorten it.",
+		})
+	default:
+		s.serverError(w, r, "pause every job", err)
+	}
+}
+
+// resumeAll is POST /resume: lift the pause of every job (Engine.ResumeAll).
+// A job paused on its own stays paused.
+func (s *server) resumeAll(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	err := s.engine.ResumeAll(r.Context(), actor)
+	switch {
+	case err == nil:
+		http.Redirect(w, r, s.basePath+"/", http.StatusSeeOther)
+	case errors.Is(err, store.ErrNotPaused):
+		s.conflict(w, r, "Not paused", "Every job is not paused: it was already resumed since the page was rendered.")
+	default:
+		s.serverError(w, r, "resume every job", err)
+	}
+}
+
 // deployNow is POST /jobs/{namespace}/{job}/deploy-now: deploy a job held by its
 // sync window now (Engine.DeployNow). It applies nothing itself: the deployment
 // it asks for is created by a detection cycle, like any other. The form's

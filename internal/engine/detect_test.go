@@ -363,6 +363,35 @@ type fakeNotifier struct {
 	mu     sync.Mutex
 	calls  []*store.Deployment
 	phases []string // the phase of each call, in the same order
+	pauses []string // "paused alice: reason" or "resumed alice", one per NotifyPause
+}
+
+func (n *fakeNotifier) NotifyPause(_ context.Context, resumed bool, actor, reason string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	what := "paused"
+	if resumed {
+		what = "resumed"
+	}
+	n.pauses = append(n.pauses, what+" "+actor+": "+reason)
+}
+
+// pausesSent is what NotifyPause was called with, once want calls were made.
+func (n *fakeNotifier) pausesSent(t *testing.T, want int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		n.mu.Lock()
+		got := append([]string(nil), n.pauses...)
+		n.mu.Unlock()
+		if len(got) >= want || time.Now().After(deadline) {
+			if len(got) != want {
+				t.Fatalf("pause notifications = %v, want %d", got, want)
+			}
+			return got
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (n *fakeNotifier) Notify(_ context.Context, d *store.Deployment, phase string) {

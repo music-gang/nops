@@ -55,7 +55,7 @@ type Store interface {
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to
-// retry a failed or rejected one, to pause and resume a job, to deploy a job held by its
+// retry a failed or rejected one, to pause and resume a job or every job, to deploy a job held by its
 // sync window, to promote the canaries of a
 // deployment that waits for it and to read the drift of "none"-policy jobs.
 // *engine.Engine implements it.
@@ -70,6 +70,9 @@ type Engine interface {
 	Promote(ctx context.Context, id, actor string) error
 	Pause(ctx context.Context, namespace, jobID, actor, reason string) error
 	Resume(ctx context.Context, namespace, jobID, actor string) error
+	PauseAll(ctx context.Context, actor, reason string) error
+	ResumeAll(ctx context.Context, actor string) error
+	PausedAll() *engine.Hold
 	Status() engine.Status
 }
 
@@ -327,6 +330,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.page(inNamespace(acl.Pause), s.pause))
 	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.page(inNamespace(acl.Pause), s.resume))
 	mux.Handle("POST /jobs/{namespace}/{job}/deploy-now", s.page(inNamespace(acl.DeployNow), s.deployNow))
+	mux.Handle("POST /pause", s.page(globally(acl.Pause), s.pauseAll))
+	mux.Handle("POST /resume", s.page(globally(acl.Pause), s.resumeAll))
 	if s.trigger != nil {
 		mux.Handle("POST /fetch", s.page(globally(acl.Fetch), s.fetchNow))
 	}

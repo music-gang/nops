@@ -31,11 +31,13 @@ type fakeEngine struct {
 	status  engine.Status
 	applyAt time.Time
 	obs     []engine.Observation
+	paused  *engine.Hold
 }
 
 func (f fakeEngine) Status() engine.Status              { return f.status }
 func (f fakeEngine) ApplySucceededAt() time.Time        { return f.applyAt }
 func (f fakeEngine) Observations() []engine.Observation { return f.obs }
+func (f fakeEngine) PausedAll() *engine.Hold            { return f.paused }
 
 type fakeGit struct{ status gitwatch.Status }
 
@@ -76,6 +78,8 @@ func TestCollect(t *testing.T) {
 			// An unknown key is a warning: the policy stands.
 			{Namespace: "infra", JobID: "extra", Policy: meta.PolicyAuto, Issues: []meta.Issue{{Severity: meta.SeverityWarn}}},
 		},
+		// The pause of every job holds each job, and is not the pause of any.
+		paused: &engine.Hold{Kind: engine.HoldPaused, All: true},
 	}
 	o.Store = fakeStore{active: []*store.Deployment{
 		{Namespace: "apps", JobID: "db", State: store.StatePendingApproval, UpdatedAt: at(4000), CreatedAt: at(3900)},
@@ -147,6 +151,9 @@ nops_notifications_failed_total{adapter="ntfy"} 4
 # HELP nops_orphan_jobs Jobs nops deployed that are gone from the repository but still run in Nomad.
 # TYPE nops_orphan_jobs gauge
 nops_orphan_jobs 3
+# HELP nops_paused 1 if a person paused every job.
+# TYPE nops_paused gauge
+nops_paused 1
 # HELP nops_unparsed_files Files the last detection cycle could not parse, or that name a namespace nops does not manage.
 # TYPE nops_unparsed_files gauge
 nops_unparsed_files 2

@@ -34,6 +34,7 @@ type overviewData struct {
 	baseData
 	Git               gitView
 	Cycle             cycleView
+	CanPause          bool // POST /pause is allowed to this token
 	Attention         []attentionItem
 	InProgress        []deploymentCard // detected, pre_hook, applying, post_hook
 	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
@@ -83,6 +84,7 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		baseData:  s.base(r, "overview"),
 		Git:       s.gitView(r),
 		Cycle:     s.cycleView(),
+		CanPause:  subjectOf(r.Context()).acl.Global(acl.Pause),
 		Attention: s.attention(r, s.observations(r), active, latest),
 	}
 	for _, d := range active {

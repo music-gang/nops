@@ -209,7 +209,7 @@ func TestWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Event{
-		DeploymentID: "01J8ZX", Job: "web", Namespace: "apps", State: "failed", Phase: "pre",
+		Event: "deployment", DeploymentID: "01J8ZX", Job: "web", Namespace: "apps", State: "failed", Phase: "pre",
 		Policy: "approval", ApprovedBy: "alice", RetryOf: "01J8ZW", DeployedNowBy: "bob",
 		Error: "pre-hook web-migrate failed: exit 1", Commit: commitSHA,
 		CommitSubject: "Bump web to 1.4.0", CommitAuthor: "Alice", CommitURL: commitLink,
@@ -219,7 +219,7 @@ func TestWebhook(t *testing.T) {
 		t.Errorf("payload\n got %+v\nwant %+v", got, want)
 	}
 	// The keys receivers already read keep their names.
-	for _, k := range []string{"deployment_id", "job", "namespace", "state", "error", "commit", "url", "time"} {
+	for _, k := range []string{"event", "deployment_id", "job", "namespace", "state", "error", "commit", "url", "time"} {
 		if _, ok := decode(t, r.body)[k]; !ok {
 			t.Errorf("payload has no %q key", k)
 		}
@@ -785,5 +785,101 @@ func TestWaitingForCanaryPromotion(t *testing.T) {
 		if m := decode(t, srv.requests()[0].body); m["waiting"] != nil {
 			t.Errorf("%s: payload = %v, want no waiting key", name, m)
 		}
+	}
+}
+
+// notifyPauseAll sends the pause (or resume) of every job to every adapter and
+// returns what each received.
+func notifyPauseAll(t *testing.T, o Options, srvs map[string]*server, resumed bool, actor, reason string) map[string]received {
+	t.Helper()
+	log, buf := logger()
+	New(o, log).NotifyPause(context.Background(), resumed, actor, reason)
+	if buf.Len() > 0 {
+		t.Fatalf("log = %s", buf)
+	}
+	got := map[string]received{}
+	for name, srv := range srvs {
+		reqs := srv.requests()
+		if len(reqs) != 1 {
+			t.Fatalf("%s: %d requests, want 1", name, len(reqs))
+		}
+		got[name] = reqs[0]
+	}
+	return got
+}
+
+func TestPauseOfEveryJobInTheWebhook(t *testing.T) {
+	for _, tc := range []struct {
+		resumed bool
+		event   string
+		reason  string
+	}{{false, "paused", "nomad upgrade"}, {true, "resumed", ""}} {
+		o, srvs := allAdapters(t)
+		r := notifyPauseAll(t, o, srvs, tc.resumed, "alice", tc.reason)["webhook"]
+		var got Event
+		if err := json.Unmarshal(r.body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Event != tc.event || got.Actor != "alice" || got.Reason != tc.reason || got.Time.IsZero() {
+			t.Errorf("payload = %+v, want a %s event by alice for %q", got, tc.event, tc.reason)
+		}
+		if got.DeploymentID != "" || got.Job != "" || got.Namespace != "" || got.State != "" || got.Commit != "" || got.URL != "" {
+			t.Errorf("payload = %+v, want the deployment fields empty", got)
+		}
+	}
+}
+
+func TestPauseOfEveryJobInEachAdapter(t *testing.T) {
+	o, srvs := allAdapters(t)
+	o.Ntfy.Token = "tk"
+	got := notifyPauseAll(t, o, srvs, false, "alice", "nomad upgrade")
+
+	d := decodeDiscord(t, got["discord"].body)
+	if d.Embeds[0].Title != "⏸ Nops paused" || d.Embeds[0].Color != colorPending || d.Content != "⏸ Nops paused\nnomad upgrade" {
+		t.Errorf("discord = %+v", d)
+	}
+	for _, f := range d.Embeds[0].Fields {
+		if f.Name == "Commit" {
+			t.Errorf("discord has a Commit field: %+v", f)
+		}
+	}
+
+	s := string(got["slack"].body)
+	if !strings.Contains(s, "Nops paused") || !strings.Contains(s, "By: alice") || strings.Contains(s, "Commit") {
+		t.Errorf("slack = %s, want the pause by alice and no commit", s)
+	}
+
+	n := got["ntfy"]
+	if n.header.Get("Title") != "Nops paused" || n.header.Get("Tags") != "pause_button" || n.header.Get("Priority") != "3" {
+		t.Errorf("ntfy headers %v", n.header)
+	}
+	if want := "nomad upgrade\nBy: alice"; string(n.body) != want {
+		t.Errorf("ntfy body %q, want %q", n.body, want)
+	}
+
+	g := decode(t, got["gotify"].body)
+	if g["title"] != "⏸ Nops paused" || g["message"] != "nomad upgrade\nBy: alice" || g["priority"] != float64(5) {
+		t.Errorf("gotify = %v", g)
+	}
+}
+
+func TestResumeOfEveryJobIsGreenAndSaysSo(t *testing.T) {
+	o, srvs := allAdapters(t)
+	got := notifyPauseAll(t, o, srvs, true, "bob", "")
+
+	d := decodeDiscord(t, got["discord"].body)
+	if d.Embeds[0].Title != "▶️ Nops resumed" || d.Embeds[0].Color != colorCompleted {
+		t.Errorf("discord = %+v, want a green resumed embed", d)
+	}
+	if n := got["ntfy"]; n.header.Get("Tags") != "arrow_forward" || !strings.HasPrefix(string(n.body), "jobs are planned again from git") {
+		t.Errorf("ntfy = %v %q", n.header, n.body)
+	}
+}
+
+func TestPauseOfEveryJobWithoutAnAdapterSendsNothing(t *testing.T) {
+	log, buf := logger()
+	New(Options{Timeout: time.Second}, log).NotifyPause(context.Background(), false, "alice", "")
+	if buf.Len() > 0 {
+		t.Errorf("log = %s", buf)
 	}
 }

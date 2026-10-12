@@ -113,3 +113,62 @@ func (s *Store) PauseOf(ctx context.Context, namespace, jobID string) (Pause, er
 	}
 	return p, nil
 }
+
+// PauseAll records that actor paused every job: nops starts no new deployment
+// for any job until ResumeAll (docs/policies.md#pausing-a-job). It returns
+// ErrAlreadyPaused if every job is already paused, the one-pause rule being the
+// database's (a partial unique index).
+func (s *Store) PauseAll(ctx context.Context, actor, reason string) error {
+	if actor == "" {
+		return errors.New("pause every job: actor is required")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO nops_pauses (paused_by, paused_at, reason)
+		VALUES (?, ?, ?)`, actor, s.ts(), reason)
+	if isUniqueViolation(err) {
+		return fmt.Errorf("pause every job: %w", ErrAlreadyPaused)
+	}
+	if err != nil {
+		return fmt.Errorf("pause every job: %w", err)
+	}
+	return nil
+}
+
+// ResumeAll records that actor lifted the pause of every job, and returns
+// ErrNotPaused if there was none. The row stays, as the record of the pause.
+func (s *Store) ResumeAll(ctx context.Context, actor string) error {
+	if actor == "" {
+		return errors.New("resume every job: actor is required")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE nops_pauses SET resumed_by = ?, resumed_at = ?
+		WHERE resumed_at IS NULL`, actor, s.ts())
+	if err != nil {
+		return fmt.Errorf("resume every job: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("resume every job: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("resume every job: %w", ErrNotPaused)
+	}
+	return nil
+}
+
+// AllPause returns the pause of every job in force, or ErrNotFound if there is
+// none. Its Namespace and JobID are empty.
+func (s *Store) AllPause(ctx context.Context) (Pause, error) {
+	var p Pause
+	var at string
+	err := s.db.QueryRowContext(ctx, `SELECT paused_by, paused_at, reason FROM nops_pauses
+		WHERE resumed_at IS NULL`).Scan(&p.PausedBy, &at, &p.Reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Pause{}, fmt.Errorf("pause of every job: %w", ErrNotFound)
+	}
+	if err != nil {
+		return Pause{}, fmt.Errorf("pause of every job: %w", err)
+	}
+	if p.PausedAt, err = parseTime(at); err != nil {
+		return Pause{}, fmt.Errorf("parse pause time %q: %w", at, err)
+	}
+	return p, nil
+}

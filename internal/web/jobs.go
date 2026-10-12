@@ -282,6 +282,9 @@ type orphanView struct {
 type pauseView struct {
 	By, Note string
 	Since    timeView
+	// All says the pause is the one of every job, which the banner of the page
+	// lifts.
+	All bool
 	// ResumePath is where the "Resume" button posts.
 	ResumePath string
 }
@@ -413,8 +416,8 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		running := latest != nil && latest.State.IsActive() && latest.WindowLiftedBy != ""
 		switch h := obs.Hold; {
 		case h != nil && h.Kind == engine.HoldPaused:
-			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since)}
-			if mayPause {
+			data.Paused = &pauseView{By: h.By, Note: h.Note, Since: s.when(h.Since), All: h.All}
+			if mayPause && !h.All {
 				data.Paused.ResumePath = s.jobPath(ns, id) + "/resume"
 			}
 		case h != nil && obs.Drift && !running:
@@ -537,7 +540,8 @@ func (s *server) attention(r *http.Request, obs []engine.Observation, active []*
 	// A pause is deliberate, but a forgotten one stops a job converging with
 	// nothing else saying so.
 	for _, o := range obs {
-		if o.Hold == nil || o.Hold.Kind != engine.HoldPaused {
+		// The pause of every job is on the banner of every page, not one line a job.
+		if o.Hold == nil || o.Hold.Kind != engine.HoldPaused || o.Hold.All {
 			continue
 		}
 		it := attentionItem{

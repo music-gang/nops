@@ -87,11 +87,30 @@ type baseData struct {
 	Base string
 	// Version is the build the footer shows; empty shows no footer.
 	Version string
+	// NopsPaused is the pause of every job, nil when there is none: every page
+	// says so. (Paused is taken: the job and deployment pages have their own.)
+	NopsPaused *nopsPauseView
+}
+
+// nopsPauseView is the pause of every job as the banner of each page shows it.
+type nopsPauseView struct {
+	By, Note string
+	Since    timeView
+	// ResumePath is where the banner's "Resume" posts, empty for a token without
+	// the capability.
+	ResumePath string
 }
 
 func (s *server) base(r *http.Request, nav string) baseData {
 	actor, _ := UserFrom(r.Context())
-	return baseData{Actor: actor, Nav: nav, Self: s.basePath + r.URL.RequestURI(), Base: s.basePath, Version: s.version}
+	b := baseData{Actor: actor, Nav: nav, Self: s.basePath + r.URL.RequestURI(), Base: s.basePath, Version: s.version}
+	if h := s.engine.PausedAll(); h != nil {
+		b.NopsPaused = &nopsPauseView{By: h.By, Note: h.Note, Since: s.when(h.Since)}
+		if subjectOf(r.Context()).acl.Global(acl.Pause) {
+			b.NopsPaused.ResumePath = s.basePath + "/resume"
+		}
+	}
+	return b
 }
 
 // duration writes d the way a person would: "10m", not Go's "10m0s".

@@ -50,6 +50,10 @@ type Endpoint struct {
 // Event is what a notification says. It is also the body of the generic
 // webhook.
 type Event struct {
+	// Event says what the notification is about: EventDeployment, or
+	// EventPaused or EventResumed for the pause of every job, which has no
+	// deployment, job or commit.
+	Event        string `json:"event"`
 	DeploymentID string `json:"deployment_id"`
 	Job          string `json:"job"`
 	Namespace    string `json:"namespace"`
@@ -77,11 +81,25 @@ type Event struct {
 	DeployedNowBy string `json:"deployed_now_by,omitempty"`
 	// Changes sums up the plan diff of a deployment waiting for approval, such
 	// as "2 groups, 3 tasks changed".
-	Changes string    `json:"changes,omitempty"`
-	Time    time.Time `json:"time"`
+	Changes string `json:"changes,omitempty"`
+	// Actor and Reason are who paused or resumed every job and why, for those
+	// two events only.
+	Actor  string    `json:"actor,omitempty"`
+	Reason string    `json:"reason,omitempty"`
+	Time   time.Time `json:"time"`
 
 	logo string // address of Nops's logo, for the adapters that show a sender
 }
+
+// The values of Event.Event.
+const (
+	EventDeployment = "deployment"
+	EventPaused     = "paused"
+	EventResumed    = "resumed"
+)
+
+// pauseEvent says whether e is about the pause of every job, not a deployment.
+func pauseEvent(e Event) bool { return e.Event == EventPaused || e.Event == EventResumed }
 
 // WaitingCanaryPromotion is the Waiting of a deployment whose Nomad deployment
 // waits for a person to promote its canaries.
@@ -145,6 +163,7 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment, phase string
 		return
 	}
 	e := Event{
+		Event:         EventDeployment,
 		DeploymentID:  d.ID,
 		Job:           d.JobID,
 		Namespace:     d.Namespace,
@@ -174,11 +193,36 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment, phase string
 	if n.publicURL != "" {
 		e.URL = n.publicURL + "/deployments/" + url.PathEscape(d.ID)
 	}
+	n.deliver(ctx, e)
+}
+
+// NotifyPause tells every configured adapter that actor paused every job, or,
+// with resumed, resumed them. reason is why they paused, "" for a resume. It
+// delivers like Notify.
+func (n *Notifier) NotifyPause(ctx context.Context, resumed bool, actor, reason string) {
+	if len(n.senders) == 0 {
+		return
+	}
+	e := Event{
+		Event:  EventPaused,
+		Actor:  actor,
+		Reason: reason,
+		Time:   time.Now().UTC(),
+		logo:   logoURL(n.publicURL),
+	}
+	if resumed {
+		e.Event = EventResumed
+	}
+	n.deliver(ctx, e)
+}
+
+// deliver sends e to every adapter, logging each one that fails.
+func (n *Notifier) deliver(ctx context.Context, e Event) {
 	for _, s := range n.senders {
 		if err := n.send(ctx, s, e); err != nil {
 			s.failed.Add(1)
 			n.log.WarnContext(ctx, "notification not delivered",
-				"adapter", s.name, "deployment_id", e.DeploymentID, "job", e.Job,
+				"adapter", s.name, "event", e.Event, "deployment_id", e.DeploymentID, "job", e.Job,
 				"namespace", e.Namespace, "state", e.State, "error", err)
 		}
 	}
@@ -274,18 +318,21 @@ func discord(e Event) (request, error) {
 		Timestamp   time.Time `json:"timestamp"`
 	}
 	color := colorPending
-	switch store.State(e.State) {
-	case store.StateFailed:
-		color = colorFailed
-	case store.StateCompleted:
+	switch {
+	case e.Event == EventResumed, store.State(e.State) == store.StateCompleted:
 		color = colorCompleted
+	case store.State(e.State) == store.StateFailed:
+		color = colorFailed
 	}
 
-	sha := "`" + orDash(shortCommit(e.Commit)) + "`"
-	if e.CommitURL != "" {
-		sha = "[" + sha + "](" + e.CommitURL + ")"
+	var fields []field
+	if !pauseEvent(e) {
+		sha := "`" + orDash(shortCommit(e.Commit)) + "`"
+		if e.CommitURL != "" {
+			sha = "[" + sha + "](" + e.CommitURL + ")"
+		}
+		fields = append(fields, field{Name: "Commit", Value: truncate(strings.TrimSpace(sha+" "+discordEscape(commitLead(e))), discordFieldMax)})
 	}
-	fields := []field{{Name: "Commit", Value: truncate(strings.TrimSpace(sha+" "+discordEscape(commitLead(e))), discordFieldMax)}}
 	for _, f := range facts(e) {
 		fields = append(fields, field{Name: f.name, Value: truncate(discordEscape(f.value), discordFieldMax), Inline: true})
 	}
@@ -359,9 +406,11 @@ func slack(e Event) (request, error) {
 
 	blocks := []any{
 		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": truncate(title(e), slackHeaderMax), "emoji": true}},
-		section(commit),
-		map[string]any{"type": "context", "elements": []any{mrkdwn(strings.Join(fs, " · "))}},
 	}
+	if !pauseEvent(e) {
+		blocks = append(blocks, section(commit))
+	}
+	blocks = append(blocks, map[string]any{"type": "context", "elements": []any{mrkdwn(strings.Join(fs, " · "))}})
 	if e.Error != "" {
 		blocks = append(blocks, section(">"+strings.ReplaceAll(truncate(slackEscape(e.Error), slackSectionMax-1), "\n", "\n>")))
 	}
@@ -384,9 +433,11 @@ func slack(e Event) (request, error) {
 	if l != "" {
 		fmt.Fprintf(&b, "\n%s", slackEscape(l))
 	}
-	b.WriteString("\nCommit: " + sha)
-	if d := commitDetail(e); d != "" {
-		b.WriteString(" " + slackEscape(d))
+	if !pauseEvent(e) {
+		b.WriteString("\nCommit: " + sha)
+		if d := commitDetail(e); d != "" {
+			b.WriteString(" " + slackEscape(d))
+		}
 	}
 	fmt.Fprintf(&b, "\n%s", strings.Join(fs, " · "))
 	if e.Error != "" && e.Error != l {
@@ -445,6 +496,12 @@ func ntfy(e Event, token string) (request, error) {
 
 // ntfyTag is the shortcode of the emoji of the title, from ntfy's own list.
 func ntfyTag(e Event) string {
+	switch e.Event {
+	case EventPaused:
+		return "pause_button"
+	case EventResumed:
+		return "arrow_forward"
+	}
 	if e.Waiting == WaitingCanaryPromotion {
 		return "baby_chick"
 	}

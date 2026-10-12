@@ -40,6 +40,27 @@
     <span class="strip__main muted">waiting for the first cycle</span>
     {{end}}
   </div>
+  <div class="strip__row">
+    <span class="strip__label">Nops</span>
+    {{with .NopsPaused}}
+    <span class="strip__main">paused by {{.By}} {{template "time" .Since}}{{if .Note}} <span class="muted">&middot;</span> <span title="{{.Note}}">{{.Note}}</span>{{end}}</span>
+    <span class="pill state-pending">paused</span>
+    {{else}}
+    <span class="strip__main muted">deploying as the policies say</span>
+    <span class="pill state-success">running</span>
+    {{if $.CanPause}}
+    {{/* hx-preserve keeps it open, and what is typed in it, across the refreshes of #live. */}}
+    <details class="popover strip__action" id="pause-all" hx-preserve>
+      <summary class="btn btn--sm">Pause</summary>
+      <form method="post" action="{{$.Base}}/pause" class="popover__body">
+        <p class="muted">nops starts no deployment for any job until it is resumed. Drift is still detected and shown; a deployment already running finishes.</p>
+        <input type="text" name="reason" maxlength="500" placeholder="Reason (optional)" aria-label="Reason for pausing every job" class="input">
+        <button type="submit" class="btn btn--sm">Pause every job</button>
+      </form>
+    </details>
+    {{end}}
+    {{end}}
+  </div>
   {{if .Cycle.Error}}<p class="flash flash--error flash--flat">The last cycle stopped: {{.Cycle.Error}}</p>{{end}}
   {{if .Cycle.Skipped}}<p class="flash flash--warn flash--flat">{{.Cycle.Skipped}} {{if eq .Cycle.Skipped 1}}job was{{else}}jobs were{{end}} skipped in the last cycle because Nomad failed on {{if eq .Cycle.Skipped 1}}it{{else}}them{{end}}: their state below may be out of date. The logs say why.</p>{{end}}
   {{if .Cycle.Unparsed}}<p class="flash flash--warn flash--flat">{{.Cycle.Unparsed}} {{if eq .Cycle.Unparsed 1}}file{{else}}files{{end}} in the repository could not be parsed by Nomad and {{if eq .Cycle.Unparsed 1}}is{{else}}are{{end}} ignored. The logs say which.</p>{{end}}

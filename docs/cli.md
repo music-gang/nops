@@ -35,8 +35,8 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops reject <id>` | Reject. |
 | `nops promote <id>` | Promote the canaries of a deployment that waits for it. |
 | `nops retry <id>` | Retry a failed or rejected deployment and print the new ID. |
-| `nops pause <job>` | [Pause](policies.md#pausing-a-job) a job. `-reason` says why. |
-| `nops resume <job>` | Resume a job. |
+| `nops pause <job>` | [Pause](policies.md#pausing-a-job) a job, or every job with `-all`. `-reason` says why. |
+| `nops resume <job>` | Resume a job, or every job with `-all`. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
 | `nops login` | Log in with the [login mode](dashboard.md#authentication) of Nops and save the session for its URL, in `nops/session` under your user configuration directory. Basic asks for the username and password. OIDC opens the browser, which must run on the same machine. The session lasts 12 hours. |

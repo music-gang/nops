@@ -82,6 +82,10 @@ type Store interface {
 	ResumeJob(ctx context.Context, namespace, jobID, actor string) error
 	ActivePauses(ctx context.Context) ([]store.Pause, error)
 	PauseOf(ctx context.Context, namespace, jobID string) (store.Pause, error)
+	// PauseAll, ResumeAll and AllPause are the same for the pause of every job.
+	PauseAll(ctx context.Context, actor, reason string) error
+	ResumeAll(ctx context.Context, actor string) error
+	AllPause(ctx context.Context) (store.Pause, error)
 	// RequestWindowLift, WindowLifts and DropWindowLift are used by Deploy now
 	// (see docs/policies.md#sync-window).
 	RequestWindowLift(ctx context.Context, namespace, jobID, specHash, actor string) error
@@ -101,11 +105,13 @@ type Snapshots interface {
 	Changed() <-chan struct{}
 }
 
-// Notifier tells people a deployment needs them. *notify.Notifier implements
-// it. Notify never returns an error: a failed delivery is only ever a WARN.
-// phase is where a failed deployment failed (failedPhase), "" for any other.
+// Notifier tells people a deployment needs them, or that every job was paused
+// or resumed. *notify.Notifier implements it. It never returns an error: a
+// failed delivery is only ever a WARN. phase is where a failed deployment
+// failed (failedPhase), "" for any other.
 type Notifier interface {
 	Notify(ctx context.Context, d *store.Deployment, phase string)
+	NotifyPause(ctx context.Context, resumed bool, actor, reason string)
 }
 
 // jobKey identifies a job: the same ID in two namespaces is two jobs.
@@ -241,8 +247,10 @@ type Engine struct {
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[jobKey]Observation
-	orphans      []Orphan
-	status       Status
+	// all is the pause of every job, nil when there is none.
+	all     *Hold
+	orphans []Orphan
+	status  Status
 	// applyAt is when the apply loop last listed the active deployments.
 	applyAt time.Time
 
