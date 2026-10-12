@@ -152,6 +152,21 @@ openssl rand -hex 32 > nops-webhook-secret
 Nops checks GitHub, Gitea, and GitLab signatures, and answers 401 to
 anything else.
 
+## Backups
+
+*Administration › Backup* on the dashboard, `nops backup nops.db`, and
+`GET /api/backup` save a consistent copy of the database while Nops runs. It
+holds every secret of the job specs and the ACL, so protect it like the
+database.
+
+A token needs `capabilities = ["backup"]` outside the namespace blocks, and
+Nops shows each backup with the ACL changes. Nops never takes one on its own:
+schedule them yourself.
+
+To restore, stop Nops, replace the `-db-path` file with the backup, remove any
+`-wal` and `-shm` file beside it, and start Nops. A token revoked since the
+backup works again: revoke it again.
+
 ## Upgrading
 
 - Read the [release notes](https://github.com/music-gang/nops/releases) of every
@@ -159,5 +174,5 @@ anything else.
   says what to change in its *Upgrade notes*.
 - Pin a minor (`X.Y`) or an exact version, never `latest`: before `v1`, a new
   minor may break the configuration or the database.
-- Back up the database before upgrading: an older Nops refuses to start on a
-  database a newer one migrated.
+- [Back up the database](#backups) before upgrading: an older Nops refuses to
+  start on a database a newer one migrated.

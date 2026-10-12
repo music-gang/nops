@@ -33,8 +33,8 @@ tokens a person or a token created also revokes the tokens those created.
 ## Endpoints
 
 Requests with a body send JSON. Answers are JSON, except an action with
-nothing to return: it answers `204` with no body, and `/api/fetch` answers
-`202`.
+nothing to return: it answers `204` with no body, `/api/fetch` answers `202`,
+and `/api/backup` answers the database file.
 
 | Request | What it does |
 |---|---|
@@ -52,6 +52,7 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `POST /api/pause` | [Pause every job](policies.md#pausing-a-job). Optional body: `{"reason": "..."}`. |
 | `POST /api/resume` | Resume every job. |
 | `POST /api/fetch` | Ask for a git poll now. |
+| `GET /api/backup` | A [backup](running-nops.md#backups) of the database, as a SQLite file. |
 | `GET /api/acl/policies` | The [ACL policies](acl.md#acl-policies): all with a management token, the token's own otherwise. |
 | `GET /api/acl/policies/{name}` | One ACL policy with its rules. |
 | `PUT /api/acl/policies/{name}` | Create or replace an ACL policy. Body: `{"description": "...", "rules": "..."}`. Management token only. |
@@ -69,7 +70,7 @@ nothing to return: it answers `204` with no body, and `/api/fetch` answers
 | `DELETE /api/acl/binding-rules/{id}` | Delete a binding rule. Management token only. |
 | `GET /api/acl/token/self` | The token of the request. |
 | `DELETE /api/acl/token/self` | Revoke the token of the request. |
-| `GET /api/acl/changes` | The latest changes to ACL policies, binding rules, and tokens. Management token only. |
+| `GET /api/acl/changes` | The latest changes to ACL policies, binding rules, and tokens, and the backups taken. Management token only. |
 | `GET /api/openapi.json` | The [OpenAPI](https://spec.openapis.org/oas/v3.1.0) description of these endpoints. |
 
 ## Errors

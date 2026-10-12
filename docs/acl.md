@@ -83,6 +83,7 @@ The top-level `capabilities` list holds the ones that belong to no namespace:
 | Capability | Allows |
 |---|---|
 | `fetch` | Ask for a git poll. |
+| `backup` | Take a [backup](running-nops.md#backups) of the database: every job spec with its secrets, and the ACL. |
 | `pause` | Pause and resume [every job](policies.md#pausing-a-job). |
 
 For a request on a namespace, Nops takes the most specific rule that matches

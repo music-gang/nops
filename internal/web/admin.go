@@ -141,9 +141,11 @@ type policyChoice struct {
 // marks Section and, with a management token, lists the other pages.
 type adminBase struct {
 	baseData
-	ACLOn   bool
-	Manage  bool
-	Section string // "self", "tokens", "policies", "rules" or "changes"
+	ACLOn  bool
+	Manage bool
+	// CanBackup is whether the token has the global capability backup.
+	CanBackup bool
+	Section   string // "self", "tokens", "policies", "rules", "changes" or "backup"
 }
 
 type adminSelfData struct {
@@ -204,7 +206,7 @@ type adminChangesData struct {
 }
 
 func (s *server) adminBase(r *http.Request, section string) adminBase {
-	return adminBase{baseData: s.base(r, "admin"), ACLOn: s.aclOn, Manage: subjectOf(r.Context()).acl.Management(), Section: section}
+	return adminBase{baseData: s.base(r, "admin"), ACLOn: s.aclOn, Manage: subjectOf(r.Context()).acl.Management(), CanBackup: subjectOf(r.Context()).acl.Global(acl.Backup), Section: section}
 }
 
 func (s *server) selfOf(sub *subject) selfView {

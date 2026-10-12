@@ -24,7 +24,9 @@ retry, pause, and resume deployments. Every page needs a
 - **Administration** (`/admin`): your [token](api.md#tokens) and, with a
   management token, a page each for tokens,
   [ACL policies](acl.md#acl-policies), [binding rules](acl.md#binding-rules)
-  and the latest changes to them. Create
+  and the latest changes to them, with the backups taken. With the `backup`
+  capability, a *Backup* page downloads a
+  [backup](running-nops.md#backups) of the database. Create
   and revoke tokens, revoke every session of a person or every token someone
   created after seeing which ones go, and edit ACL policies and binding rules
   here. Copy your

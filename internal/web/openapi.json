@@ -267,6 +267,22 @@
         }
       }
     },
+    "/api/backup": {
+      "get": {
+        "summary": "A backup of the database, as a SQLite file",
+        "description": "Needs the global capability backup. It holds every job spec with its secrets, and the ACL.",
+        "operationId": "getBackup",
+        "responses": {
+          "200": {
+            "description": "A consistent copy of the database, ready to use.",
+            "content": { "application/vnd.sqlite3": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/acl/policies": {
       "get": {
         "summary": "The ACL policies: all for a management token, the ones a client token carries",
@@ -812,9 +828,9 @@
           "accessor_id": { "type": "string", "description": "The token used. Empty when the change was made without one." },
           "actor": { "type": "string" },
           "identity": { "type": "string", "description": "The person behind the token used. Absent when it was not a login." },
-          "action": { "type": "string", "enum": ["create", "update", "delete", "revoke"] },
-          "kind": { "type": "string", "enum": ["acl-policy", "binding-rule", "token"] },
-          "object": { "type": "string", "description": "The name of an ACL policy, the ID of a binding rule, or the accessor ID of a token." }
+          "action": { "type": "string", "enum": ["create", "update", "delete", "revoke", "backup"] },
+          "kind": { "type": "string", "enum": ["acl-policy", "binding-rule", "token", "database"] },
+          "object": { "type": "string", "description": "The name of an ACL policy, the ID of a binding rule, or the accessor ID of a token. Empty for a backup." }
         }
       }
     }

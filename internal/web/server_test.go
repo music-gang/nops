@@ -228,6 +228,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		"admin_rule (delete)":  rulePageData{adminBase: admin, Form: ruleForm{ID: "r1", Description: "ops", Existing: true}, Delete: true},
 		"admin_changes":        adminChangesData{adminBase: admin, Changes: []changeRow{{When: tv, Actor: "alice", AccessorID: "01ABC", Action: "create", Kind: "token", Object: "01DEF"}, {When: tv, Actor: "bootstrap", Action: "update", Kind: "acl-policy", Object: "readers"}}},
 		"admin_changes (none)": adminChangesData{adminBase: admin},
+		"admin_backup":         adminBackupData{adminBase: admin},
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -56,6 +56,8 @@ func TestParseRefusesWhatIsWrong(t *testing.T) {
 		"unknown policy":              {`namespace "a" { policy = "admin" }`, `"admin"`},
 		"unknown capability":          {`namespace "a" { capabilities = ["submit"] }`, `"submit"`},
 		"fetch in a namespace":        {`namespace "a" { capabilities = ["fetch"] }`, `"fetch"`},
+		"backup in a namespace":       {`namespace "a" { capabilities = ["backup"] }`, `"backup"`},
+		"an unknown global one":       {`capabilities = ["reboot"]`, "fetch, pause, backup"},
 		"a namespace capability up":   {`capabilities = ["read"]`, `"read"`},
 		"empty block":                 {`namespace "a" {}`, "set policy or capabilities"},
 		"deny with capabilities":      {"namespace \"a\" {\n policy = \"deny\"\n capabilities = [\"read\"]\n}", "deny allows no capabilities"},
@@ -140,6 +142,17 @@ namespace "prod" { policy = "read" }
 	}
 	if a.Allow("dev", Read) {
 		t.Error("dev is denied by *")
+	}
+}
+
+func TestBackupIsAGlobalCapability(t *testing.T) {
+	p := mustParse(t, `capabilities = ["backup"]`)
+	a := New(p)
+	if !a.Global(Backup) || a.Global(Fetch) || a.Allow("default", Read) {
+		t.Error("backup should grant the backup and nothing else")
+	}
+	if New(mustParse(t, `capabilities = ["fetch", "pause"]`)).Global(Backup) {
+		t.Error("fetch and pause do not grant a backup")
 	}
 }
 

@@ -420,6 +420,13 @@ func (a *answerChecker) check(method, target string, rec *httptest.ResponseRecor
 		}
 		return nil
 	}
+	if _, ok := content["application/json"]; !ok {
+		// A file: the description names its type, and the body is not checked.
+		if ct := rec.Header().Get("Content-Type"); content[ct] == nil {
+			return fmt.Errorf("%s %s answered %d with Content-Type %q, the description has %v", method, path, rec.Code, ct, keys(content))
+		}
+		return nil
+	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		return fmt.Errorf("%s %s answered %d with Content-Type %q, the description has application/json", method, path, rec.Code, ct)
 	}
