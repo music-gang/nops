@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -490,6 +491,40 @@ func TestSchemaVersion(t *testing.T) {
 	var v int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 11 {
 		t.Errorf("user_version = %d, %v; want 11", v, err)
+	}
+}
+
+func TestOpenRefusesNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nops.db")
+	openAt(t, path).Close()
+
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := strconv.Atoi(strings.SplitN(entries[len(entries)-1].Name(), "_", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", latest+1)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open on a newer database succeeded")
+	}
+	for _, want := range []string{strconv.Itoa(latest + 1), strconv.Itoa(latest)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name version %s", err, want)
+		}
 	}
 }
 
