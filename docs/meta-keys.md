@@ -19,6 +19,10 @@ block, in the HCL in git. It never writes them.
 
 Values are case-sensitive: `"True"` isn't valid.
 
+The keys are part of the job Nops registers. A commit that changes only a
+`nops_*` key is a change to the job: it goes through the job's policy like
+any other, and Nomad replaces the job's allocations.
+
 ```hcl
 job "api" {
   meta {
