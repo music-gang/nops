@@ -569,3 +569,67 @@ func TestSameJobIDInTwoNamespaces(t *testing.T) {
 		t.Errorf("parsed namespace = %v, want default", def.Namespace)
 	}
 }
+
+// TestMetaOnlyChangeReplacesAllocations checks what docs/meta-keys.md says:
+// a commit that changes only a nops_* key is a change to the job, and Nomad
+// replaces its allocations rather than updating them in place.
+func TestMetaOnlyChangeReplacesAllocations(t *testing.T) {
+	c, raw := newClient(t)
+	ctx := context.Background()
+	id := uniqueID(t, raw, "metaonly")
+
+	parse := func(policy string) *api.Job {
+		t.Helper()
+		j, err := c.ParseHCL(ctx, "default", fmt.Sprintf(`
+job %q {
+  meta {
+    nops_managed = "true"
+    nops_policy  = %q
+  }
+  group "g" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sleep"
+        args    = ["3600"]
+      }
+    }
+  }
+}`, id, policy), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+
+	if _, err := c.RegisterCAS(ctx, parse("auto"), 0, false); err != nil {
+		t.Fatal(err)
+	}
+	// The plan compares against the allocations that exist: wait for one.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		allocs, _, err := raw.Jobs().Allocations(id, false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(allocs) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no allocation placed within 30s")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	p, err := c.Plan(ctx, parse("approval"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Diff.Type != "Edited" {
+		t.Errorf("diff type = %q, want Edited", p.Diff.Type)
+	}
+	u := p.Annotations.DesiredTGUpdates["g"]
+	if u == nil || u.DestructiveUpdate != 1 || u.InPlaceUpdate != 0 {
+		t.Errorf("group g updates = %+v, want 1 destructive and 0 in-place", u)
+	}
+}
