@@ -675,6 +675,24 @@ func TestStepHealthAllocationsPathLiveJobModifiedFails(t *testing.T) {
 	h.notifier.waitFor(t, 1)
 }
 
+// The job was purged from Nomad (outside nops, or a Nomad that lost its
+// state) while its deployment waited for health: it fails at once, not at the
+// apply timeout.
+func TestStepHealthJobRemovedFromNomadFails(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", nil)
+	d := h.applyingWithIndex("web", job, 9)
+	// No Nomad deployment and no live job: the fake answers ErrJobNotFound.
+
+	h.step(d)
+
+	got := h.get(d.ID)
+	if got.State != store.StateFailed || !strings.Contains(got.Error, "job removed from Nomad outside nops") {
+		t.Fatalf("deployment = %s %q, want failed: job removed from Nomad outside nops", got.State, got.Error)
+	}
+	h.notifier.waitFor(t, 1)
+}
+
 func TestStepHealthCompletesToPostHookWhenDeclared(t *testing.T) {
 	h := newHarness(t)
 	job := managed("web", "auto", map[string]string{"nops_post_hook": "web-smoke"})
