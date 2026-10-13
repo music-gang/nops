@@ -10,7 +10,8 @@ cover single deployments.
 `/metrics` needs no dashboard login. If you set
 [`-metrics-token-file`](configuration.md#dashboard), a scrape must send the
 token as `Authorization: Bearer <token>`. The metrics hold job names,
-policies, and drift. They never hold specs or secrets.
+policies, drift, and the names and accessor IDs of tokens. They never hold
+specs or secrets.
 
 Generate a random token into the file:
 
@@ -48,6 +49,7 @@ at the bare path.
 | `nops_job_blocked` | `namespace`, `job` | 1 if a failed or rejected deployment blocks the job. |
 | `nops_job_invalid_meta` | `namespace`, `job` | 1 if a `nops_*` key has an invalid value. |
 | `nops_notifications_failed_total` | `adapter` | Notifications that failed to deliver. |
+| `nops_acl_token_expires_timestamp_seconds` | `accessor_id`, `name`, `type` | When a created token that works in the current ACL mode expires. Session tokens and tokens that never expire have no series. |
 
 Go runtime (`go_*`) and process (`process_*`) metrics come too.
 
@@ -77,4 +79,8 @@ groups:
         for: 15m
       - alert: NopsNotificationsFailing
         expr: increase(nops_notifications_failed_total[1h]) > 0
+      - alert: NopsTokenExpiringSoon
+        expr: nops_acl_token_expires_timestamp_seconds - time() < 7 * 86400
+        annotations:
+          summary: "the token {{ $labels.name }} ({{ $labels.accessor_id }}) expires in less than 7 days"
 ```

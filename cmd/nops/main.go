@@ -129,7 +129,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	metricsHandler, err := metrics.Handler(metrics.Options{
-		Store: st, Engine: eng, Git: watcher, Notifier: notifier,
+		Store: st, Engine: eng, Git: watcher, Notifier: notifier, ACL: cfg.ACL,
 		Version: version.String(), Token: cfg.MetricsToken, Log: log,
 	})
 	if err != nil {
