@@ -10,7 +10,7 @@
 
 {{with .Created}}
 <section class="flash flash--success">
-  <p><strong>Token “{{.Name}}” created.</strong> Copy it now: nops keeps only its hash, and does not show it again.</p>
+  <p><strong>Token “{{.Name}}” created.</strong> Copy it now: Nops keeps only its hash, and does not show it again.</p>
   <div class="input-group">
     <input type="text" readonly value="{{.Secret}}" id="new-token" aria-label="The new token" class="input mono">
     <button type="button" class="btn" data-copy="new-token">Copy</button>
@@ -107,7 +107,7 @@
   <div class="field">
     <label class="field__label" for="token-name">Name</label>
     <input type="text" id="token-name" name="name" maxlength="100" required value="{{.Form.Name}}" class="input">
-    <p class="field__caption">What the token is for, for example “ci”, to tell it from the others.</p>
+    <p class="field__caption">What the token is for, for example <span class="mono">ci</span>, to tell it from the others.</p>
   </div>
 
   <fieldset class="field">

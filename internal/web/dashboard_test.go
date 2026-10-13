@@ -219,7 +219,7 @@ func TestOverviewGitAndCycle(t *testing.T) {
 	mustContain(t, page,
 		`href="https://git.test/commit/0123456789abcdef"`, "0123456", "fix: the thing", "Iacopo", "2h ago",
 		"checked", "3m ago",
-		"took 250ms", "3 managed jobs", `<span class="pill state-success">ok</span>`,
+		"took 250ms", "3 managed jobs", `<span class="pill state-success">OK</span>`,
 		`action="/fetch"`, "Fetch now")
 	mustNotContain(t, page, "flash--error", "flash--warn", "degraded", "aborted")
 }

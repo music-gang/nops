@@ -23,7 +23,7 @@
     {{end}}
   </div>
   {{if .Git.Error}}
-  <p class="flash flash--error flash--flat">The last poll of the repository failed {{template "time" .Git.ErrorAt}}, so nops is working from the last commit it read: {{.Git.Error}}</p>
+  <p class="flash flash--error flash--flat">The last poll of the repository failed {{template "time" .Git.ErrorAt}}, so Nops is working from the last commit it read: {{.Git.Error}}</p>
   {{end}}
 
   <div class="strip__row">
@@ -35,7 +35,7 @@
     </span>
     {{if .Cycle.Error}}<span class="pill state-failed">aborted</span>
     {{else if or .Cycle.Skipped .Cycle.Unparsed}}<span class="pill state-pending">degraded</span>
-    {{else}}<span class="pill state-success">ok</span>{{end}}
+    {{else}}<span class="pill state-success">OK</span>{{end}}
     {{else}}
     <span class="strip__main muted">waiting for the first cycle</span>
     {{end}}
@@ -53,7 +53,7 @@
     <details class="popover strip__action" id="pause-all" hx-preserve>
       <summary class="btn btn--sm">Pause</summary>
       <form method="post" action="{{$.Base}}/pause" class="popover__body">
-        <p class="muted">nops starts no deployment for any job until it is resumed. Drift is still detected and shown; a deployment already running finishes.</p>
+        <p class="muted">Nops starts no deployment for any job until it is resumed. Drift is still detected and shown; a deployment already running finishes.</p>
         <input type="text" name="reason" maxlength="500" placeholder="Reason (optional)" aria-label="Reason for pausing every job" class="input">
         <button type="submit" class="btn btn--sm">Pause every job</button>
       </form>
