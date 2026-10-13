@@ -625,6 +625,39 @@ func TestAdministrationFormsManageTokensAndACLPolicies(t *testing.T) {
 	}
 }
 
+// The list marks the token of the request, and a revocation that takes it
+// says so before anyone confirms.
+func TestTokensPageMarksTheTokenInUse(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := ts.page("POST", "/admin/tokens", url.Values{"name": {"ci"}, "type": {"management"}, "expires": {"30"}}); rec.Code != http.StatusOK {
+		t.Fatalf("create: status %d, body %s", rec.Code, rec.Body)
+	}
+	all, err := ts.tokens.ACLTokens(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session, created store.ACLToken
+	for _, tok := range all {
+		if tok.Origin == store.OriginLogin {
+			session = tok
+		} else {
+			created = tok
+		}
+	}
+	const mark, warning = `<span class="label" title="The token you are using">current</span>`, "revoking it logs you out"
+
+	list := ts.get("/admin/tokens?sessions=1")
+	mustContain(t, list, mark)
+	if body := ts.get("/admin/tokens"); strings.Contains(body, mark) {
+		t.Error("the created tokens are marked, but the token in use is a session")
+	}
+	mustContain(t, ts.get("/admin/tokens?sessions=1&revoke="+session.AccessorID), warning)
+	mustContain(t, ts.get("/admin/tokens?sessions_of="+session.Identity), warning)
+	if body := ts.get("/admin/tokens?revoke=" + created.AccessorID); strings.Contains(body, warning) {
+		t.Error("revoking another token warns")
+	}
+}
+
 // A session token that carries no ACL policy sees the pages and does nothing.
 func TestASessionWithoutACLPoliciesCanDoNothing(t *testing.T) {
 	en := &fakeEngine{}

@@ -262,6 +262,13 @@ func runTokenList(k *call) error {
 	if err != nil {
 		return err
 	}
+	// -json prints the answer as it is: only the text marks the token in use.
+	var self aclToken
+	if !k.asJSON {
+		if _, err := k.client.get(k.ctx, "/api/acl/token/self", &self); err != nil {
+			return err
+		}
+	}
 	show(k, raw, func(w io.Writer) {
 		if len(r.Tokens) == 0 {
 			fmt.Fprintln(w, "No tokens.")
@@ -270,11 +277,30 @@ func runTokenList(k *call) error {
 		t := table(w)
 		fmt.Fprintln(t, "ACCESSOR ID\tNAME\tTYPE\tORIGIN\tACL POLICIES\tEXPIRES")
 		for _, tok := range r.Tokens {
-			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", tok.AccessorID, tok.Name, tok.Type, tok.Origin, dash(strings.Join(tok.Policies, ",")), expiry(tok))
+			name := tok.Name
+			if tok.AccessorID == self.AccessorID {
+				name += " (current)"
+			}
+			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", tok.AccessorID, name, tok.Type, tok.Origin, dash(strings.Join(tok.Policies, ",")), expiry(tok))
 		}
 		t.Flush()
 	})
 	return nil
+}
+
+// runTokenDelete revokes a token. The token the client uses ends the access of
+// whoever revokes it, so it asks first.
+func runTokenDelete(k *call) error {
+	var self aclToken
+	if _, err := k.client.get(k.ctx, "/api/acl/token/self", &self); err != nil {
+		return err
+	}
+	if self.AccessorID == k.arg {
+		if err := k.confirm("This is the token this command uses: revoking it ends your access. Revoke it?"); err != nil {
+			return err
+		}
+	}
+	return action(http.MethodDelete, tokenPath, "revoked")(k)
 }
 
 func expiry(t aclToken) string {

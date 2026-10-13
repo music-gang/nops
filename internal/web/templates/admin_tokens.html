@@ -25,9 +25,10 @@
   </header>
   <div class="box__body">
     {{if .Tokens}}
+    {{if .Current}}<p class="flash flash--error">One of them is the token you are using: revoking it logs you out.</p>{{end}}
     <p>This revokes {{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}{{if not (or .Accessor .SessionsOf)}}, with the tokens they created{{end}}:</p>
     <ul class="confirm-list">
-      {{range .Tokens}}<li><strong>{{.Name}}</strong> <span class="label">{{.Kind}}</span> <span class="muted mono">{{.AccessorID}}</span></li>{{end}}
+      {{range .Tokens}}<li><strong>{{.Name}}</strong>{{if .Current}} <span class="label">current</span>{{end}} <span class="label">{{.Kind}}</span> <span class="muted mono">{{.AccessorID}}</span></li>{{end}}
     </ul>
     <form method="post" action="{{if .Accessor}}{{$.Base}}/admin/tokens/{{.Accessor}}/revoke{{else}}{{$.Base}}/admin/tokens/revoke{{end}}" class="form__actions">
       {{if .SessionsOf}}<input type="hidden" name="sessions_of" value="{{.SessionsOf}}">{{end}}
@@ -58,7 +59,7 @@
     <tbody>
       {{range .Tokens}}
       <tr>
-        <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span><div class="cell-sub mono" title="Accessor ID">{{.AccessorID}}</div></td>
+        <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span>{{if .Current}} <span class="label" title="The token you are using">current</span>{{end}}<div class="cell-sub mono" title="Accessor ID">{{.AccessorID}}</div></td>
         <td class="hide-sm"><span class="label">{{.Kind}}</span></td>
         <td class="hide-sm cell-ellipsis">{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="hide-sm cell-ellipsis">
