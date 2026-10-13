@@ -57,11 +57,13 @@ jobs:
       # A tool in go.mod: Dependabot bumps it with the other modules.
       - name: staticcheck
         run: go tool staticcheck -tags integration ./...
-      # scripts/release.sh cuts the releases; shellcheck is preinstalled on the runner.
-      - name: release script
+      # scripts/release.sh cuts the releases and scripts/dev.sh runs a local
+      # Nomad and Nops; shellcheck is preinstalled on the runner.
+      - name: scripts
         run: |
           shellcheck -x scripts/*.sh
           bash scripts/release_test.sh
+          bash scripts/dev_test.sh
       # A broken .goreleaser.yaml fails here, not when a release is tagged.
       # Same pinned version as release.yml: bump both by hand.
       - name: goreleaser check

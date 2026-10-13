@@ -155,6 +155,6 @@ internal/secret/       generation of random secrets
 internal/version/      the build's version (release tag via -ldflags -X)
 tests/integration/     tests against nomad agent -dev (build tag `integration`)
 examples/              example HCL jobs and hooks
-scripts/               maintainer tooling (release.sh) and its bash tests
+scripts/               maintainer tooling (release.sh), the local dev environment (dev.sh) and their bash tests
 docs/                  documentation (index in docs/README.md)
 ```

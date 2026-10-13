@@ -23,6 +23,7 @@ conventions.
 | `cmd/nops` | Covered by the integration smoke test. |
 | The docs | `go test ./...` checks the option and meta key tables against the code, and the test names and links in the pages. |
 | `scripts/release.sh` | `scripts/release_test.sh` and `shellcheck`. |
+| `scripts/dev.sh` | `scripts/dev_test.sh` and `shellcheck`. |
 
 A behaviour that depends on Nomad itself gets an integration test.
 
@@ -110,6 +111,10 @@ vale sync && vale docs README.md CONTRIBUTING.md
 # the docs site, previewed on http://127.0.0.1:8000
 pip install -r scripts/mkdocs/requirements.txt
 mkdocs serve
+
+# Nomad and Nops on this machine: the dashboard on http://127.0.0.1:8080,
+# login admin/admin; Ctrl-C stops both
+scripts/dev.sh
 
 # integration: a dev agent with ACLs, in another terminal
 printf 'acl {\n  enabled = true\n}\n' > agent.hcl
