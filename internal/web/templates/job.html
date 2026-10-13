@@ -13,7 +13,7 @@
     <span class="label">{{.Policy}}</span>
     <span class="muted">Not in the repository any more.</span>
     {{else}}
-    <span class="muted">Not in the repository any more, or nops could not read it in the last cycle: only its past deployments remain.</span>
+    <span class="muted">Not in the repository any more, or Nops could not read it in the last cycle: only its past deployments remain.</span>
     {{end}}
     {{if .NomadURL}}<span class="muted">&middot;</span> <a href="{{.NomadURL}}" target="_blank" rel="noopener noreferrer">Open in Nomad</a>{{end}}
   </p>
@@ -21,7 +21,7 @@
 
 {{with .Orphan}}
 <section class="flash flash--warn">
-  <p><strong>Removed from git, still running in Nomad</strong>{{if .NomadStatus}} (status <span class="mono">{{.NomadStatus}}</span>){{end}}. nops deployed this job and does not stop it on its own: the operator decides.</p>
+  <p><strong>Removed from git, still running in Nomad</strong>{{if .NomadStatus}} (status <span class="mono">{{.NomadStatus}}</span>){{end}}. Nops deployed this job and does not stop it on its own: the operator decides.</p>
   <p>To stop it: <code>{{.StopCommand}}</code>. To keep it, put its file back in the repository. This notice goes away by itself once either is done.</p>
 </section>
 {{end}}
@@ -30,8 +30,8 @@
 <section class="flash flash--warn flash--action">
   <div>
     {{if .All}}<strong>Every job is paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
-    nops starts no new deployment for this job until every job is resumed. Drift is still detected and shown; a deployment already running finishes.{{else}}<strong>Paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
-    nops starts no new deployment for this job until it is resumed. Drift is still detected and shown; a deployment already running finishes.{{end}}
+    Nops starts no new deployment for this job until every job is resumed. Drift is still detected and shown; a deployment already running finishes.{{else}}<strong>Paused by {{.By}}</strong> {{template "time" .Since}}{{if .Note}}: {{.Note}}{{end}}.
+    Nops starts no new deployment for this job until it is resumed. Drift is still detected and shown; a deployment already running finishes.{{end}}
   </div>
   {{if .ResumePath}}<form method="post" action="{{.ResumePath}}">
     <input type="hidden" name="back" value="job">
@@ -43,8 +43,8 @@
 {{if .Held}}
 <section class="flash flash--warn{{if .DeployNow}} flash--action{{end}}">
   <div>
-    <p><strong>Held:</strong> {{.Held}}. Drift is shown, but nops deploys this job on its own only inside its sync window. When it opens, nops plans again and deploys what git says then.</p>
-    {{if .DeployNowBy}}<p>{{.DeployNowBy}} asked to deploy it now: nops starts the deployment at its next detection cycle.</p>{{end}}
+    <p><strong>Held:</strong> {{.Held}}. Drift is shown, but Nops deploys this job on its own only inside its sync window. When it opens, Nops plans again and deploys what git says then.</p>
+    {{if .DeployNowBy}}<p>{{.DeployNowBy}} asked to deploy it now: Nops starts the deployment at its next detection cycle.</p>{{end}}
   </div>
   {{with .DeployNow}}
   <form method="post" action="{{.Path}}">
@@ -141,7 +141,7 @@
     <section class="box">
       <header class="box__header"><h2 class="box__title">Pause</h2></header>
       <form class="box__body" method="post" action="{{.PausePath}}">
-        <p class="muted">nops starts no new deployment for this job until it is resumed, for a hand fix in Nomad or a <span class="mono">nomad job revert</span> it should not undo. Drift is still detected and shown; a deployment already running finishes.</p>
+        <p class="muted">Nops starts no new deployment for this job until it is resumed, for a hand fix in Nomad or a <span class="mono">nomad job revert</span> it should not undo. Drift is still detected and shown; a deployment already running finishes.</p>
         <input type="hidden" name="back" value="job">
         <input type="text" name="reason" maxlength="500" placeholder="Reason (optional)" aria-label="Reason for the pause" class="input">
         <button type="submit" class="btn btn--sm">Pause</button>

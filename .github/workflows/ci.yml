@@ -71,7 +71,8 @@ jobs:
         with:
           version: v2.18.2
           args: check
-      # Prose lint of the docs with the Google style (docs/development.md#writing-docs).
+      # Prose lint of the docs and the dashboard templates with the Google style
+      # (docs/development.md#writing-docs).
       # Pinned version and checksum: bump both by hand. Any alert fails the step.
       - name: vale
         env:
@@ -83,7 +84,7 @@ jobs:
           echo "${VALE_SHA256}  ${tarball}" | sha256sum -c -
           tar -xzf "${tarball}" vale
           ./vale sync
-          ./vale --output=line docs README.md CONTRIBUTING.md > vale.out || true
+          ./vale --output=line docs README.md CONTRIBUTING.md internal/web/templates > vale.out || true
           cat vale.out
           test ! -s vale.out
       # The docs site (docs/development.md#commands): a broken link or a page

@@ -106,7 +106,7 @@ failing test first.
 ```sh
 go test -race -cover ./...
 go tool staticcheck -tags integration ./...
-vale sync && vale docs README.md CONTRIBUTING.md
+vale sync && vale docs README.md CONTRIBUTING.md internal/web/templates
 
 # the docs site, previewed on http://127.0.0.1:8000
 pip install -r scripts/mkdocs/requirements.txt

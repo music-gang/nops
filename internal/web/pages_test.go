@@ -487,7 +487,7 @@ func TestHealthzAndStaticAreOpen(t *testing.T) {
 func TestVersionFooter(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	for _, p := range []string{"/", "/jobs", "/history"} {
-		if body := ts.get(p); !strings.Contains(body, `<footer class="app-footer muted">nops v0.0.0-test</footer>`) {
+		if body := ts.get(p); !strings.Contains(body, `<footer class="app-footer muted">Nops v0.0.0-test</footer>`) {
 			t.Errorf("GET %s: no version footer", p)
 		}
 	}

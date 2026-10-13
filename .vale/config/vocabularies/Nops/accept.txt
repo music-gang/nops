@@ -1,5 +1,4 @@
 ACLs?
-accessors?
 allowlists?
 approvable
 Authelia
@@ -25,7 +24,9 @@ uid
 unparsed
 untrusted
 vendored
+[Aa]ccessors?
 [Cc]ron
 [Dd]eregister
+[Ee]vals?
 [Nn]amespaces?
 [Rr]evalidat(e|es|ing|ion)
