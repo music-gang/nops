@@ -31,7 +31,6 @@ inject secrets into the environment. These variables have no flag.
 | `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` (`-acl-bootstrap-token-file`) | `NOPS_ACL_BOOTSTRAP_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
-| `NOPS_METRICS_TOKEN_FILE` (`-metrics-token-file`) | `NOPS_METRICS_TOKEN` |
 | `NOPS_NOTIFY_WEBHOOK_URL_FILE` (`-notify-webhook-url-file`) | `NOPS_NOTIFY_WEBHOOK_URL` |
 | `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` (`-notify-webhook-token-file`) | `NOPS_NOTIFY_WEBHOOK_TOKEN` |
 | `NOPS_NOTIFY_DISCORD_URL_FILE` (`-notify-discord-url-file`) | `NOPS_NOTIFY_DISCORD_URL` |
@@ -73,7 +72,9 @@ SSH. The release image can't read `file://` URLs.
 | `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | URL people use to reach the dashboard, with its [sub path](running-nops.md#under-a-sub-path) if any. Set it behind a proxy or with OIDC. |
 | `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | `oidc` or `basic`: see [authentication](dashboard.md#authentication). |
 | `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the [git webhook](running-nops.md#the-git-webhook) secret. Unset: no webhook. |
-| `-metrics-token-file` | `NOPS_METRICS_TOKEN_FILE` | none | File holding the bearer token [`/metrics`](metrics.md#scraping) requires. Unset: open. |
+
+Nops refuses to start with `-metrics-token-file` or `NOPS_METRICS_TOKEN`.
+Give Prometheus a [token with the `metrics` capability](metrics.md#scraping).
 
 ### OIDC (`-auth-mode=oidc`)
 

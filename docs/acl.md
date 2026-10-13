@@ -8,8 +8,9 @@ modelled on [Nomad's](https://developer.hashicorp.com/nomad/docs/secure/acl).
 
 ## Turning it on
 
-The ACL is off by default. Off, every token can do everything, and with OIDC
-that includes everyone the identity provider lets in. Nops logs a WARN at
+The ACL is off by default. Off, every token can do everything, with OIDC
+that includes everyone the identity provider lets in, and
+[`/metrics`](metrics.md#scraping) is open. Nops logs a WARN at
 start and the *Administration* page says so.
 
 To turn it on:
@@ -85,6 +86,7 @@ The top-level `capabilities` list holds the ones that belong to no namespace:
 | `fetch` | Ask for a git poll. |
 | `backup` | Take a [backup](running-nops.md#backups) of the database: every job spec with its secrets, and the ACL. |
 | `pause` | Pause and resume [every job](policies.md#pausing-a-job). |
+| `metrics` | Scrape [`/metrics`](metrics.md#scraping). |
 
 For a request on a namespace, Nops takes the most specific rule that matches
 across all the token's ACL policies, so `prod` comes before `pr*`, and `pr*`

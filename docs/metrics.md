@@ -7,16 +7,23 @@ cover single deployments.
 
 ## Scraping
 
-`/metrics` needs no dashboard login. If you set
-[`-metrics-token-file`](configuration.md#dashboard), a scrape must send the
-token as `Authorization: Bearer <token>`. The metrics hold job names,
-policies, drift, and the names and accessor IDs of tokens. They never hold
-specs or secrets.
+`/metrics` needs no dashboard login. The metrics hold job names, policies,
+drift, and the names and accessor IDs of tokens. They never hold specs or
+secrets.
 
-Generate a random token into the file:
+With the [ACL](acl.md) off, `/metrics` is open to anyone who reaches the
+port. With the ACL on, a scrape sends a token with the
+[`metrics` capability](acl.md#acl-policies), or a management token, as
+`Authorization: Bearer <token>`. Without one it gets `401`, and with a token
+that lacks the capability `403`.
+
+Create a token for Prometheus and save its secret in the file Prometheus
+reads:
 
 ```sh
-nops secret generate > nops-metrics-token
+echo 'capabilities = ["metrics"]' > metrics.hcl
+nops acl policy apply prometheus metrics.hcl
+nops acl token create -name prometheus -policy prometheus
 ```
 
 ```yaml

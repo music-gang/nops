@@ -79,6 +79,31 @@ func TestE2EACLBootstrapTokenAdministersAndClientTokenIsLimited(t *testing.T) {
 		t.Fatalf("deployment = %s after a refused approval, want it still pending", got.State)
 	}
 
+	// /metrics is behind the ACL: the metrics capability scrapes, a reader does not.
+	if status, _ := scrape(t, e.proc.baseURL, ""); status != http.StatusUnauthorized {
+		t.Errorf("/metrics without a token: status %d, want 401", status)
+	}
+	if status, _ := scrape(t, e.proc.baseURL, "Bearer "+client); status != http.StatusForbidden {
+		t.Errorf("/metrics with a token that reads: status %d, want 403", status)
+	}
+	if status, _ := scrape(t, e.proc.baseURL, "Bearer "+bootstrap); status != http.StatusOK {
+		t.Errorf("/metrics with the bootstrap token: status %d, want 200", status)
+	}
+	scraper := filepath.Join(t.TempDir(), "metrics.hcl")
+	if err := os.WriteFile(scraper, []byte("capabilities = [\"metrics\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, err := nops(bootstrap, "acl", "policy", "apply", "prometheus", scraper); err != nil {
+		t.Fatalf("acl policy apply prometheus: %v\n%s", err, errOut)
+	}
+	out, errOut, err = nops(bootstrap, "acl", "token", "create", "-name", "prometheus", "-policy", "prometheus")
+	if err != nil {
+		t.Fatalf("acl token create prometheus: %v\n%s", err, errOut)
+	}
+	if status, _ := scrape(t, e.proc.baseURL, "Bearer "+apiSecret.FindString(out)); status != http.StatusOK {
+		t.Errorf("/metrics with a token that has the metrics capability: status %d, want 200", status)
+	}
+
 	// A login gets what a binding rule gives it, and nothing before there is one.
 	if status, _ := e.dash.post(t, "/auth/basic", url.Values{"username": {e2eUser}, "password": {e2ePassword}}); status != http.StatusForbidden {
 		t.Errorf("a login no binding rule matches: status %d, want 403", status)

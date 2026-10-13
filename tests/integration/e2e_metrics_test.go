@@ -34,21 +34,13 @@ func scrape(t *testing.T, base, authorization string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
-// TestE2EMetrics scrapes the real binary, with a metrics token, while a job
-// waits for an approval: the token is required, and the scrape shows the
-// build, the three loops, the job and the deployment waiting for a person,
-// next to the Go runtime's own metrics.
+// TestE2EMetrics scrapes the real binary with the ACL off, so with no token,
+// while a job waits for an approval: the scrape shows the build, the three
+// loops, the job and the deployment waiting for a person, next to the Go
+// runtime's own metrics. (With the ACL on, the ACL test covers the token.)
 func TestE2EMetrics(t *testing.T) {
-	const token = "metrics-e2e-token"
-	e := newE2E(t, "NOPS_METRICS_TOKEN="+token)
+	e := newE2E(t)
 	jobID := uniqueID(t, e.raw, "metrics")
-
-	if status, body := scrape(t, e.proc.baseURL, ""); status != http.StatusUnauthorized {
-		t.Fatalf("/metrics without the token: status %d, want 401: %s", status, body)
-	}
-	if status, _ := scrape(t, e.proc.baseURL, "Bearer wrong"); status != http.StatusUnauthorized {
-		t.Fatalf("/metrics with a wrong token: status %d, want 401", status)
-	}
 
 	e.repo.commit(t, "job "+jobID, map[string]string{file(jobID): e2eJob{id: jobID, policy: "approval", version: "1"}.hcl()})
 	e.waitNew(jobID, "", store.StatePendingApproval)
@@ -68,9 +60,9 @@ func TestE2EMetrics(t *testing.T) {
 	var missing []string
 	deadline := time.Now().Add(e2eWait)
 	for {
-		status, body := scrape(t, e.proc.baseURL, "Bearer "+token)
+		status, body := scrape(t, e.proc.baseURL, "")
 		if status != http.StatusOK {
-			t.Fatalf("/metrics with the token: status %d: %s", status, body)
+			t.Fatalf("/metrics with the ACL off: status %d: %s", status, body)
 		}
 		missing = missing[:0]
 		for _, w := range want {

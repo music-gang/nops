@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/music-gang/nops/internal/secret"
+	"github.com/music-gang/nops/internal/store"
 )
 
-// stubMetrics stands in for internal/metrics, which checks its own token: the
-// dashboard only has to route to it, without a session.
+// stubMetrics stands in for internal/metrics: the dashboard only has to route
+// to it, without a session.
 var stubMetrics = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "nops_build_info 1\n")
 })
@@ -71,5 +74,58 @@ func TestMetricsUnderABasePath(t *testing.T) {
 		if code, _ := getStatus(h, target); code != http.StatusNotFound {
 			t.Errorf("GET %s without a metrics handler: status %d, want 404", target, code)
 		}
+	}
+}
+
+// TestMetricsWithTheACL checks that, with the ACL on, a scrape needs a token
+// with the metrics capability or a management one, and is refused like /api/:
+// 401 without a valid token, 403 with one that lacks the capability. A login
+// has no bearer token, so it does not scrape.
+func TestMetricsWithTheACL(t *testing.T) {
+	boot := secret.New()
+	s := aclServer{newTestServerLogin(t, &fakeStore{}, &fakeEngine{}, "", nil, "", nil, func(o *Options) {
+		o.ACL, o.BootstrapToken, o.Metrics = true, boot, stubMetrics
+	}), boot}
+	s.policy("scrapers", `capabilities = ["metrics"]`)
+	s.policy("operators", "namespace \"*\" {\n  policy = \"write\"\n}\ncapabilities = [\"fetch\", \"backup\", \"pause\"]")
+	scraper := s.token(tokenBody{Name: "prometheus", Type: store.TokenClient, Policies: []string{"scrapers"}})
+	operator := s.token(tokenBody{Name: "op", Type: store.TokenClient, Policies: []string{"operators"}})
+	manager := s.token(tokenBody{Name: "root", Type: store.TokenManagement})
+
+	for name, tt := range map[string]struct {
+		token string
+		want  int
+	}{
+		"no token":                   {"", http.StatusUnauthorized},
+		"an unknown token":           {"nope", http.StatusUnauthorized},
+		"the metrics capability":     {scraper, http.StatusOK},
+		"every namespace capability": {operator, http.StatusForbidden},
+		"a management token":         {manager, http.StatusOK},
+		"the bootstrap token":        {boot, http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		if tt.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+		}
+		rec := httptest.NewRecorder()
+		s.h.ServeHTTP(rec, req)
+		if rec.Code != tt.want {
+			t.Errorf("%s: status %d, want %d", name, rec.Code, tt.want)
+		}
+		if tt.want != http.StatusOK && rec.Body.String() == "nops_build_info 1\n" {
+			t.Errorf("%s: the refusal carries metrics", name)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil).WithContext(s.t.Context()))
+	if rec.Header().Get("WWW-Authenticate") == "" {
+		t.Error("a 401 without WWW-Authenticate")
+	}
+
+	// A session cookie is not a bearer token.
+	cookie := s.clientSession("alice", `capabilities = ["metrics"]`)
+	if rec := s.do(http.MethodGet, "/metrics", nil, cookie); rec.Code != http.StatusUnauthorized {
+		t.Errorf("a session cookie: status %d, want 401", rec.Code)
 	}
 }
