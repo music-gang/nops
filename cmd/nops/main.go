@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -45,7 +46,7 @@ func main() {
 	defer cancel()
 
 	if len(os.Args) < 2 || os.Args[1] != "serve" {
-		os.Exit(cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, config.FlagSet(io.Discard)))
 	}
 
 	cfg, err := config.Load(os.Args[2:], os.Getenv, os.Stderr)

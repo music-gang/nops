@@ -1,0 +1,56 @@
+# zsh completion for nops, written by "nops completion zsh", after compinit:
+#   source <(nops completion zsh)
+_nops() {
+    local cmd="" next w
+    integer i
+    # The words that name the group or the command.
+    for ((i = 2; i < CURRENT; i++)); do
+        w=$words[i]
+        [[ $w == -* ]] && break
+        next=${cmd:+$cmd }$w
+        case $next in
+{{- range .}}{{if .Path}}
+        "{{.Path}}") ;;
+{{- end}}{{end}}
+        *) break ;;
+        esac
+        cmd=$next
+    done
+    case $cmd in
+{{- range .}}
+    "{{.Path}}")
+{{- if .Group}}
+        (( i < CURRENT )) && return 1
+{{- if .Flags}}
+        if [[ $words[CURRENT] == -* ]]; then
+            compadd -- {{range .Flags}}-{{.Name}} {{end}}
+            return
+        fi
+{{- end}}
+        local -a kids=(
+{{- range .Children}}
+            '{{.Name}}{{if .Help}}:{{quote .Help}}{{end}}'
+{{- end}}
+        )
+        _describe -t commands 'nops {{.Path}}' kids
+{{- else}}
+{{- if or .Flags .Args}}
+        words=("nops $cmd" "${(@)words[i,-1]}")
+        (( CURRENT -= i - 2 ))
+        _arguments -S
+{{- range .Flags}} \
+            '-{{.Name}}[{{spec .Help}}]{{if .Value}}:{{.Metavar}}:{{if .File}}_files{{else}} {{end}}{{end}}'
+{{- end}}
+{{- range .Args}} \
+            '{{.Pos}}:{{.Name}}:{{if .File}}_files{{else if .Words}}({{range .Words}}{{.}} {{end}}){{else}} {{end}}'
+{{- end}}
+{{- else}}
+        return 1
+{{- end}}
+{{- end}}
+        ;;
+{{- end}}
+    esac
+}
+
+compdef _nops nops

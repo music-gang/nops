@@ -146,17 +146,17 @@ var options = []option{
 		set: func(c *Config, v string) (err error) { c.NomadUIURL, err = optionalURL(v); return }},
 	{name: "nomad-namespaces", def: api.DefaultNamespace, usage: "comma-separated Nomad namespaces of the managed jobs and hooks",
 		set: func(c *Config, v string) (err error) { c.NomadNamespaces, err = namespaceList(v); return }},
-	{name: "nomad-token-file", usage: "file holding the Nomad ACL token (empty: no token)",
+	{name: "nomad-token-file", usage: "`file` holding the Nomad ACL token (empty: no token)",
 		set: func(c *Config, v string) (err error) {
 			c.NomadTokenFile = v
 			c.NomadToken, err = secretFile(v)
 			return
 		}},
-	{name: "nomad-ca-cert", usage: "PEM file of the CA that signed the Nomad server certificate",
+	{name: "nomad-ca-cert", usage: "PEM `file` of the CA that signed the Nomad server certificate",
 		set: func(c *Config, v string) (err error) { c.NomadCACert, err = readableFile(v); return }},
-	{name: "nomad-client-cert", usage: "PEM client certificate for Nomad mTLS (with -nomad-client-key)",
+	{name: "nomad-client-cert", usage: "PEM `file` of the client certificate for Nomad mTLS (with -nomad-client-key)",
 		set: func(c *Config, v string) (err error) { c.NomadClientCert, err = readableFile(v); return }},
-	{name: "nomad-client-key", usage: "PEM client key for Nomad mTLS (with -nomad-client-cert)",
+	{name: "nomad-client-key", usage: "PEM `file` of the client key for Nomad mTLS (with -nomad-client-cert)",
 		set: func(c *Config, v string) (err error) { c.NomadClientKey, err = readableFile(v); return }},
 	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
 		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
@@ -169,14 +169,14 @@ var options = []option{
 		set: func(c *Config, v string) (err error) { c.GitPath, err = gitPath(v); return }},
 	{name: "git-username", def: "git", usage: "username sent with the git token",
 		set: func(c *Config, v string) error { c.GitUsername = v; return nil }},
-	{name: "git-token-file", usage: "file holding the git HTTPS token (empty: public repository)",
+	{name: "git-token-file", usage: "`file` holding the git HTTPS token (empty: public repository)",
 		set: func(c *Config, v string) (err error) {
 			c.GitTokenFile = v
 			c.GitToken, err = secretFile(v)
 			return
 		}},
 
-	{name: "db-path", def: "nops.db", usage: "SQLite database file",
+	{name: "db-path", def: "nops.db", usage: "SQLite database `file`",
 		set: func(c *Config, v string) (err error) { c.DBPath, err = required(v); return }},
 	{name: "listen-addr", def: ":8080", usage: "address of the dashboard and the git webhook",
 		set: func(c *Config, v string) error {
@@ -210,18 +210,18 @@ var options = []option{
 		}},
 	{name: "oidc-client-id", usage: "OIDC client ID of nops (required with -auth-mode=oidc)",
 		set: func(c *Config, v string) error { c.OIDCClientID = v; return nil }},
-	{name: "oidc-client-secret-file", usage: "file holding the OIDC client secret (required with -auth-mode=oidc)",
+	{name: "oidc-client-secret-file", usage: "`file` holding the OIDC client secret (required with -auth-mode=oidc)",
 		set: func(c *Config, v string) (err error) {
 			c.OIDCClientSecretFile = v
 			c.OIDCClientSecret, err = secretFile(v)
 			return
 		}},
-	{name: "users-file", usage: "file holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
+	{name: "users-file", usage: "`file` holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
 		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
-	{name: "groups-file", usage: "file holding \"group: user1 user2\" lines, the groups of the local users for binding rules (optional, only with -auth-mode=basic)",
+	{name: "groups-file", usage: "`file` holding \"group: user1 user2\" lines, the groups of the local users for binding rules (optional, only with -auth-mode=basic)",
 		set: func(c *Config, v string) (err error) { c.GroupsFile, err = readableFile(v); return }},
 
-	{name: "webhook-secret-file", usage: "file holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
+	{name: "webhook-secret-file", usage: "`file` holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
 		set: func(c *Config, v string) (err error) {
 			c.WebhookSecretFile = v
 			c.WebhookSecret, err = secretFile(v)
@@ -230,32 +230,32 @@ var options = []option{
 
 	{name: "acl", def: "false", boolean: true, usage: "turn on the access control: tokens and ACL policies decide what each request may do (needs -acl-bootstrap-token-file)",
 		set: func(c *Config, v string) (err error) { c.ACL, err = strconv.ParseBool(v); return }},
-	{name: "acl-bootstrap-token-file", usage: "file holding the bootstrap token, a management token made by \"nops secret generate\" (required with -acl)",
+	{name: "acl-bootstrap-token-file", usage: "`file` holding the bootstrap token, a management token made by \"nops secret generate\" (required with -acl)",
 		set: func(c *Config, v string) (err error) {
 			c.ACLBootstrapTokenFile = v
 			c.ACLBootstrapToken, err = secretFile(v)
 			return
 		}},
 
-	{name: "notify-webhook-url-file", usage: "file holding the URL that receives notifications as a generic JSON POST (empty: off)",
+	{name: "notify-webhook-url-file", usage: "`file` holding the URL that receives notifications as a generic JSON POST (empty: off)",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyWebhookURLFile = v
 			c.NotifyWebhookURL, err = urlFile(v)
 			return
 		}},
-	{name: "notify-webhook-token-file", usage: "file holding a token sent to the webhook as Authorization: Bearer",
+	{name: "notify-webhook-token-file", usage: "`file` holding a token sent to the webhook as Authorization: Bearer",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyWebhookTokenFile = v
 			c.NotifyWebhookToken, err = secretFile(v)
 			return
 		}},
-	{name: "notify-discord-url-file", usage: "file holding the Discord webhook URL (empty: off)",
+	{name: "notify-discord-url-file", usage: "`file` holding the Discord webhook URL (empty: off)",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyDiscordURLFile = v
 			c.NotifyDiscordURL, err = urlFile(v)
 			return
 		}},
-	{name: "notify-slack-url-file", usage: "file holding the Slack incoming webhook URL (empty: off)",
+	{name: "notify-slack-url-file", usage: "`file` holding the Slack incoming webhook URL (empty: off)",
 		set: func(c *Config, v string) (err error) {
 			c.NotifySlackURLFile = v
 			c.NotifySlackURL, err = urlFile(v)
@@ -263,7 +263,7 @@ var options = []option{
 		}},
 	{name: "notify-ntfy-url", usage: "ntfy topic URL, e.g. https://ntfy.example.com/nops (empty: off)",
 		set: func(c *Config, v string) (err error) { c.NotifyNtfyURL, err = optionalURL(v); return }},
-	{name: "notify-ntfy-token-file", usage: "file holding the ntfy access token",
+	{name: "notify-ntfy-token-file", usage: "`file` holding the ntfy access token",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyNtfyTokenFile = v
 			c.NotifyNtfyToken, err = secretFile(v)
@@ -271,7 +271,7 @@ var options = []option{
 		}},
 	{name: "notify-gotify-url", usage: "Gotify server URL; messages go to <url>/message (empty: off)",
 		set: func(c *Config, v string) (err error) { c.NotifyGotifyURL, err = optionalURL(v); return }},
-	{name: "notify-gotify-token-file", usage: "file holding the Gotify application token (required with -notify-gotify-url)",
+	{name: "notify-gotify-token-file", usage: "`file` holding the Gotify application token (required with -notify-gotify-url)",
 		set: func(c *Config, v string) (err error) {
 			c.NotifyGotifyTokenFile = v
 			c.NotifyGotifyToken, err = secretFile(v)
@@ -331,12 +331,15 @@ func (v *value) String() string     { return v.s }
 func (v *value) Set(s string) error { v.s = s; return nil }
 func (v *value) IsBoolFlag() bool   { return v.boolean }
 
-// Load builds the configuration from the command-line arguments (without
-// "nops serve") and the environment, read through getenv. Usage and flag errors are
-// written to out. With -h it returns flag.ErrHelp before any option is
-// validated. Every invalid value is reported, each prefixed with where it
-// came from.
-func Load(args []string, getenv func(string) string, out io.Writer) (*Config, error) {
+// FlagSet is the flags of "nops serve", for what only reads them, such as the
+// shell completion. The usage of a flag that takes a file quotes its value
+// name, `file`, as the flag package reads it.
+func FlagSet(out io.Writer) *flag.FlagSet {
+	fs, _ := newFlagSet(out)
+	return fs
+}
+
+func newFlagSet(out io.Writer) (*flag.FlagSet, []*value) {
 	fs := flag.NewFlagSet("nops serve", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { usage(out) }
@@ -345,6 +348,16 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		vals[i] = &value{boolean: o.boolean}
 		fs.Var(vals[i], o.name, o.usage)
 	}
+	return fs, vals
+}
+
+// Load builds the configuration from the command-line arguments (without
+// "nops serve") and the environment, read through getenv. Usage and flag errors are
+// written to out. With -h it returns flag.ErrHelp before any option is
+// validated. Every invalid value is reported, each prefixed with where it
+// came from.
+func Load(args []string, getenv func(string) string, out io.Writer) (*Config, error) {
+	fs, vals := newFlagSet(out)
 	for _, o := range removedOptions {
 		fs.Var(&value{}, o.name, "removed")
 	}
@@ -554,7 +567,7 @@ func usage(out io.Writer) {
 		if o.def != "" {
 			def = fmt.Sprintf(" (default %q)", o.def)
 		}
-		fmt.Fprintf(out, "  -%s, %s%s\n\t%s\n", o.name, o.env(), def, o.usage)
+		fmt.Fprintf(out, "  -%s, %s%s\n\t%s\n", o.name, o.env(), def, strings.ReplaceAll(o.usage, "`", ""))
 	}
 }
 

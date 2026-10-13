@@ -58,6 +58,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops acl token delete-sessions <identity>` | Ask for confirmation and revoke every session of a person. `-yes` skips the question. |
 | `nops acl token delete-created` | Ask for confirmation and revoke every token a person (`-creator-identity`) or a token (`-creator`, `bootstrap` included) created, and the tokens those created. `-yes` skips the question. |
 | `nops acl token self` | Show the token the client uses. |
+| `nops completion <shell>` | Print the completion script of `bash` or `zsh`. It completes the commands, their flags, and the files they take. Load it with `source <(nops completion bash)` in `~/.bashrc`, or with `source <(nops completion zsh)` after `compinit` in `~/.zshrc`. It runs offline. |
 | `nops secret generate` | Print a new random secret for a file Nops reads, such as the [bootstrap token](acl.md#turning-it-on). It runs offline: it needs no `-addr` and no token. |
 
 `approve` and `deploy-now` send the spec hash of the diff they showed, so a

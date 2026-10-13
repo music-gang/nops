@@ -45,6 +45,7 @@ var commands = []command{
 	{name: "acl token delete-sessions", arg: "<identity>", yes: true, help: "revoke every session of a person", run: runRevokeSessions},
 	{name: "acl token delete-created", yes: true, flags: revokeCreatedFlags, help: "revoke every token a person or a token created, and the tokens those created", run: runRevokeCreated},
 	{name: "acl token self", help: "show the token this client uses", run: runTokenSelf},
+	{name: "completion", arg: "<shell>", offline: true, help: "print the completion script of bash or zsh, offline", run: runCompletion},
 	{name: "secret generate", offline: true, help: "print a new random secret, offline", run: runSecretGenerate},
 }
 
