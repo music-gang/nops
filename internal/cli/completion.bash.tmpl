@@ -1,0 +1,86 @@
+# bash completion for nops, written by "nops completion bash":
+#   source <(nops completion bash)
+_nops_files() {
+    local IFS=$'\n'
+    COMPREPLY=($(compgen -f -- "$1"))
+    compopt -o filenames 2>/dev/null
+    return 0
+}
+
+_nops() {
+    local cur=${COMP_WORDS[COMP_CWORD]} cmd="" next w i pending="" n=0
+    local group="" kids="" flags="" valued="" files="" argfiles=" "
+    local -a argwords
+    # The words that name the group or the command.
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        w=${COMP_WORDS[i]}
+        case $w in -*) break ;; esac
+        next=${cmd:+$cmd }$w
+        case $next in
+{{- range .}}{{if .Path}}
+        "{{.Path}}") ;;
+{{- end}}{{end}}
+        *) break ;;
+        esac
+        cmd=$next
+    done
+    case $cmd in
+{{- range .}}
+    "{{.Path}}")
+{{- if .Group}}
+        group=1
+        kids="{{range .Children}}{{.Name}} {{end}}"
+{{- end}}
+        flags="{{range .Flags}}-{{.Name}} {{end}}"
+{{- if .Flags}}
+        valued=" {{range .Flags}}{{if .Value}}-{{.Name}} {{end}}{{end}}"
+        files=" {{range .Flags}}{{if .File}}-{{.Name}} {{end}}{{end}}"
+{{- end}}
+{{- range $at, $a := .Args}}
+{{- if $a.File}}
+        argfiles="${argfiles}{{$at}} "
+{{- end}}
+{{- if $a.Words}}
+        argwords[{{$at}}]="{{range $a.Words}}{{.}} {{end}}"
+{{- end}}
+{{- end}}
+        ;;
+{{- end}}
+    esac
+    if [ -n "$group" ]; then
+        ((i < COMP_CWORD)) && return 0
+        case $cur in
+        -*) COMPREPLY=($(compgen -W "$flags" -- "$cur")) ;;
+        *) COMPREPLY=($(compgen -W "$kids" -- "$cur")) ;;
+        esac
+        return 0
+    fi
+    # The arguments before the word, a flag's value not being one.
+    for ((; i < COMP_CWORD; i++)); do
+        w=${COMP_WORDS[i]}
+        if [ -n "$pending" ]; then
+            pending=""
+            continue
+        fi
+        case $w in
+        -*) case $valued in *" $w "*) pending=$w ;; esac ;;
+        *) ((n++)) ;;
+        esac
+    done
+    if [ -n "$pending" ]; then
+        case $files in *" $pending "*) _nops_files "$cur" ;; esac
+        return 0
+    fi
+    case $cur in
+    -*) COMPREPLY=($(compgen -W "$flags" -- "$cur")) ;;
+    *)
+        case $argfiles in *" $n "*) _nops_files "$cur" ;; esac
+        if [ -n "${argwords[n]:-}" ]; then
+            COMPREPLY=($(compgen -W "${argwords[n]}" -- "$cur"))
+        fi
+        ;;
+    esac
+    return 0
+}
+
+complete -F _nops nops

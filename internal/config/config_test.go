@@ -823,6 +823,25 @@ func TestLoadArguments(t *testing.T) {
 	}
 }
 
+// The completion offers files for a flag whose usage quotes `file`, as the
+// flag package reads it; -h prints the usage without the quotes.
+func TestFlagsThatTakeAFileQuoteIt(t *testing.T) {
+	var out strings.Builder
+	if _, err := Load([]string{"-h"}, rawEnvOf(nil), &out); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("-h: err = %v, want flag.ErrHelp", err)
+	}
+	if strings.Contains(out.String(), "`") {
+		t.Error("the usage prints the quotes of a value name")
+	}
+	file := map[string]bool{"db-path": true, "nomad-ca-cert": true, "nomad-client-cert": true, "nomad-client-key": true}
+	FlagSet(io.Discard).VisitAll(func(f *flag.Flag) {
+		name, _ := flag.UnquoteUsage(f)
+		if want := file[f.Name] || strings.HasSuffix(f.Name, "-file"); (name == "file") != want {
+			t.Errorf("-%s: its value is %q, a file is %v", f.Name, name, want)
+		}
+	})
+}
+
 // The server's flags are those of "nops serve": -version belongs to the root
 // command, so Load does not know it, and the usage says how to start it.
 func TestLoadIsTheServeCommand(t *testing.T) {

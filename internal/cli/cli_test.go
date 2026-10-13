@@ -57,7 +57,7 @@ func newStub(t *testing.T, answers map[string]answer) (*stub, string) {
 func run(t *testing.T, env map[string]string, stdin string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = Run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut)
+	code = Run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, nil)
 	return code, out.String(), errOut.String()
 }
 

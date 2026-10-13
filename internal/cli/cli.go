@@ -59,6 +59,8 @@ type call struct {
 	getenv      func(string) string
 	addr        string // the -addr of a command that builds its own client
 	out, errOut io.Writer
+	serve       *flag.FlagSet // the flags of "nops serve"
+	table       []command     // every command: the completion lists them, and the table lists the completion
 }
 
 type command struct {
@@ -83,8 +85,9 @@ func (c command) takesJob() bool { return c.arg == "<job>" }
 
 // Run runs the command in args (the arguments after the program name) and
 // returns the exit code. getenv reads the environment; stdin answers the
-// question of approve and deploy-now.
-func Run(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) int {
+// question of approve and deploy-now. serve is the flags of "nops serve", which
+// main runs: the completion offers them, and it may be nil.
+func Run(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, serve *flag.FlagSet) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return exitUsage
@@ -113,7 +116,7 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 		return exitUsage
 	}
 
-	err := cmd.exec(ctx, rest, getenv, stdin, stdout, stderr)
+	err := cmd.exec(ctx, rest, getenv, stdin, stdout, stderr, serve)
 	var ue usageError
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
@@ -127,14 +130,14 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 	}
 }
 
-func (c *command) exec(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) error {
-	var s settings
-	k := &call{ctx: ctx, in: bufio.NewReader(stdin), stdin: stdin, getenv: getenv, out: stdout, errOut: stderr}
+// flagSet is the flags of the command, with the ones every command of its
+// kind takes.
+func (c *command) flagSet(k *call, s *settings, out io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet("nops "+c.name, flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(out)
 	if !c.offline && !c.own {
 		fs.StringVar(&s.addr, "addr", "", "URL of Nops (NOPS_ADDR)")
-		fs.StringVar(&s.tokenFile, "token-file", "", "file holding the API token (NOPS_TOKEN_FILE, or NOPS_TOKEN)")
+		fs.StringVar(&s.tokenFile, "token-file", "", "`file` holding the API token (NOPS_TOKEN_FILE, or NOPS_TOKEN)")
 		fs.BoolVar(&k.asJSON, "json", false, "print the answer of the API as JSON")
 	}
 	if c.takesJob() {
@@ -152,6 +155,13 @@ func (c *command) exec(ctx context.Context, args []string, getenv func(string) s
 	if c.flags != nil {
 		c.flags(fs, k)
 	}
+	return fs
+}
+
+func (c *command) exec(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, serve *flag.FlagSet) error {
+	var s settings
+	k := &call{ctx: ctx, in: bufio.NewReader(stdin), stdin: stdin, getenv: getenv, out: stdout, errOut: stderr, serve: serve, table: commands}
+	fs := c.flagSet(k, &s, stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: nops %s [flags]%s\n\n%s\n\n", c.name, strings.TrimRight(" "+c.arg, " "), c.help)
 		fs.PrintDefaults()
