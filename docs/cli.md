@@ -54,7 +54,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops acl token list` | List the tokens. |
 | `nops acl token info <accessor-id>` | Show a token. |
 | `nops acl token create` | Create a token and print its secret once. `-name`, `-type` (`client` by default, or `management`), `-policy` (repeat it), and `-expires` set it. |
-| `nops acl token delete <accessor-id>` | Revoke a token. |
+| `nops acl token delete <accessor-id>` | Revoke a token. Ask for confirmation first when it is the token the client uses. `-yes` skips the question. |
 | `nops acl token delete-sessions <identity>` | Ask for confirmation and revoke every session of a person. `-yes` skips the question. |
 | `nops acl token delete-created` | Ask for confirmation and revoke every token a person (`-creator-identity`) or a token (`-creator`, `bootstrap` included) created, and the tokens those created. `-yes` skips the question. |
 | `nops acl token self` | Show the token the client uses. |

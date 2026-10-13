@@ -60,6 +60,7 @@ func TestACLListsSayWhenEmpty(t *testing.T) {
 	_, addr := newStub(t, map[string]answer{
 		"GET /api/acl/policies":      {200, `{"acl_policies":[]}`},
 		"GET /api/acl/tokens":        {200, `{"tokens":[]}`},
+		"GET /api/acl/token/self":    {200, tokenBodyJSON},
 		"GET /api/acl/binding-rules": {200, `{"binding_rules":[]}`},
 	})
 	if _, out, _ := run(t, envFor(addr), "", "acl", "policy", "list"); out != "No ACL policies.\n" {
@@ -144,6 +145,7 @@ func TestACLDeletesCallTheirEndpoint(t *testing.T) {
 	s, addr := newStub(t, map[string]answer{
 		"DELETE /api/acl/policies/readers": {204, ""},
 		"DELETE /api/acl/tokens/01ABC":     {204, ""},
+		"GET /api/acl/token/self":          {200, `{"accessor_id":"01SELF","name":"me","type":"management","origin":"created","policies":[],"created_at":"2026-10-05T10:00:00Z"}`},
 	})
 	if code, out, _ := run(t, envFor(addr), "", "acl", "policy", "delete", "readers"); code != 0 || out != "deleted readers\n" {
 		t.Errorf("policy delete: exit %d, stdout %q", code, out)
@@ -151,7 +153,7 @@ func TestACLDeletesCallTheirEndpoint(t *testing.T) {
 	if code, out, _ := run(t, envFor(addr), "", "acl", "token", "delete", "01ABC"); code != 0 || out != "revoked 01ABC\n" {
 		t.Errorf("token delete: exit %d, stdout %q", code, out)
 	}
-	if len(s.seen) != 2 || s.seen[0].method != "DELETE" {
+	if len(s.seen) != 3 || s.seen[0].method != "DELETE" || s.seen[2].method != "DELETE" {
 		t.Errorf("requests = %+v", s.seen)
 	}
 }
@@ -267,5 +269,48 @@ func TestTokenInfoShowsWhoToRevoke(t *testing.T) {
 	}
 	if _, out, _ := run(t, envFor(addr), "", "acl", "token", "info", "01CI"); !strings.Contains(out, "Created by:   alice (basic:alice)") {
 		t.Errorf("a created token: %q", out)
+	}
+}
+
+func TestTokenListMarksTheTokenInUse(t *testing.T) {
+	other := `{"accessor_id":"01OTH","name":"laptop","type":"management","origin":"created","policies":[],"created_at":"2026-10-05T10:00:00Z"}`
+	_, addr := newStub(t, map[string]answer{
+		"GET /api/acl/tokens":     {200, `{"tokens":[` + tokenBodyJSON + `,` + other + `]}`},
+		"GET /api/acl/token/self": {200, other},
+	})
+	_, out, _ := run(t, envFor(addr), "", "acl", "token", "list")
+	if strings.Contains(out, "ci (current)") || !strings.Contains(out, "laptop (current)") {
+		t.Errorf("only the token in use is marked: %q", out)
+	}
+}
+
+func TestTokenDeleteAsksOnlyForTheTokenInUse(t *testing.T) {
+	s, addr := newStub(t, map[string]answer{
+		"GET /api/acl/token/self":      {200, tokenBodyJSON},
+		"DELETE /api/acl/tokens/01ABC": {204, ``},
+		"DELETE /api/acl/tokens/01OTH": {204, ``},
+	})
+	deletes := func() (n int) {
+		for _, r := range s.seen {
+			if r.method == "DELETE" {
+				n++
+			}
+		}
+		return n
+	}
+
+	code, _, errOut := run(t, envFor(addr), "n\n", "acl", "token", "delete", "01ABC")
+	if code != 1 || !strings.Contains(errOut, "ends your access") || deletes() != 0 {
+		t.Errorf("declined: exit %d, stderr %q, %d deletes; want none", code, errOut, deletes())
+	}
+	if code, out, _ := run(t, envFor(addr), "y\n", "acl", "token", "delete", "01ABC"); code != 0 || out != "revoked 01ABC\n" || deletes() != 1 {
+		t.Errorf("confirmed: exit %d, stdout %q, %d deletes", code, out, deletes())
+	}
+	if code, _, _ := run(t, envFor(addr), "", "acl", "token", "delete", "-yes", "01ABC"); code != 0 || deletes() != 2 {
+		t.Errorf("-yes: exit %d, %d deletes", code, deletes())
+	}
+	// Another token goes with no question: stdin holds no answer.
+	if code, out, errOut := run(t, envFor(addr), "", "acl", "token", "delete", "01OTH"); code != 0 || out != "revoked 01OTH\n" || strings.Contains(errOut, "[y/N]") {
+		t.Errorf("another token: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }

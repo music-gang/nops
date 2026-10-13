@@ -55,6 +55,7 @@ type selfView struct {
 type tokenRow struct {
 	selfView
 	Identity, CreatorIdentity, CreatorAccessorID string
+	Current                                      bool // the token of the request
 }
 
 // revokeView is the confirmation a revocation asks for: what it names, one
@@ -64,6 +65,9 @@ type revokeView struct {
 	store.Revocation
 	Accessor string
 	Tokens   []tokenRow
+	// Current is whether one of the tokens is the token of the request: revoking
+	// it ends the access of whoever confirms.
+	Current bool
 }
 
 // revocationOf reads a revocation in one action from the fields of a query or
@@ -231,8 +235,8 @@ func (s *server) tokenView(t store.ACLToken) selfView {
 	}
 }
 
-func (s *server) tokenRow(t store.ACLToken) tokenRow {
-	return tokenRow{selfView: s.tokenView(t), Identity: t.Identity, CreatorIdentity: t.CreatorIdentity, CreatorAccessorID: t.CreatorAccessorID}
+func (s *server) tokenRow(t store.ACLToken, self string) tokenRow {
+	return tokenRow{selfView: s.tokenView(t), Identity: t.Identity, CreatorIdentity: t.CreatorIdentity, CreatorAccessorID: t.CreatorAccessorID, Current: t.AccessorID == self}
 }
 
 func (s *server) policyRows(ctx context.Context) ([]policyRow, error) {
@@ -258,6 +262,7 @@ func (s *server) adminPage(w http.ResponseWriter, r *http.Request) {
 // revoke, and revokes nothing.
 func (s *server) tokensView(r *http.Request) (adminTokensData, error) {
 	ctx, q := r.Context(), r.URL.Query()
+	self := subjectOf(ctx).accessorID
 	data := adminTokensData{adminBase: s.adminBase(r, "tokens"), Sessions: q.Get("sessions") == "1"}
 	tokens, err := s.access.ACLTokens(ctx)
 	if err != nil {
@@ -271,7 +276,7 @@ func (s *server) tokensView(r *http.Request) (adminTokensData, error) {
 			data.CreatedN++
 		}
 		if session == data.Sessions {
-			data.Tokens = append(data.Tokens, s.tokenRow(t))
+			data.Tokens = append(data.Tokens, s.tokenRow(t, self))
 		}
 	}
 	rev, accessor := revocationOf(q), q.Get("revoke")
@@ -283,7 +288,8 @@ func (s *server) tokensView(r *http.Request) (adminTokensData, error) {
 		if i < 0 {
 			return data, fmt.Errorf("token %s: %w", accessor, store.ErrNotFound)
 		}
-		data.Revoke = &revokeView{Accessor: accessor, Tokens: []tokenRow{s.tokenRow(tokens[i])}}
+		row := s.tokenRow(tokens[i], self)
+		data.Revoke = &revokeView{Accessor: accessor, Tokens: []tokenRow{row}, Current: row.Current}
 	case rev != (store.Revocation{}):
 		if err := checkRevocation(rev); err != nil {
 			return data, err
@@ -294,7 +300,9 @@ func (s *server) tokensView(r *http.Request) (adminTokensData, error) {
 		}
 		data.Revoke = &revokeView{Revocation: rev}
 		for _, t := range taken {
-			data.Revoke.Tokens = append(data.Revoke.Tokens, s.tokenRow(t))
+			row := s.tokenRow(t, self)
+			data.Revoke.Tokens = append(data.Revoke.Tokens, row)
+			data.Revoke.Current = data.Revoke.Current || row.Current
 		}
 	}
 	return data, nil
