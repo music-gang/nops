@@ -435,6 +435,12 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 	}
 
 	verdict, reason, err := e.applyHealth(ctx, d)
+	if errors.Is(err, nomadx.ErrJobNotFound) {
+		// Nops reads without stale queries, so a job it just registered is never
+		// reported missing: it was removed after the register.
+		e.applyTransition(ctx, log, d, store.StateFailed, "job removed from Nomad outside nops while waiting for health")
+		return
+	}
 	if err != nil {
 		log.ErrorContext(ctx, "check apply health", "error", err)
 		return // retried next cycle, still bounded by the timeout above unless waiting for a promotion
