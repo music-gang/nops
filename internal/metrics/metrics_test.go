@@ -243,17 +243,14 @@ func TestHandlerFailsLoudOnATokenError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(t, h, ""); rec.Code != http.StatusInternalServerError {
+	if rec := get(t, h); rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500", rec.Code)
 	}
 }
 
-func get(t *testing.T, h http.Handler, authorization string) *httptest.ResponseRecorder {
+func get(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	if authorization != "" {
-		req.Header.Set("Authorization", authorization)
-	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -266,7 +263,7 @@ func TestHandlerServesNopsAndRuntimeMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := get(t, h, "")
+	rec := get(t, h)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -274,41 +271,6 @@ func TestHandlerServesNopsAndRuntimeMetrics(t *testing.T) {
 	for _, name := range []string{"nops_build_info", "go_goroutines", "go_memstats_heap_alloc_bytes", "process_start_time_seconds"} {
 		if !strings.Contains(body, "\n"+name) {
 			t.Errorf("%s missing from /metrics", name)
-		}
-	}
-}
-
-// TestHandlerToken checks that a token, when set, is required, and that the
-// right one gets through.
-func TestHandlerToken(t *testing.T) {
-	o := options()
-	o.Token = "s3cret"
-	h, err := Handler(o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tt := range []struct {
-		authorization string
-		want          int
-	}{
-		{"", http.StatusUnauthorized},
-		{"Bearer wrong", http.StatusUnauthorized},
-		{"Bearer s3cret-and-more", http.StatusUnauthorized},
-		{"Basic czNjcmV0", http.StatusUnauthorized},
-		{"s3cret", http.StatusUnauthorized},
-		{"Bearer s3cret", http.StatusOK},
-	} {
-		rec := get(t, h, tt.authorization)
-		if rec.Code != tt.want {
-			t.Errorf("Authorization %q: status %d, want %d", tt.authorization, rec.Code, tt.want)
-		}
-		if tt.want == http.StatusUnauthorized {
-			if rec.Header().Get("WWW-Authenticate") == "" {
-				t.Errorf("Authorization %q: a 401 without WWW-Authenticate", tt.authorization)
-			}
-			if strings.Contains(rec.Body.String(), "nops_") {
-				t.Errorf("Authorization %q: the 401 carries metrics", tt.authorization)
-			}
 		}
 	}
 }
@@ -325,7 +287,7 @@ func TestHandlerFailsLoudOnAStoreError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := get(t, h, "")
+	rec := get(t, h)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500", rec.Code)
 	}

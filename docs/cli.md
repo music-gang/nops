@@ -58,7 +58,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops acl token delete-sessions <identity>` | Ask for confirmation and revoke every session of a person. `-yes` skips the question. |
 | `nops acl token delete-created` | Ask for confirmation and revoke every token a person (`-creator-identity`) or a token (`-creator`, `bootstrap` included) created, and the tokens those created. `-yes` skips the question. |
 | `nops acl token self` | Show the token the client uses. |
-| `nops secret generate` | Print a new random secret for a file Nops reads, such as the [metrics token](metrics.md#scraping). It runs offline: it needs no `-addr` and no token. |
+| `nops secret generate` | Print a new random secret for a file Nops reads, such as the [bootstrap token](acl.md#turning-it-on). It runs offline: it needs no `-addr` and no token. |
 
 `approve` and `deploy-now` send the spec hash of the diff they showed, so a
 newer diff is refused as on the dashboard.

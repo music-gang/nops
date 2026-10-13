@@ -140,7 +140,6 @@ func TestLoadEveryOption(t *testing.T) {
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
-	metricsTok := writeFile(t, "metrics-token", "metrics-secret\n")
 	bootstrap := secret.New()
 	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
@@ -169,7 +168,6 @@ func TestLoadEveryOption(t *testing.T) {
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
 		"webhook-secret-file":       webhookSecret,
-		"metrics-token-file":        metricsTok,
 		"acl":                       "true",
 		"acl-bootstrap-token-file":  bootstrapTok,
 		"notify-webhook-url-file":   webhookURL,
@@ -210,8 +208,6 @@ func TestLoadEveryOption(t *testing.T) {
 		ListenAddr:             "127.0.0.1:9000",
 		WebhookSecretFile:      webhookSecret,
 		WebhookSecret:          "webhook-shared-secret",
-		MetricsTokenFile:       metricsTok,
-		MetricsToken:           "metrics-secret",
 		ACL:                    true,
 		ACLBootstrapTokenFile:  bootstrapTok,
 		ACLBootstrapToken:      bootstrap,
@@ -689,6 +685,26 @@ func TestLoadOIDCRequired(t *testing.T) {
 		}
 	}
 
+	// The metrics token is gone too: the ACL protects /metrics.
+	for name, set := range map[string]func(env map[string]string, args *[]string){
+		"flag -metrics-token-file": func(_ map[string]string, args *[]string) {
+			*args = []string{"-metrics-token-file", "/run/secrets/metrics"}
+		},
+		"NOPS_METRICS_TOKEN_FILE": func(env map[string]string, _ *[]string) { env["NOPS_METRICS_TOKEN_FILE"] = "/run/secrets/metrics" },
+		"NOPS_METRICS_TOKEN":      func(env map[string]string, _ *[]string) { env["NOPS_METRICS_TOKEN"] = "plain-metrics-token" },
+	} {
+		env := map[string]string{}
+		for k, v := range full {
+			env[k] = v
+		}
+		var args []string
+		set(env, &args)
+		_, err := Load(args, rawEnvOf(env), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "was removed") || !strings.Contains(err.Error(), "metrics capability") {
+			t.Errorf("%s: err = %v, want it removed, with what replaces it", name, err)
+		}
+	}
+
 	// The issuer is kept exactly as given: providers such as Authentik
 	// announce it with a trailing slash and the check compares the strings.
 	c, err := Load(nil, rawEnvOf(full), io.Discard)
@@ -943,7 +959,6 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
 		{"NOPS_ACL_BOOTSTRAP_TOKEN", secret.New(), func(c *Config) string { return c.ACLBootstrapToken },
 			map[string]string{"NOPS_ACL": "true"}},
-		{"NOPS_METRICS_TOKEN", "plain-metrics-token", func(c *Config) string { return c.MetricsToken }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
 		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
 			map[string]string{"NOPS_NOTIFY_WEBHOOK_URL": "https://n8n.example.com/webhook/plain"}},

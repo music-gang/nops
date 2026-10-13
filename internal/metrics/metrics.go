@@ -12,7 +12,6 @@ package metrics
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -67,10 +66,7 @@ type Options struct {
 	ACL bool
 	// Version is the build, the label of nops_build_info.
 	Version string
-	// Token, when set, is what a scrape must send as Authorization: Bearer;
-	// empty leaves /metrics open, like /healthz.
-	Token string
-	Log   *slog.Logger
+	Log     *slog.Logger
 }
 
 // Handler returns the /metrics handler. It uses a registry of its own, never
@@ -92,29 +88,10 @@ func Handler(o Options) (http.Handler, error) {
 	}
 	// HTTPErrorOnError: a scrape that cannot read the store fails (a 500, so
 	// up == 0) rather than answering with a partial picture.
-	h := promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		ErrorLog:      errorLog{o.Log},
 		ErrorHandling: promhttp.HTTPErrorOnError,
-	})
-	if o.Token == "" {
-		return h, nil
-	}
-	return requireToken(o.Token, h), nil
-}
-
-// requireToken lets a request through only with "Authorization: Bearer
-// <token>", compared in constant time.
-func requireToken(token string, next http.Handler) http.Handler {
-	want := []byte("Bearer " + token)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, want) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="nops metrics"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	}), nil
 }
 
 // errorLog logs what promhttp reports (a collector error, a failed write) at

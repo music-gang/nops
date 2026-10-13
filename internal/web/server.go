@@ -160,8 +160,9 @@ type Options struct {
 	// /healthz body. Optional: empty shows none.
 	Version string
 
-	// Metrics serves GET /metrics (internal/metrics), which checks its own
-	// token and never needs a session. Optional: nil serves no /metrics.
+	// Metrics serves GET /metrics (internal/metrics). With the ACL on it needs
+	// a token with the metrics capability, never a session; off, it is open.
+	// Optional: nil serves no /metrics.
 	Metrics http.Handler
 
 	// BasePath is the sub path the dashboard is served under (e.g. "/nops"),
@@ -298,6 +299,16 @@ func parseTemplates() (*template.Template, error) {
 	return tmpl, nil
 }
 
+// metricsRoute is /metrics: open with the ACL off, since a scrape only reads
+// and there is nobody to name; with it on, a token that has the metrics
+// capability, answered like /api/ (401 without a valid token, 403 without it).
+func (s *server) metricsRoute() http.Handler {
+	if !s.aclOn {
+		return s.metrics
+	}
+	return s.requireToken(s.guard(globally(acl.Metrics), apiForbidden, s.metrics))
+}
+
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -309,7 +320,7 @@ func (s *server) routes() *http.ServeMux {
 
 	mux.HandleFunc("GET /healthz", s.healthz)
 	if s.metrics != nil {
-		mux.Handle("GET /metrics", s.metrics)
+		mux.Handle("GET /metrics", s.metricsRoute())
 	}
 	if len(s.secret) > 0 {
 		mux.HandleFunc("POST /webhook/git", s.webhook)

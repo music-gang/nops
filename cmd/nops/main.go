@@ -76,7 +76,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
 	}
 	if !cfg.ACL {
-		log.Warn("the ACL is off: everyone who logs in, and every token, has full control (-acl turns it on)")
+		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (-acl turns it on)")
 	}
 
 	st, err := store.Open(cfg.DBPath)
@@ -130,7 +130,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	metricsHandler, err := metrics.Handler(metrics.Options{
 		Store: st, Engine: eng, Git: watcher, Notifier: notifier, ACL: cfg.ACL,
-		Version: version.String(), Token: cfg.MetricsToken, Log: log,
+		Version: version.String(), Log: log,
 	})
 	if err != nil {
 		return err

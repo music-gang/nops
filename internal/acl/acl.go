@@ -28,17 +28,18 @@ const (
 	Pause     Capability = "pause" // pause and resume
 )
 
-// The capabilities that belong to no namespace. Fetch asks for a git poll and
-// Backup takes a copy of the database. Pause, which names the capability of a
-// namespace too, is also a global one when it stands outside the namespace
-// blocks: it pauses and resumes every job.
+// The capabilities that belong to no namespace. Fetch asks for a git poll,
+// Backup takes a copy of the database and Metrics scrapes /metrics. Pause,
+// which names the capability of a namespace too, is also a global one when it
+// stands outside the namespace blocks: it pauses and resumes every job.
 const (
-	Fetch  Capability = "fetch"
-	Backup Capability = "backup"
+	Fetch   Capability = "fetch"
+	Backup  Capability = "backup"
+	Metrics Capability = "metrics"
 )
 
 // globalCapabilities are the ones the top-level list of a policy takes.
-var globalCapabilities = []Capability{Fetch, Pause, Backup}
+var globalCapabilities = []Capability{Fetch, Pause, Backup, Metrics}
 
 // namespaceCapabilities is what the shorthand "write" stands for. A new
 // capability of a namespace joins it, so a list written by hand never gains one.

@@ -57,7 +57,8 @@ func TestParseRefusesWhatIsWrong(t *testing.T) {
 		"unknown capability":          {`namespace "a" { capabilities = ["submit"] }`, `"submit"`},
 		"fetch in a namespace":        {`namespace "a" { capabilities = ["fetch"] }`, `"fetch"`},
 		"backup in a namespace":       {`namespace "a" { capabilities = ["backup"] }`, `"backup"`},
-		"an unknown global one":       {`capabilities = ["reboot"]`, "fetch, pause, backup"},
+		"metrics in a namespace":      {`namespace "a" { capabilities = ["metrics"] }`, `"metrics"`},
+		"an unknown global one":       {`capabilities = ["reboot"]`, "fetch, pause, backup, metrics"},
 		"a namespace capability up":   {`capabilities = ["read"]`, `"read"`},
 		"empty block":                 {`namespace "a" {}`, "set policy or capabilities"},
 		"deny with capabilities":      {"namespace \"a\" {\n policy = \"deny\"\n capabilities = [\"read\"]\n}", "deny allows no capabilities"},
@@ -153,6 +154,19 @@ func TestBackupIsAGlobalCapability(t *testing.T) {
 	}
 	if New(mustParse(t, `capabilities = ["fetch", "pause"]`)).Global(Backup) {
 		t.Error("fetch and pause do not grant a backup")
+	}
+}
+
+func TestMetricsIsAGlobalCapability(t *testing.T) {
+	a := New(mustParse(t, `capabilities = ["metrics"]`))
+	if !a.Global(Metrics) || a.Global(Backup) || a.Allow("default", Read) {
+		t.Error("metrics should grant the scrape and nothing else")
+	}
+	if New(mustParse(t, `capabilities = ["fetch", "backup"]`)).Global(Metrics) {
+		t.Error("fetch and backup do not grant a scrape")
+	}
+	if !Management().Global(Metrics) {
+		t.Error("a management token may scrape")
 	}
 }
 
