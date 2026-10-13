@@ -21,11 +21,14 @@ import (
 )
 
 type fakeStore struct {
-	active []*store.Deployment
-	err    error
+	active    []*store.Deployment
+	err       error
+	tokens    []store.ACLToken
+	tokensErr error
 }
 
 func (f fakeStore) ListActive(context.Context) ([]*store.Deployment, error) { return f.active, f.err }
+func (f fakeStore) ACLTokens(context.Context) ([]store.ACLToken, error)     { return f.tokens, f.tokensErr }
 
 type fakeEngine struct {
 	status  engine.Status
@@ -185,6 +188,63 @@ nops_deployments{state="pre_hook"} 0
 `
 	if err := testutil.CollectAndCompare(newCollector(options()), strings.NewReader(want)); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestCollectTokenExpiry checks which tokens have a series: only a created
+// token that expires and works in the mode the ACL is in now. A session lasts
+// 12 hours, a token that never expires has nothing to alert on, and a token of
+// the other mode does not work, so its expiry warns about nothing.
+func TestCollectTokenExpiry(t *testing.T) {
+	tokens := []store.ACLToken{
+		{AccessorID: "ci", Name: "ci", Type: store.TokenClient, ACL: true, Origin: store.OriginCreated, ExpiresAt: at(9000)},
+		{AccessorID: "ops", Name: "ops", Type: store.TokenManagement, ACL: true, Origin: store.OriginCreated, ExpiresAt: at(8000)},
+		// An empty origin is a created token.
+		{AccessorID: "legacy", Name: "legacy", Type: store.TokenClient, ACL: true, ExpiresAt: at(7000)},
+		{AccessorID: "forever", Name: "forever", Type: store.TokenClient, ACL: true, Origin: store.OriginCreated},
+		{AccessorID: "sess", Name: "alice", Type: store.TokenClient, ACL: true, Origin: store.OriginLogin, ExpiresAt: at(6000)},
+		{AccessorID: "before", Name: "before", Type: store.TokenManagement, ACL: false, Origin: store.OriginCreated, ExpiresAt: at(5000)},
+	}
+	const head = `
+# HELP nops_acl_token_expires_timestamp_seconds When a created token that works in the current ACL mode expires. Session tokens and tokens that never expire have no series.
+# TYPE nops_acl_token_expires_timestamp_seconds gauge
+`
+	for _, tt := range []struct {
+		name string
+		acl  bool
+		want string
+	}{
+		{"acl on", true, head + `
+nops_acl_token_expires_timestamp_seconds{accessor_id="ci",name="ci",type="client"} 9000
+nops_acl_token_expires_timestamp_seconds{accessor_id="legacy",name="legacy",type="client"} 7000
+nops_acl_token_expires_timestamp_seconds{accessor_id="ops",name="ops",type="management"} 8000
+`},
+		{"acl off", false, head + `
+nops_acl_token_expires_timestamp_seconds{accessor_id="before",name="before",type="management"} 5000
+`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o := options()
+			o.ACL = tt.acl
+			o.Store = fakeStore{tokens: tokens}
+			if err := testutil.CollectAndCompare(newCollector(o), strings.NewReader(tt.want), "nops_acl_token_expires_timestamp_seconds"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+// TestHandlerFailsLoudOnATokenError checks that a scrape that cannot read the
+// tokens fails, rather than answering with a picture that hides an expiry.
+func TestHandlerFailsLoudOnATokenError(t *testing.T) {
+	o := options()
+	o.Store = fakeStore{tokensErr: errors.New("disk on fire")}
+	h, err := Handler(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := get(t, h, ""); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500", rec.Code)
 	}
 }
 

@@ -1,13 +1,13 @@
 // Package metrics serves /metrics in the Prometheus text format: whether the
 // loops of nops are still working, the deployments that wait for a person, the
-// state of every managed job and the failed notifications. The metrics, their
-// labels and example alerts are documented in docs/metrics.md: keep the two
-// aligned.
+// state of every managed job, the failed notifications and when the created
+// tokens expire. The metrics, their labels and example alerts are documented in
+// docs/metrics.md: keep the two aligned.
 //
-// Nothing is kept here: every scrape reads the active deployments from the
-// store and the rest from the in-memory state the engine, the git watcher and
-// the notifier already hold, so a metric never disagrees with the dashboard
-// and a job that leaves the repository leaves the metrics with it.
+// Nothing is kept here: every scrape reads the active deployments and the
+// tokens from the store and the rest from the in-memory state the engine, the
+// git watcher and the notifier already hold, so a metric never disagrees with
+// the dashboard and a job that leaves the repository leaves the metrics with it.
 package metrics
 
 import (
@@ -33,6 +33,7 @@ import (
 // Store is what a scrape reads from SQLite. *store.Store implements it.
 type Store interface {
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
+	ACLTokens(ctx context.Context) ([]store.ACLToken, error)
 }
 
 // Engine is what a scrape reads from the engine's last cycles.
@@ -61,6 +62,9 @@ type Options struct {
 	Engine   Engine
 	Git      Git
 	Notifier Notifier
+	// ACL is whether the ACL is on: a token made in the other mode does not
+	// work, so its expiry is not reported.
+	ACL bool
 	// Version is the build, the label of nops_build_info.
 	Version string
 	// Token, when set, is what a scrape must send as Authorization: Bearer;
@@ -146,7 +150,7 @@ type collector struct {
 	buildInfo, loopSuccess, deployments, waitingSince *prometheus.Desc
 	unparsedFiles, skippedJobs, orphanJobs, paused    *prometheus.Desc
 	jobInfo, jobDrift, jobPaused, jobBlocked, jobMeta *prometheus.Desc
-	notificationsFailed                               *prometheus.Desc
+	notificationsFailed, tokenExpires                 *prometheus.Desc
 }
 
 func newCollector(o Options) *collector {
@@ -184,6 +188,9 @@ func newCollector(o Options) *collector {
 			"1 if a nops_* meta key of the job has an invalid value, so nops reads its policy as none.", job, nil),
 		notificationsFailed: prometheus.NewDesc("nops_notifications_failed_total",
 			"Notifications an adapter failed to deliver since nops started.", []string{"adapter"}, nil),
+		tokenExpires: prometheus.NewDesc("nops_acl_token_expires_timestamp_seconds",
+			"When a created token that works in the current ACL mode expires. Session tokens and tokens that never expire have no series.",
+			[]string{"accessor_id", "name", "type"}, nil),
 	}
 }
 
@@ -192,7 +199,7 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 		c.buildInfo, c.loopSuccess, c.deployments, c.waitingSince,
 		c.unparsedFiles, c.skippedJobs, c.orphanJobs, c.paused,
 		c.jobInfo, c.jobDrift, c.jobPaused, c.jobBlocked, c.jobMeta,
-		c.notificationsFailed,
+		c.notificationsFailed, c.tokenExpires,
 	} {
 		ch <- d
 	}
@@ -219,6 +226,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 
 	if err := c.collectDeployments(gauge); err != nil {
 		ch <- prometheus.NewInvalidMetric(c.deployments, err)
+	}
+	if err := c.collectTokens(gauge); err != nil {
+		ch <- prometheus.NewInvalidMetric(c.tokenExpires, err)
 	}
 
 	// The counts of a cycle, and whether every job is paused, are only known once
@@ -266,6 +276,24 @@ func (c *collector) collectDeployments(gauge func(*prometheus.Desc, float64, ...
 	}
 	for _, s := range activeStates {
 		gauge(c.deployments, float64(perState[s]), string(s))
+	}
+	return nil
+}
+
+// collectTokens reports when each created token that expires will. The store
+// already leaves out the expired ones, so a series ends with its token. A
+// session lasts 12 hours and a new login replaces it, so it has none. An error
+// from the store fails the whole scrape.
+func (c *collector) collectTokens(gauge func(*prometheus.Desc, float64, ...string)) error {
+	tokens, err := c.o.Store.ACLTokens(context.Background())
+	if err != nil {
+		return fmt.Errorf("list tokens: %w", err)
+	}
+	for _, t := range tokens {
+		if t.Origin == store.OriginLogin || t.ExpiresAt.IsZero() || t.ACL != c.o.ACL {
+			continue
+		}
+		gauge(c.tokenExpires, unixSeconds(t.ExpiresAt), t.AccessorID, t.Name, t.Type)
 	}
 	return nil
 }
