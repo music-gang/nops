@@ -313,6 +313,13 @@ func (e *Engine) stepApplying(ctx context.Context, log *slog.Logger, d *store.De
 // invariant 2 (CAS on the saved cas_index). A Nomad error before the register
 // has gone through is retried next cycle, bounded by ApplyTimeout like the wait
 // for health (see registerRetry).
+//
+// The count of a group with a scaling block is taken from the live job, as
+// detection planned it. For a deployment that knows the diff it was detected
+// with (DiffHash), a live index that moved while a fresh plan still shows that
+// diff is a scale: the step saves the new index and ends, and the next one
+// plans again and registers at it. A CAS conflict is checked the same way at
+// the next step, within ApplyTimeout.
 func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.Deployment) {
 	job, err := parseJobSpec(d)
 	if err != nil {
@@ -330,6 +337,10 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		return
 	default:
 		liveIndex = derefUint64(live.JobModifyIndex)
+		if job, err = substituteScalingCounts(job, live); err != nil {
+			log.ErrorContext(ctx, "copy live scaling counts", "error", err)
+			return
+		}
 	}
 
 	var evalID string
@@ -345,6 +356,13 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 			res, err := e.nomad.RegisterCAS(ctx, job, d.CASIndex, false)
 			if err != nil {
 				if errors.Is(err, nomadx.ErrCASConflict) {
+					if d.DiffHash != "" {
+						// The live job moved after the read: the next step plans
+						// again and tells a scale from an edit.
+						log.InfoContext(ctx, "live job moved before the register: checked again next cycle", "error", err)
+						e.registerRetry(ctx, log, d, err)
+						return
+					}
 					e.applyTransition(ctx, log, d, store.StateFailed, "job modified outside nops: "+err.Error())
 					return
 				}
@@ -373,6 +391,19 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 			return
 		}
 		if plan.Diff != nil && plan.Diff.Type != "None" {
+			fresh, err := diffHashOf(plan.Diff)
+			if err != nil {
+				log.ErrorContext(ctx, "hash plan diff", "error", err)
+				return
+			}
+			if sameDiff(d.DiffHash, fresh) {
+				// A scale since detection: the register waits for the next step,
+				// at the new index and after a fresh plan (invariants 1, 2 and 7).
+				if err := e.moveCASIndex(ctx, e.jobLog(d), d, liveIndex); err != nil {
+					log.ErrorContext(ctx, "move cas index", "error", err)
+				}
+				return
+			}
 			e.applyTransition(ctx, log, d, store.StateFailed, "conflict: live job changed and our spec no longer applies")
 			return
 		}

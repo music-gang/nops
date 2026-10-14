@@ -18,11 +18,14 @@ import (
 
 // scaledDiff is what Nomad's plan of git's spec against the live job shows: a
 // change to apply, never the count of the scaling group. old is the live
-// job's value of the changed key.
-func scaledDiff(old string) *api.JobDiff {
-	return &api.JobDiff{Type: "Edited", ID: "web", Fields: []*api.FieldDiff{
-		{Type: "Edited", Name: "Meta[version]", Old: old, New: "2"},
-	}}
+// job's value of the changed key. Like Nomad's, the group carries the
+// scheduler's count of the allocations the plan touches: the live count.
+func scaledDiff(old string, count int) *api.JobDiff {
+	return &api.JobDiff{Type: "Edited", ID: "web",
+		Fields: []*api.FieldDiff{{Type: "Edited", Name: "Meta[version]", Old: old, New: "2"}},
+		TaskGroups: []*api.TaskGroupDiff{{Type: "None", Name: "g",
+			Updates: map[string]uint64{"create/destroy update": uint64(count)}}},
+	}
 }
 
 // scaledJob sets up web with a scaling group: git has version 2, the live job
@@ -32,7 +35,7 @@ func scaledJob(t *testing.T, h *harness, policy string) *store.Deployment {
 	t.Helper()
 	h.nomad.setFile("web-v2", managed("web", policy, map[string]string{"version": "2"}, taskGroup("g", 1, true)))
 	h.liveApplied("web", managed("web", policy, map[string]string{"version": "1"}, taskGroup("g", 2, true)), 5, 1)
-	h.nomad.setDrift("web", scaledDiff("1"))
+	h.nomad.setDrift("web", scaledDiff("1", 2))
 	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v2"})
 	h.detect()
 	d := h.active("web")
@@ -43,7 +46,8 @@ func scaledJob(t *testing.T, h *harness, policy string) *store.Deployment {
 }
 
 // scaleTo moves web's live count the way Nomad's scale API does: a new version
-// at a new index, and the same diff against git.
+// at a new index, and the same diff against git but for the scheduler's count
+// of allocations.
 func (h *harness) scaleTo(count int, index uint64) {
 	h.t.Helper()
 	live, err := deepCopyJob(h.nomad.live["web"])
@@ -52,6 +56,7 @@ func (h *harness) scaleTo(count int, index uint64) {
 	}
 	live.TaskGroups[0].Count = &count
 	h.liveApplied("web", live, index, derefUint64(live.Version)+1)
+	h.nomad.setDrift("web", scaledDiff(live.Meta["version"], count))
 }
 
 // editLive edits web by hand: a new version at a new index, and a diff
@@ -64,7 +69,7 @@ func (h *harness) editLive(index uint64) {
 	}
 	live.Meta["version"] = "hand"
 	h.liveApplied("web", live, index, derefUint64(live.Version)+1)
-	h.nomad.setDrift("web", scaledDiff("hand"))
+	h.nomad.setDrift("web", scaledDiff("hand", h.liveCount()))
 }
 
 // liveCount is the count of web's scaling group in the live job.

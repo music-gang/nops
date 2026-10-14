@@ -351,6 +351,12 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	if err != nil {
 		return Observation{}, false, fmt.Errorf("redact plan diff of %s: %w", jobID, err)
 	}
+	var diffHash string
+	if drift {
+		if diffHash, err = diffHashOf(plan.Diff); err != nil {
+			return Observation{}, false, fmt.Errorf("hash plan diff of %s: %w", jobID, err)
+		}
+	}
 
 	obs = Observation{
 		JobID: jobID, Namespace: ns, FilePath: mf.path,
@@ -361,7 +367,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, redacted, planJob, hold, liftedBy)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, diffHash, redacted, planJob, hold, liftedBy)
 	if err != nil {
 		return obs, true, err
 	}
@@ -423,8 +429,13 @@ func liftDropReason(l store.WindowLift, hash string, pause *Hold, window *Window
 // reported while the job is held. liftedBy is who asked to deploy the job
 // outside its sync window, when hold is nil only because of it: the deployment
 // this creates records it.
+//
+// diffHash identifies the full plan diff (diffHashOf, "" without drift). A live
+// index that moved while the diff kept the hash a deployment was detected with
+// is a scale, not an outside edit: the deployment stays, at the new index, and
+// a failed or rejected one keeps blocking (invariant 2).
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
-	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, redacted []byte, planJob *api.Job, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, diffHash string, redacted []byte, planJob *api.Job, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
 
 	jobID := key.id
 	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
@@ -440,6 +451,11 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		case store.StatePreHook, store.StateApplying, store.StatePostHook:
 			return "", "", nil
 		case store.StateDetected, store.StatePendingApproval:
+			if cfg.Policy != meta.PolicyNone && active.SpecHash == hash && active.CASIndex != liveIndex && sameDiff(active.DiffHash, diffHash) {
+				if err := e.moveCASIndex(ctx, log, active, liveIndex); err != nil {
+					return "", "", err
+				}
+			}
 			switch {
 			case cfg.Policy == meta.PolicyNone:
 				if err := e.transition(ctx, log, active, store.StateSuperseded, "policy changed to none"); err != nil {
@@ -495,7 +511,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		return "", "", nil
 	}
 	if drift && latest != nil {
-		if blockedBy, blockedReason = blockedRetry(latest, hash, liveIndex); blockedBy != "" {
+		if blockedBy, blockedReason = blockedRetry(latest, hash, liveIndex, diffHash); blockedBy != "" {
 			return blockedBy, blockedReason, nil
 		}
 	}
@@ -510,7 +526,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	}
 	d := &store.Deployment{
 		JobID: jobID, Namespace: key.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
-		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
+		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), DiffHash: diffHash, Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen, WindowLiftedBy: liftedBy,
 	}
 	if retrying {
@@ -566,10 +582,11 @@ func (e *Engine) leaveDetected(ctx context.Context, log *slog.Logger, d *store.D
 // with the same spec_hash blocks as long as nothing has changed — the live
 // index too, unless the deployment reached the register (AppliedIndex != 0),
 // in which case it blocks regardless of the live index, since Nomad itself
-// (for example auto_revert) may be the one moving it. A deployment a human
-// asked to retry (Engine.Retry, RetriedAt set) blocks nothing: the next
-// deployment follows the policy like any other.
-func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (blockedBy, reason string) {
+// (for example auto_revert) may be the one moving it. A live index that moved
+// while the plan's diff kept latest's hash (a scale) is not a change either. A
+// deployment a human asked to retry (Engine.Retry, RetriedAt set) blocks
+// nothing: the next deployment follows the policy like any other.
+func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64, diffHash string) (blockedBy, reason string) {
 	if latest.State != store.StateFailed && latest.State != store.StateRejected {
 		return "", ""
 	}
@@ -582,7 +599,7 @@ func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (bloc
 	if latest.AppliedIndex != 0 {
 		return latest.ID, "failed after applying this spec; push a new commit or retry it"
 	}
-	if latest.CASIndex == liveIndex {
+	if latest.CASIndex == liveIndex || sameDiff(latest.DiffHash, diffHash) {
 		what := "failed"
 		if latest.State == store.StateRejected {
 			what = "was rejected"
@@ -590,6 +607,31 @@ func blockedRetry(latest *store.Deployment, hash string, liveIndex uint64) (bloc
 		return latest.ID, what + " on the same live job; push a new commit or retry it"
 	}
 	return "", ""
+}
+
+// sameDiff reports whether a fresh plan's diff hash is the one a deployment
+// was detected with. A deployment created before diff hashes were recorded
+// has none, and matches nothing: any move of the live index is an edit.
+func sameDiff(stored, fresh string) bool {
+	return stored != "" && stored == fresh
+}
+
+// moveCASIndex moves d's cas_index to the live index `to`, persisted before
+// anything is done at it (invariant 7), for a live job that moved while the
+// plan's diff stayed the one d was detected with: a scale, not an outside edit
+// (invariant 2). A conflict (the other loop moved d first) is logged and
+// skipped, like a transition's. log must not carry the deployment_id.
+func (e *Engine) moveCASIndex(ctx context.Context, log *slog.Logger, d *store.Deployment, to uint64) error {
+	if err := e.store.MoveCASIndex(ctx, d.ID, d.State, d.CASIndex, to); err != nil {
+		if errors.Is(err, store.ErrStateConflict) {
+			log.WarnContext(ctx, "cas index move skipped", "deployment_id", d.ID, "error", err)
+			return nil
+		}
+		return fmt.Errorf("move cas index of %s: %w", d.ID, err)
+	}
+	log.InfoContext(ctx, "live job scaled: deployment kept at the new index", "deployment_id", d.ID, "from", d.CASIndex, "to", to)
+	d.CASIndex = to
+	return nil
 }
 
 // retried reports whether a person asked to retry latest, a failed or rejected
@@ -723,6 +765,30 @@ func storePolicy(p meta.Policy) store.Policy {
 // alone never supersedes a pending approval.
 func specHash(job *api.Job) (string, error) {
 	b, err := json.Marshal(job)
+	if err != nil {
+		return "", err
+	}
+	return hashOf(string(b)), nil
+}
+
+// diffHashOf identifies a plan diff in full, before redaction: a secret
+// changed by hand changes it, where the redacted diff reads the same. The count
+// of a group with a scaling block is never in the diff (substituteScalingCounts),
+// and a group's Updates are left out: they are the scheduler's count of the
+// allocations the plan touches, which a scale changes. So a scale leaves the
+// hash as it was.
+func diffHashOf(d *api.JobDiff) (string, error) {
+	spec := *d
+	spec.TaskGroups = make([]*api.TaskGroupDiff, len(d.TaskGroups))
+	for i, g := range d.TaskGroups {
+		if g != nil {
+			cp := *g
+			cp.Updates = nil
+			g = &cp
+		}
+		spec.TaskGroups[i] = g
+	}
+	b, err := json.Marshal(&spec)
 	if err != nil {
 		return "", err
 	}

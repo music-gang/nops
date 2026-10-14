@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +90,17 @@ func (s *journalStore) Transition(ctx context.Context, id string, to store.State
 		return err
 	}
 	s.j.add("store:%s", what)
+	return nil
+}
+
+func (s *journalStore) MoveCASIndex(ctx context.Context, id string, in store.State, from, to uint64) error {
+	if err := s.write("cas"); err != nil {
+		return err
+	}
+	if err := s.Store.MoveCASIndex(ctx, id, in, from, to); err != nil {
+		return err
+	}
+	s.j.add("store:cas")
 	return nil
 }
 
@@ -374,7 +386,10 @@ func TestAHookRevisionIsNotRegisteredWhenItsPlanFails(t *testing.T) {
 }
 
 // Invariant 2. The register is made at the index detection captured, not at 0
-// and not at what the live job says at that moment.
+// and not at what the live job says at that moment. createApplying records no
+// diff hash, as for a deployment from before they were: any move of the index
+// is an edit (TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain covers one
+// that has a hash).
 func TestARegisterUsesTheIndexCapturedAtDetection(t *testing.T) {
 	setup := func(t *testing.T) (*harness, *store.Deployment, *api.Job) {
 		h := newHarness(t)
@@ -419,16 +434,18 @@ func TestARegisterUsesTheIndexCapturedAtDetection(t *testing.T) {
 	})
 }
 
-// Invariant 2, for a deployment that knows the diff it was detected with: the
-// live job moves between the plan and the register. Nomad refuses the register
-// either way. A scale is checked again and registered at its index, after a
-// fresh plan; an edit fails the deployment and is never registered over.
+// Invariants 2 and 7, for a deployment that knows the diff it was detected
+// with: the live job moves between the plan and the register. Nomad refuses
+// the register either way. A scale is checked again, its index saved before
+// anything is done at it, and registered there after a fresh plan; an edit
+// fails the deployment and is never registered over.
 func TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain(t *testing.T) {
-	run := func(t *testing.T, move func(h *harness)) (*harness, *store.Deployment, []string) {
+	// run journals an auto deployment from detected on, with the failAt-th store
+	// write failing once, and moves the live job right after the first plan.
+	run := func(t *testing.T, failAt int, move func(h *harness)) (*harness, *store.Deployment, []string) {
 		h := newHarness(t)
 		d := scaledJob(t, h, "auto")
-		h.step(d) // detected -> applying
-		j, _, jn := h.journaled(0)
+		j, _, jn := h.journaled(failAt)
 		moved := false
 		jn.onPlan = func(id string) {
 			if id == "web" && !moved {
@@ -436,9 +453,9 @@ func TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain(t *testing.T) {
 				move(h)
 			}
 		}
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 6; i++ {
 			got := h.get(d.ID)
-			if got.State != store.StateApplying || got.AppliedIndex != 0 {
+			if (got.State != store.StateDetected && got.State != store.StateApplying) || got.AppliedIndex != 0 {
 				break
 			}
 			j.add("step")
@@ -447,8 +464,23 @@ func TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain(t *testing.T) {
 		return h, h.get(d.ID), j.all()
 	}
 
+	t.Run("the index move fails once", func(t *testing.T) {
+		// Writes: 1 the move to applying, 2 the index move, which fails.
+		h, got, entries := run(t, 2, func(h *harness) { h.scaleTo(3, 6) })
+		if got.State != store.StateApplying || got.AppliedIndex == 0 {
+			t.Fatalf("deployment = %s applied at %d (%q), want registered after the scale", got.State, got.AppliedIndex, got.Error)
+		}
+		if calls := h.nomad.registerCalls; len(calls) != 1 || calls[0].index != 6 {
+			t.Fatalf("register calls = %+v, want one at the scale's index 6", calls)
+		}
+		if !slices.Contains(entries, "store:cas:FAILED") {
+			t.Fatalf("journal %v: the index move never failed", entries)
+		}
+		checkOrder(t, "the index move fails once", entries)
+	})
+
 	t.Run("a scale", func(t *testing.T) {
-		h, got, entries := run(t, func(h *harness) { h.scaleTo(3, 6) })
+		h, got, entries := run(t, 0, func(h *harness) { h.scaleTo(3, 6) })
 		if got.State != store.StateApplying || got.AppliedIndex == 0 {
 			t.Fatalf("deployment = %s applied at %d (%q), want registered after the scale", got.State, got.AppliedIndex, got.Error)
 		}
@@ -462,7 +494,7 @@ func TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain(t *testing.T) {
 	})
 
 	t.Run("an edit", func(t *testing.T) {
-		h, got, _ := run(t, func(h *harness) { h.editLive(6) })
+		h, got, _ := run(t, 0, func(h *harness) { h.editLive(6) })
 		if got.State != store.StateFailed {
 			t.Fatalf("deployment = %s, want failed", got.State)
 		}

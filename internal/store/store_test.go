@@ -489,8 +489,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 12 {
-		t.Errorf("user_version = %d, %v; want 12", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 13 {
+		t.Errorf("user_version = %d, %v; want 13", v, err)
 	}
 }
 
@@ -613,6 +613,76 @@ func TestSetApplied(t *testing.T) {
 	}
 
 	if err := s.SetApplied(ctx, "missing", 1, "eval-4"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDiffHashRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	with := newDep("web")
+	with.DiffHash = "diff-1"
+	mustCreate(t, s, with)
+	without := mustCreate(t, s, newDep("api"))
+
+	for _, tc := range []struct {
+		id, want string
+	}{{with.ID, "diff-1"}, {without.ID, ""}} {
+		got, err := s.GetDeployment(ctx, tc.id)
+		if err != nil || got.DiffHash != tc.want {
+			t.Errorf("diff hash of %s = %q (%v), want %q", tc.id, got.DiffHash, err, tc.want)
+		}
+	}
+}
+
+func TestMoveCASIndex(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := mustCreate(t, s, newDep("web")) // detected, cas_index 42
+
+	if err := s.MoveCASIndex(ctx, d.ID, StateDetected, 42, 45); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetDeployment(ctx, d.ID)
+	if got.CASIndex != 45 || got.State != StateDetected {
+		t.Fatalf("deployment = %s at %d, want detected at 45", got.State, got.CASIndex)
+	}
+	events, err := s.Events(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if last.From != StateDetected || last.To != StateDetected || !strings.Contains(last.Message, "42 -> 45") {
+		t.Errorf("last event = %+v, want detected -> detected naming 42 -> 45", last)
+	}
+
+	// The index it was read at must still be the deployment's.
+	if err := s.MoveCASIndex(ctx, d.ID, StateDetected, 42, 46); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move from a stale index: err = %v, want ErrStateConflict", err)
+	}
+	// And so must the state.
+	if err := s.MoveCASIndex(ctx, d.ID, StatePendingApproval, 45, 46); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move in the wrong state: err = %v, want ErrStateConflict", err)
+	}
+
+	// Once registered, the index the register used is history.
+	if err := s.Transition(ctx, d.ID, StateApplying, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveCASIndex(ctx, d.ID, StateApplying, 45, 46); err != nil {
+		t.Fatalf("move while applying, before the register: %v", err)
+	}
+	if err := s.SetApplied(ctx, d.ID, 47, "eval-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveCASIndex(ctx, d.ID, StateApplying, 46, 48); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move after the register: err = %v, want ErrStateConflict", err)
+	}
+
+	if err := s.MoveCASIndex(ctx, d.ID, StateCompleted, 46, 48); err == nil {
+		t.Error("move in a terminal state: want an error")
+	}
+	if err := s.MoveCASIndex(ctx, "missing", StateDetected, 1, 2); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
