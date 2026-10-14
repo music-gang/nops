@@ -693,6 +693,15 @@ func TestUnrelatedCommitDoesNotSupersede(t *testing.T) {
 	}
 }
 
+// outsideEdit is the plan of git's web against a live job someone edited by
+// hand: the diff shows the edit. A live index that moves with the same diff is
+// a scale (see scale_test.go).
+func outsideEdit() *api.JobDiff {
+	return &api.JobDiff{Type: "Edited", ID: "web", Fields: []*api.FieldDiff{
+		{Type: "Edited", Name: "Meta[owner]", Old: "hand", New: ""},
+	}}
+}
+
 func TestRevalidationSupersedesOnLiveChange(t *testing.T) {
 	h := newHarness(t)
 	h.nomad.setFile("web-v1", managed("web", "approval", nil))
@@ -704,12 +713,13 @@ func TestRevalidationSupersedesOnLiveChange(t *testing.T) {
 		t.Fatalf("setup: cas_index = %d, want 0 (job did not exist)", first.CASIndex)
 	}
 
-	// Someone registers the job outside nops: the live index moves.
+	// Someone registers the job outside nops: the live index moves, and the
+	// plan, still drifting, shows what they registered.
 	live := managed("web", "approval", nil)
 	idx := uint64(7)
 	live.JobModifyIndex = &idx
 	h.nomad.setLive(live)
-	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"}) // still drifting
+	h.nomad.setDrift("web", outsideEdit())
 	h.detect()
 
 	old, _ := h.store.GetDeployment(context.Background(), first.ID)
@@ -899,11 +909,13 @@ func TestRetryRuleDoesNotRecreateSameFailure(t *testing.T) {
 		t.Fatalf("a new deployment was created for the same failure: %+v", second)
 	}
 
-	// The live job changes outside nops: the retry rule no longer applies.
+	// The live job changes outside nops, which the plan shows: the retry rule
+	// no longer applies.
 	live := managed("web", "auto", nil)
 	idx := uint64(3)
 	live.JobModifyIndex = &idx
 	h.nomad.setLive(live)
+	h.nomad.setDrift("web", outsideEdit())
 	h.detect()
 
 	third := h.latest("web")
@@ -1001,27 +1013,36 @@ func TestBlockedRetry(t *testing.T) {
 		d.RetriedBy, d.RetriedAt = "iacopo", time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 		return d
 	}
+	withDiff := func(d *store.Deployment) *store.Deployment {
+		d.DiffHash = "diff-1"
+		return d
+	}
 	cases := []struct {
 		name          string
 		latest        *store.Deployment
 		hash          string
 		liveIndex     uint64
+		diffHash      string
 		wantBlockedBy string
 	}{
-		{"not failed or rejected", dep(store.StateCompleted, "h1", 0, 0), "h1", 0, ""},
-		{"different spec hash", dep(store.StateFailed, "h1", 0, 0), "h2", 0, ""},
-		{"failed before register, live unchanged: blocked", dep(store.StateFailed, "h1", 5, 0), "h1", 5, "dep-1"},
-		{"failed before register, live changed: unblocked", dep(store.StateFailed, "h1", 5, 0), "h1", 6, ""},
-		{"rejected before register, live unchanged: blocked", dep(store.StateRejected, "h1", 5, 0), "h1", 5, "dep-1"},
-		{"failed after register: blocked regardless of live index", dep(store.StateFailed, "h1", 5, 9), "h1", 6, "dep-1"},
-		{"rejected after register (never happens, still safe)", dep(store.StateRejected, "h1", 5, 9), "h1", 6, "dep-1"},
-		{"retried failure, live unchanged: unblocked", retried(dep(store.StateFailed, "h1", 5, 0)), "h1", 5, ""},
-		{"retried failure after register: unblocked", retried(dep(store.StateFailed, "h1", 5, 9)), "h1", 6, ""},
-		{"retried rejection: unblocked", retried(dep(store.StateRejected, "h1", 5, 0)), "h1", 5, ""},
+		{"not failed or rejected", dep(store.StateCompleted, "h1", 0, 0), "h1", 0, "", ""},
+		{"different spec hash", dep(store.StateFailed, "h1", 0, 0), "h2", 0, "", ""},
+		{"failed before register, live unchanged: blocked", dep(store.StateFailed, "h1", 5, 0), "h1", 5, "", "dep-1"},
+		{"failed before register, live changed: unblocked", dep(store.StateFailed, "h1", 5, 0), "h1", 6, "", ""},
+		{"rejected before register, live unchanged: blocked", dep(store.StateRejected, "h1", 5, 0), "h1", 5, "", "dep-1"},
+		{"failed after register: blocked regardless of live index", dep(store.StateFailed, "h1", 5, 9), "h1", 6, "", "dep-1"},
+		{"rejected after register (never happens, still safe)", dep(store.StateRejected, "h1", 5, 9), "h1", 6, "", "dep-1"},
+		{"retried failure, live unchanged: unblocked", retried(dep(store.StateFailed, "h1", 5, 0)), "h1", 5, "", ""},
+		{"retried failure after register: unblocked", retried(dep(store.StateFailed, "h1", 5, 9)), "h1", 6, "", ""},
+		{"retried rejection: unblocked", retried(dep(store.StateRejected, "h1", 5, 0)), "h1", 5, "", ""},
+		{"rejected before register, live scaled: blocked", withDiff(dep(store.StateRejected, "h1", 5, 0)), "h1", 6, "diff-1", "dep-1"},
+		{"failed before register, live scaled: blocked", withDiff(dep(store.StateFailed, "h1", 5, 0)), "h1", 6, "diff-1", "dep-1"},
+		{"rejected before register, live edited: unblocked", withDiff(dep(store.StateRejected, "h1", 5, 0)), "h1", 6, "diff-2", ""},
+		{"no diff hash recorded, live moved: unblocked", dep(store.StateRejected, "h1", 5, 0), "h1", 6, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			blockedBy, reason := blockedRetry(c.latest, c.hash, c.liveIndex)
+			blockedBy, reason := blockedRetry(c.latest, c.hash, c.liveIndex, c.diffHash)
 			if blockedBy != c.wantBlockedBy {
 				t.Errorf("blockedBy = %q, want %q", blockedBy, c.wantBlockedBy)
 			}
