@@ -226,7 +226,7 @@ func TestJob(t *testing.T) {
 }
 
 func TestPlanRequestsDiff(t *testing.T) {
-	s, c := newStub(t, 200, `{"Diff":{"Type":"Edited","ID":"web"},"JobModifyIndex":11}`)
+	s, c := newStub(t, 200, `{"Diff":{"Type":"Edited","ID":"web","Fields":[{"Name":"Priority","Old":"50","New":"60","Type":"Edited"}]},"JobModifyIndex":11}`)
 	resp, err := c.Plan(context.Background(), testJob("web"))
 	if err != nil {
 		t.Fatal(err)

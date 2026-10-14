@@ -81,6 +81,77 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
+// dropEmptyEdits turns into None every part of a plan diff marked Edited that
+// holds no changed field and no changed part, from the innermost up, and takes
+// such objects out of their lists. Nomad marks a part Edited for a difference
+// it doesn't show (the Scaling of a job right after its first register), and a
+// diff that shows no change is no change.
+func dropEmptyEdits(d *api.JobDiff) {
+	if d == nil {
+		return
+	}
+	var changed bool
+	d.Objects, changed = keepChangedObjects(d.Objects)
+	changed = changed || anyChanged(d.Fields)
+	for _, g := range d.TaskGroups {
+		if g == nil {
+			continue
+		}
+		var gChanged bool
+		g.Objects, gChanged = keepChangedObjects(g.Objects)
+		gChanged = gChanged || anyChanged(g.Fields)
+		for _, t := range g.Tasks {
+			if t == nil {
+				continue
+			}
+			var tChanged bool
+			t.Objects, tChanged = keepChangedObjects(t.Objects)
+			settle(&t.Type, tChanged || anyChanged(t.Fields))
+			gChanged = gChanged || t.Type != "None"
+		}
+		settle(&g.Type, gChanged)
+		changed = changed || g.Type != "None"
+	}
+	settle(&d.Type, changed)
+}
+
+// keepChangedObjects drops the objects marked Edited with nothing changed in
+// them, after doing the same below each one, and reports whether any object
+// left is a change.
+func keepChangedObjects(objects []*api.ObjectDiff) ([]*api.ObjectDiff, bool) {
+	var kept []*api.ObjectDiff
+	changed := false
+	for _, o := range objects {
+		if o == nil {
+			continue
+		}
+		var inner bool
+		o.Objects, inner = keepChangedObjects(o.Objects)
+		if o.Type == "Edited" && !inner && !anyChanged(o.Fields) {
+			continue
+		}
+		kept = append(kept, o)
+		changed = changed || o.Type != "None"
+	}
+	return kept, changed
+}
+
+// settle turns an Edited part with nothing changed in it into None.
+func settle(typ *string, changed bool) {
+	if *typ == "Edited" && !changed {
+		*typ = "None"
+	}
+}
+
+func anyChanged(fields []*api.FieldDiff) bool {
+	for _, f := range fields {
+		if f != nil && f.Type != "None" {
+			return true
+		}
+	}
+	return false
+}
+
 // Summarize walks a plan diff. A nil diff (no drift) is the zero summary. A
 // redacted value counts like any other: it changed.
 func Summarize(d *api.JobDiff) DiffSummary {
