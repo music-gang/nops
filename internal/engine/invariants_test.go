@@ -419,6 +419,62 @@ func TestARegisterUsesTheIndexCapturedAtDetection(t *testing.T) {
 	})
 }
 
+// Invariant 2, for a deployment that knows the diff it was detected with: the
+// live job moves between the plan and the register. Nomad refuses the register
+// either way. A scale is checked again and registered at its index, after a
+// fresh plan; an edit fails the deployment and is never registered over.
+func TestALiveJobThatMovesBeforeTheRegisterIsCheckedAgain(t *testing.T) {
+	run := func(t *testing.T, move func(h *harness)) (*harness, *store.Deployment, []string) {
+		h := newHarness(t)
+		d := scaledJob(t, h, "auto")
+		h.step(d) // detected -> applying
+		j, _, jn := h.journaled(0)
+		moved := false
+		jn.onPlan = func(id string) {
+			if id == "web" && !moved {
+				moved = true
+				move(h)
+			}
+		}
+		for i := 0; i < 4; i++ {
+			got := h.get(d.ID)
+			if got.State != store.StateApplying || got.AppliedIndex != 0 {
+				break
+			}
+			j.add("step")
+			h.step(got)
+		}
+		return h, h.get(d.ID), j.all()
+	}
+
+	t.Run("a scale", func(t *testing.T) {
+		h, got, entries := run(t, func(h *harness) { h.scaleTo(3, 6) })
+		if got.State != store.StateApplying || got.AppliedIndex == 0 {
+			t.Fatalf("deployment = %s applied at %d (%q), want registered after the scale", got.State, got.AppliedIndex, got.Error)
+		}
+		if calls := h.nomad.registerCalls; len(calls) != 1 || calls[0].index != 6 {
+			t.Fatalf("register calls = %+v, want one at the scale's index 6", calls)
+		}
+		if n := h.liveCount(); n != 3 {
+			t.Errorf("live count = %d, want the scale's 3", n)
+		}
+		checkOrder(t, "a scale", entries)
+	})
+
+	t.Run("an edit", func(t *testing.T) {
+		h, got, _ := run(t, func(h *harness) { h.editLive(6) })
+		if got.State != store.StateFailed {
+			t.Fatalf("deployment = %s, want failed", got.State)
+		}
+		if len(h.nomad.registerCalls) != 0 {
+			t.Errorf("registered %+v over an edit", h.nomad.registerCalls)
+		}
+		if v := h.nomad.live["web"].Meta["version"]; v != "hand" {
+			t.Errorf("live version = %q, want the edit's untouched", v)
+		}
+	})
+}
+
 // -- invariant 3 ---------------------------------------------------------------
 
 // tickAfterWrites runs one apply step on the job's active deployment after
