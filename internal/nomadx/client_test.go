@@ -245,6 +245,68 @@ func TestPlanRequestsDiff(t *testing.T) {
 	}
 }
 
+// scalingOnlyDiff is Nomad 2.0.7's plan of a job whose group has a scaling
+// block, against the same job right after its first register: the plan marks
+// Scaling as Edited with nothing in it.
+const scalingOnlyDiff = `{"Fields":null,"ID":"web","Objects":null,"TaskGroups":[{"Fields":null,"Name":"g","Objects":[{"Fields":null,"Name":"Scaling","Objects":null,"Type":"Edited"}],"Tasks":[{"Annotations":null,"Fields":null,"Name":"t","Objects":null,"Type":"None"}],"Type":"Edited","Updates":{"in-place update":1}}],"Type":"Edited"}`
+
+// A part of the diff marked Edited with no changed field and no changed part
+// in it shows no change: Plan reports it as none, so a new job with a scaling
+// block is in sync after its first register.
+func TestPlanDropsEditsThatChangeNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name, diff, want string
+	}{
+		{"an empty scaling block", scalingOnlyDiff, "None"},
+		{"a change beside it", strings.Replace(scalingOnlyDiff, `"Fields":null,"ID":"web"`,
+			`"Fields":[{"Name":"Meta[version]","Old":"1","New":"2","Type":"Edited"}],"ID":"web"`, 1), "Edited"},
+		{"an edit holding only context and an empty edit",
+			`{"ID":"web","Type":"Edited","Objects":[{"Name":"Update","Type":"Edited","Fields":[{"Name":"Stagger","Old":"30","New":"30","Type":"None"}],"Objects":[{"Name":"X","Type":"Edited"}]}]}`, "None"},
+		{"an edit holding a change", `{"ID":"web","Type":"Edited","Objects":[{"Name":"Update","Type":"Edited","Objects":[{"Name":"X","Type":"Edited","Fields":[{"Name":"A","Old":"1","New":"2","Type":"Edited"}]}]}]}`, "Edited"},
+		{"an added block with nothing in it", `{"ID":"web","Type":"Edited","Objects":[{"Name":"Spread","Type":"Added"}]}`, "Edited"},
+		{"a task edited by an empty part", `{"ID":"web","Type":"Edited","TaskGroups":[{"Name":"g","Type":"Edited","Tasks":[{"Name":"t","Type":"Edited","Objects":[{"Name":"Resources","Type":"Edited"}]}]}]}`, "None"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, c := newStub(t, 200, `{"Diff":`+tc.diff+`}`)
+			resp, err := c.Plan(context.Background(), testJob("web"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Diff.Type != tc.want {
+				t.Errorf("diff type = %s, want %s: %s", resp.Diff.Type, tc.want, mustJSON(t, resp.Diff))
+			}
+		})
+	}
+}
+
+// What stays of a diff once its empty edits are gone is every change, and only
+// those: the dashboard shows it.
+func TestPlanKeepsEveryChangeOfADiff(t *testing.T) {
+	diff := strings.Replace(scalingOnlyDiff, `"Fields":null,"ID":"web"`,
+		`"Fields":[{"Name":"Meta[version]","Old":"1","New":"2","Type":"Edited"}],"ID":"web"`, 1)
+	_, c := newStub(t, 200, `{"Diff":`+diff+`}`)
+	resp, err := c.Plan(context.Background(), testJob("web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := resp.Diff.Fields; len(f) != 1 || f[0].Name != "Meta[version]" {
+		t.Errorf("job fields = %s, want the version change", mustJSON(t, f))
+	}
+	g := resp.Diff.TaskGroups[0]
+	if g.Type != "None" || len(g.Objects) != 0 {
+		t.Errorf("group = %s, want None with the empty Scaling gone", mustJSON(t, g))
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestDispatchSendsIdempotencyToken(t *testing.T) {
 	s, c := newStub(t, 200, `{"DispatchedJobID":"hook/dispatch-1","EvalID":"e2"}`)
 	res, err := c.Dispatch(context.Background(), "default", "hook", map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
