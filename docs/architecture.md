@@ -89,8 +89,8 @@ run again. Only `Approve` and `Reject` move a deployment out of
 
 1. **Pre-hooks** run in order ([hooks](hooks.md#several-hooks)).
 2. **Register:** Nops plans again, and registers only if the plan still shows
-   a difference and the job's modify index is still the one read at
-   detection. If someone changed the job, the deployment fails.
+   the difference it showed at detection. If someone changed the job, the
+   deployment fails. A count Nops leaves to an autoscaler isn't a change.
 3. **Wait for health**, within the [apply timeout](#the-apply-timeout).
 4. **Post-hooks** run in order, then the deployment completes.
 

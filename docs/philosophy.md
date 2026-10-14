@@ -16,7 +16,8 @@ No change may break these rules. The tests that try to break them are in
 
 2. **CAS on every register.** Nops registers with the job's modify index read
    at detection, so Nomad refuses the write if anyone changed the job since.
-   *Why:* time passes between detection and apply, especially while a
+   The index moves forward only when a fresh plan shows the same diff, as
+   after a count change on a group with a `scaling` block. *Why:* time passes between detection and apply, especially while a
    deployment waits for approval. Nops never overwrites a manual change.
 
 3. **Never auto-apply under policy `approval`.** Nops never moves a
@@ -49,7 +50,8 @@ Nops stops and says so rather than carry on with uncertain state:
 - It never ignores a Nomad or SQLite error. A failed notification is the only
   soft failure: a WARN.
 - When in doubt, it takes the safe path: invalid meta means policy `none`, a
-  missing hook fails the deployment, a CAS conflict fails it too.
+  missing hook fails the deployment, a change made to the job outside Nops
+  fails it too.
 - Every error tells you what failed and where.
 
 ## Patterns reused from nomad-gitops
