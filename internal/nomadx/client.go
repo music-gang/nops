@@ -145,6 +145,7 @@ func (c *Client) Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, 
 	if err != nil {
 		return nil, fmt.Errorf("plan job %s: %w", deref(job.ID), err)
 	}
+	dropEmptyEdits(resp.Diff)
 	return resp, nil
 }
 
