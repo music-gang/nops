@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -318,6 +319,35 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 		t.Errorf("identical register moved the live index: %d -> %d", before, *live.JobModifyIndex)
 	}
 	t.Logf("live index %d, register response index %d", before, res.JobModifyIndex)
+}
+
+// A new job with a scaling block, planned again unchanged right after its
+// first register: Nomad marks its Scaling Edited with nothing in it, and Plan
+// reports no change.
+func TestPlanOfAnUnchangedScaledJobShowsNoChange(t *testing.T) {
+	c, raw := newClient(t)
+	ctx := context.Background()
+	id := uniqueID(t, raw, "scaled")
+
+	job, err := c.ParseHCL(ctx, "default", scalableHCL(id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	again, err := c.ParseHCL(ctx, "default", scalableHCL(id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Plan(ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Diff.Type != "None" {
+		b, _ := json.Marshal(resp.Diff)
+		t.Errorf("plan of the unchanged job: %s, want None", b)
+	}
 }
 
 func TestDispatch(t *testing.T) {
