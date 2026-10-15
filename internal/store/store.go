@@ -107,14 +107,19 @@ type Deployment struct {
 	SpecHash      string
 	JobSpec       string // JSON of the parsed job to register
 	PlanDiff      string // JSON of the redacted plan diff; may be empty
-	Policy        Policy
-	State         State
-	CASIndex      uint64
-	AppliedIndex  uint64
-	EvalID        string
-	Error         string
-	DecidedBy     string
-	DecidedAt     time.Time // zero if not decided
+	// DiffHash is the hash of the full plan diff, before redaction, that
+	// detection saw; empty without drift and for a deployment created before it
+	// was recorded. A live index that moves while the diff keeps this hash is a
+	// scale, not an outside edit.
+	DiffHash     string
+	Policy       Policy
+	State        State
+	CASIndex     uint64
+	AppliedIndex uint64
+	EvalID       string
+	Error        string
+	DecidedBy    string
+	DecidedAt    time.Time // zero if not decided
 	// RetriedBy and RetriedAt are set by MarkRetried on a failed or rejected
 	// deployment a human asked to retry: detection stops treating it as the
 	// reason a job's drift is blocked.
@@ -396,10 +401,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
-		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff,
+		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff, diff_hash,
 		 policy, state, error, cas_index, retry_of, window_lifted_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff,
+		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff, d.DiffHash,
 		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, d.WindowLiftedBy, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -549,6 +554,54 @@ func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex uint64, 
 	return nil
 }
 
+// MoveCASIndex moves a deployment's cas_index from `from` to `to` while it is
+// in state `in` and not registered yet, atomically with an `in -> in` event
+// that says so. The engine calls it when the live job's index moved but a fresh
+// plan shows the diff the deployment was detected with: a scale, not an outside
+// edit (docs/philosophy.md, invariant 2). It returns ErrStateConflict if the
+// deployment is no longer in `in` at `from`, or already registered, and
+// ErrNotFound if it does not exist.
+func (s *Store) MoveCASIndex(ctx context.Context, id string, in State, from, to uint64) error {
+	switch in {
+	case StateDetected, StatePendingApproval, StateApplying:
+	default:
+		return fmt.Errorf("move cas index %s: a deployment %s has no index to move", id, in)
+	}
+	now := s.ts()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("move cas index %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `UPDATE deployments SET cas_index = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND cas_index = ? AND applied_index IS NULL`,
+		int64(to), now, id, string(in), int64(from))
+	if err != nil {
+		return fmt.Errorf("move cas index %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var state string
+		var cas int64
+		err := tx.QueryRowContext(ctx, `SELECT state, cas_index FROM deployments WHERE id = ?`, id).Scan(&state, &cas)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("move cas index %s: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("move cas index %s: %w", id, err)
+		}
+		return fmt.Errorf("move cas index %s: %w (want %s at %d, is %s at %d)", id, ErrStateConflict, in, from, state, cas)
+	}
+	msg := fmt.Sprintf("live job index %d -> %d with the same plan diff: a scale, not an outside edit", from, to)
+	if err := insertEvent(ctx, tx, id, now, in, in, "nops", msg); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("move cas index %s: commit: %w", id, err)
+	}
+	return nil
+}
+
 // AppliedSince returns the timestamp of a deployment's "-> applying" event:
 // the apply timeout is counted from it (docs/deployment-lifecycle.md), so a restart
 // does not extend it. The applying -> applying events of a promotion wait are
@@ -569,7 +622,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 }
 
 const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
-	plan_diff, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
+	plan_diff, diff_hash, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
 	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -577,7 +630,8 @@ type scanner interface{ Scan(dest ...any) error }
 func scanDeployment(r scanner) (*Deployment, error) {
 	var (
 		d                                   Deployment
-		plan, eval, errMsg, by, decidedAt   sql.NullString
+		plan, diffHash, eval, errMsg, by    sql.NullString
+		decidedAt                           sql.NullString
 		subject, author, retriedBy, retried sql.NullString
 		retryOf, liftedBy                   sql.NullString
 		waitSince, promoted                 sql.NullString
@@ -585,12 +639,12 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
-	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan,
+	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan, &diffHash,
 		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
 		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
-	d.PlanDiff, d.EvalID, d.Error, d.DecidedBy = plan.String, eval.String, errMsg.String, by.String
+	d.PlanDiff, d.DiffHash, d.EvalID, d.Error, d.DecidedBy = plan.String, diffHash.String, eval.String, errMsg.String, by.String
 	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
 	d.WindowLiftedBy = liftedBy.String
 	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)

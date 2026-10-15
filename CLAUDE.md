@@ -127,7 +127,7 @@ The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md);
 `TestInvariantTitlesMatch` keeps this list's titles the same as there.
 
 1. **Plan before every write**: no `Register` without a fresh `Jobs.Plan()` confirming a difference.
-2. **CAS on every register** (`EnforceIndex` + the `JobModifyIndex` captured at detection).
+2. **CAS on every register** (`EnforceIndex` + the `JobModifyIndex` captured at detection, moved forward only when a fresh plan shows the same diff).
 3. **Never auto-apply under policy `approval`**: Nops never moves a deployment past `pending_approval` on its own; it takes an authenticated request from a token with `approve` on the job's namespace, valid for `(deployment_id, spec_hash)`.
 4. **Git is the source of truth for Nops's behaviour**: policy and hooks; invalid meta → policy `none` + ERROR.
 5. **Nops never writes to Git** and never writes meta into the live job; state lives only in SQLite.

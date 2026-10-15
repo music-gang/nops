@@ -69,6 +69,9 @@ type Store interface {
 	// SetApplied and AppliedSince are used by apply (see docs/archive/engine-apply.md).
 	SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error
 	AppliedSince(ctx context.Context, deploymentID string) (time.Time, error)
+	// MoveCASIndex is used by detection and apply when the live index moved
+	// but the plan's diff did not: a scale (docs/philosophy.md, invariant 2).
+	MoveCASIndex(ctx context.Context, id string, in store.State, from, to uint64) error
 	// MarkAwaitingPromotion and MarkPromoted are used by apply for a Nomad
 	// deployment that waits for a person to promote its canaries.
 	MarkAwaitingPromotion(ctx context.Context, id string) (bool, error)
