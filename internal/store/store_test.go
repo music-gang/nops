@@ -489,8 +489,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 13 {
-		t.Errorf("user_version = %d, %v; want 13", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 14 {
+		t.Errorf("user_version = %d, %v; want 14", v, err)
 	}
 }
 
@@ -582,25 +582,29 @@ func TestSetApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.SetApplied(ctx, d.ID, 7, "eval-1"); err != nil {
+	if got, err := s.GetDeployment(ctx, d.ID); err != nil || got.AppliedVersion != nil {
+		t.Fatalf("applied version before the register = %v (%v), want none", got.AppliedVersion, err)
+	}
+	if err := s.SetApplied(ctx, d.ID, 7, 0, "eval-1"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetDeployment(ctx, d.ID)
-	if err != nil || got.AppliedIndex != 7 || got.EvalID != "eval-1" || got.State != StateApplying {
+	if err != nil || got.AppliedIndex != 7 || got.AppliedVersion == nil || *got.AppliedVersion != 0 ||
+		got.EvalID != "eval-1" || got.State != StateApplying {
 		t.Fatalf("deployment = %+v, %v", got, err)
 	}
 
 	// A crash-recovery call with no fresh eval ID keeps the one already
 	// recorded rather than blanking it out.
-	if err := s.SetApplied(ctx, d.ID, 8, ""); err != nil {
+	if err := s.SetApplied(ctx, d.ID, 8, 1, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetDeployment(ctx, d.ID)
-	if got.AppliedIndex != 8 || got.EvalID != "eval-1" {
+	if got.AppliedIndex != 8 || *got.AppliedVersion != 1 || got.EvalID != "eval-1" {
 		t.Errorf("deployment = %+v", got)
 	}
 
-	if err := s.SetApplied(ctx, d.ID, 0, "eval-2"); err == nil {
+	if err := s.SetApplied(ctx, d.ID, 0, 0, "eval-2"); err == nil {
 		t.Error("appliedIndex = 0: want an error")
 	}
 
@@ -608,11 +612,11 @@ func TestSetApplied(t *testing.T) {
 	if err := s.Transition(ctx, d.ID, StateCompleted, Transition{From: StateApplying, Actor: "nops"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetApplied(ctx, d.ID, 9, "eval-3"); !errors.Is(err, ErrStateConflict) {
+	if err := s.SetApplied(ctx, d.ID, 9, 0, "eval-3"); !errors.Is(err, ErrStateConflict) {
 		t.Errorf("err = %v, want ErrStateConflict", err)
 	}
 
-	if err := s.SetApplied(ctx, "missing", 1, "eval-4"); !errors.Is(err, ErrNotFound) {
+	if err := s.SetApplied(ctx, "missing", 1, 0, "eval-4"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -632,6 +636,58 @@ func TestDiffHashRoundTrip(t *testing.T) {
 		if err != nil || got.DiffHash != tc.want {
 			t.Errorf("diff hash of %s = %q (%v), want %q", tc.id, got.DiffHash, err, tc.want)
 		}
+	}
+}
+
+func TestMoveAppliedIndex(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, d.ID, StateApplying, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveAppliedIndex(ctx, d.ID, 0, 45); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move before the register: err = %v, want ErrStateConflict", err)
+	}
+	if err := s.SetApplied(ctx, d.ID, 43, 2, "eval-1"); err != nil {
+		t.Fatal(err)
+	}
+	since, err := s.AppliedSince(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MoveAppliedIndex(ctx, d.ID, 43, 45); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetDeployment(ctx, d.ID)
+	if got.AppliedIndex != 45 || *got.AppliedVersion != 2 || got.State != StateApplying {
+		t.Fatalf("deployment = %s at %d, version %d; want applying at 45, version 2", got.State, got.AppliedIndex, *got.AppliedVersion)
+	}
+	events, err := s.Events(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if last.From != StateApplying || last.To != StateApplying || !strings.Contains(last.Message, "43 -> 45") {
+		t.Errorf("last event = %+v, want applying -> applying naming 43 -> 45", last)
+	}
+	// The apply timeout still counts from the register.
+	if after, err := s.AppliedSince(ctx, d.ID); err != nil || !after.Equal(since) {
+		t.Errorf("applied since = %v (%v), want %v", after, err, since)
+	}
+
+	if err := s.MoveAppliedIndex(ctx, d.ID, 43, 46); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move from a stale index: err = %v, want ErrStateConflict", err)
+	}
+	if err := s.Transition(ctx, d.ID, StateCompleted, Transition{From: StateApplying, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveAppliedIndex(ctx, d.ID, 45, 46); !errors.Is(err, ErrStateConflict) {
+		t.Errorf("move once completed: err = %v, want ErrStateConflict", err)
+	}
+	if err := s.MoveAppliedIndex(ctx, "missing", 1, 2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -672,7 +728,7 @@ func TestMoveCASIndex(t *testing.T) {
 	if err := s.MoveCASIndex(ctx, d.ID, StateApplying, 45, 46); err != nil {
 		t.Fatalf("move while applying, before the register: %v", err)
 	}
-	if err := s.SetApplied(ctx, d.ID, 47, "eval-1"); err != nil {
+	if err := s.SetApplied(ctx, d.ID, 47, 0, "eval-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MoveCASIndex(ctx, d.ID, StateApplying, 46, 48); !errors.Is(err, ErrStateConflict) {

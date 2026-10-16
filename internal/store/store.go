@@ -116,10 +116,15 @@ type Deployment struct {
 	State        State
 	CASIndex     uint64
 	AppliedIndex uint64
-	EvalID       string
-	Error        string
-	DecidedBy    string
-	DecidedAt    time.Time // zero if not decided
+	// AppliedVersion is the job version the register produced; nil before the
+	// register and for a deployment registered before it was recorded. The
+	// allocations of this version and of the scales after it are the ones the
+	// wait for health counts.
+	AppliedVersion *uint64
+	EvalID         string
+	Error          string
+	DecidedBy      string
+	DecidedAt      time.Time // zero if not decided
 	// RetriedBy and RetriedAt are set by MarkRetried on a failed or rejected
 	// deployment a human asked to retry: detection stops treating it as the
 	// reason a job's drift is blocked.
@@ -525,23 +530,24 @@ func (s *Store) Transition(ctx context.Context, id string, to State, t Transitio
 	return nil
 }
 
-// SetApplied records the applied index (and, when known, the eval ID) of a
-// deployment while it stays applying, without changing its state: invariant
+// SetApplied records the applied index and job version (and, when known, the
+// eval ID) of a deployment while it stays applying, without changing its state: invariant
 // 7 requires them persisted before nops starts waiting for health, and
 // Store.Transition only writes when the state itself changes. evalID may be
 // empty (a crash recovery that finds the register already done, without a
 // fresh eval to record). It returns ErrStateConflict if the deployment is no
 // longer applying, or ErrNotFound if it does not exist.
-func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error {
+func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex, appliedVersion uint64, evalID string) error {
 	if appliedIndex == 0 {
 		return errors.New("set applied: appliedIndex is required")
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE deployments SET
 			applied_index = ?,
+			applied_version = ?,
 			eval_id = COALESCE(NULLIF(?, ''), eval_id),
 			updated_at = ?
 		WHERE id = ? AND state = ?`,
-		int64(appliedIndex), evalID, s.ts(), id, string(StateApplying))
+		int64(appliedIndex), int64(appliedVersion), evalID, s.ts(), id, string(StateApplying))
 	if err != nil {
 		return fmt.Errorf("set applied %s: %w", id, err)
 	}
@@ -602,6 +608,49 @@ func (s *Store) MoveCASIndex(ctx context.Context, id string, in State, from, to 
 	return nil
 }
 
+// MoveAppliedIndex moves the applied index of an applying deployment from
+// `from` to `to`, atomically with an `applying -> applying` event that says so.
+// The engine calls it when the live job's index moved after the register but a
+// fresh plan of the deployment's spec shows nothing to apply: a scale, not an
+// outside edit. The applied version stays the one registered. It returns
+// ErrStateConflict if the deployment is no longer applying at `from`, and
+// ErrNotFound if it does not exist.
+func (s *Store) MoveAppliedIndex(ctx context.Context, id string, from, to uint64) error {
+	now := s.ts()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("move applied index %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `UPDATE deployments SET applied_index = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND applied_index = ?`,
+		int64(to), now, id, string(StateApplying), int64(from))
+	if err != nil {
+		return fmt.Errorf("move applied index %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var state string
+		var applied sql.NullInt64
+		err := tx.QueryRowContext(ctx, `SELECT state, applied_index FROM deployments WHERE id = ?`, id).Scan(&state, &applied)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("move applied index %s: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("move applied index %s: %w", id, err)
+		}
+		return fmt.Errorf("move applied index %s: %w (want %s at %d, is %s at %d)", id, ErrStateConflict, StateApplying, from, state, applied.Int64)
+	}
+	msg := fmt.Sprintf("live job index %d -> %d with nothing to apply: a scale, not an outside edit", from, to)
+	if err := insertEvent(ctx, tx, id, now, StateApplying, StateApplying, "nops", msg); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("move applied index %s: commit: %w", id, err)
+	}
+	return nil
+}
+
 // AppliedSince returns the timestamp of a deployment's "-> applying" event:
 // the apply timeout is counted from it (docs/deployment-lifecycle.md), so a restart
 // does not extend it. The applying -> applying events of a promotion wait are
@@ -622,7 +671,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 }
 
 const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
-	plan_diff, diff_hash, policy, state, cas_index, applied_index, eval_id, error, decided_by, decided_at,
+	plan_diff, diff_hash, policy, state, cas_index, applied_index, applied_version, eval_id, error, decided_by, decided_at,
 	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -635,12 +684,12 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		subject, author, retriedBy, retried sql.NullString
 		retryOf, liftedBy                   sql.NullString
 		waitSince, promoted                 sql.NullString
-		applied                             sql.NullInt64
+		applied, appliedVersion             sql.NullInt64
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan, &diffHash,
-		&policy, &state, &cas, &applied, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
+		&policy, &state, &cas, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
 		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
@@ -648,6 +697,10 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
 	d.WindowLiftedBy = liftedBy.String
 	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)
+	if appliedVersion.Valid {
+		v := uint64(appliedVersion.Int64)
+		d.AppliedVersion = &v
+	}
 	var err error
 	if d.DecidedAt, err = parseTime(decidedAt.String); err != nil {
 		return nil, err

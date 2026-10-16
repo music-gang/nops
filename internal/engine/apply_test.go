@@ -537,10 +537,12 @@ func TestStepRegisterTimeoutSurvivesRestart(t *testing.T) {
 
 // -- tests: health ------------------------------------------------------
 
+// applyingWithIndex creates jobID's deployment registered at appliedIndex, as
+// job version 3.
 func (h *harness) applyingWithIndex(jobID string, job *api.Job, appliedIndex uint64) *store.Deployment {
 	h.t.Helper()
 	d := h.createApplying(jobID, job, 0)
-	if err := h.store.SetApplied(context.Background(), d.ID, appliedIndex, "eval-1"); err != nil {
+	if err := h.store.SetApplied(context.Background(), d.ID, appliedIndex, 3, "eval-1"); err != nil {
 		h.t.Fatal(err)
 	}
 	return h.get(d.ID)
@@ -664,6 +666,7 @@ func TestStepHealthAllocationsPathLiveJobModifiedFails(t *testing.T) {
 	job := managed("web", "auto", nil)
 	d := h.applyingWithIndex("web", job, 9)
 	h.liveApplied("web", job, 12, 4)
+	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
 	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running"})
 
 	h.step(d)

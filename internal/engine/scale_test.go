@@ -8,11 +8,13 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/gitwatch"
+	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -184,5 +186,122 @@ func TestAnOutsideEditBeforeTheRegisterStillFails(t *testing.T) {
 	}
 	if len(h.nomad.registerCalls) != 0 {
 		t.Errorf("registered %+v over an outside edit", h.nomad.registerCalls)
+	}
+}
+
+// registered drives web's deployment d, under auto, through the register and
+// returns it applying at the index of the register. No Nomad deployment
+// tracks the job (a batch job, say), so its health is that of its
+// allocations, and the allocation of the registered version is still
+// starting. The plan of git's spec now shows nothing to apply.
+func registered(t *testing.T, h *harness, d *store.Deployment) *store.Deployment {
+	t.Helper()
+	h.step(d) // detected -> applying
+	h.step(h.get(d.ID))
+	got := h.get(d.ID)
+	if got.State != store.StateApplying || got.AppliedIndex == 0 {
+		t.Fatalf("setup: deployment = %s, applied at %d (%q), want registered", got.State, got.AppliedIndex, got.Error)
+	}
+	h.nomad.setDrift("web", &api.JobDiff{Type: "None", ID: "web"})
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: h.liveVersion(), ClientStatus: "pending"})
+	return got
+}
+
+// scaleAppliedTo moves web's live count the way Nomad's scale API does, after
+// Nops registered git's spec: a new version at a new index, and still nothing
+// to apply.
+func (h *harness) scaleAppliedTo(count int, index uint64) {
+	h.t.Helper()
+	live, err := deepCopyJob(h.nomad.live["web"])
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	live.TaskGroups[0].Count = &count
+	h.liveApplied("web", live, index, derefUint64(live.Version)+1)
+}
+
+// liveVersion is the version of web's live job.
+func (h *harness) liveVersion() uint64 {
+	h.t.Helper()
+	return derefUint64(h.nomad.live["web"].Version)
+}
+
+func TestAScaleWhileWaitingForHealthKeepsTheDeployment(t *testing.T) {
+	h := newHarness(t)
+	d := registered(t, h, scaledJob(t, h, "auto"))
+	ours := h.liveVersion()
+
+	// Like Nomad's, the scale moves the allocations still running to its
+	// version, and leaves those that ended at theirs.
+	h.scaleAppliedTo(3, d.AppliedIndex+1)
+	scaled := h.liveVersion()
+	h.nomad.setAllocs("web",
+		nomadx.Alloc{ID: "a0", JobVersion: ours - 1, ClientStatus: "failed", Failure: "before the register"},
+		nomadx.Alloc{ID: "a1", JobVersion: ours, ClientStatus: "complete"},
+		nomadx.Alloc{ID: "a2", JobVersion: scaled, ClientStatus: "pending"},
+	)
+	h.step(h.get(d.ID))
+
+	got := h.get(d.ID)
+	if got.State != store.StateApplying {
+		t.Fatalf("deployment after a scale = %s (%q), want still applying: a count is not an outside edit", got.State, got.Error)
+	}
+	if got.AppliedIndex != d.AppliedIndex+1 || *got.AppliedVersion != ours {
+		t.Errorf("applied at %d, version %d; want the scale's index %d and the registered version %d",
+			got.AppliedIndex, *got.AppliedVersion, d.AppliedIndex+1, ours)
+	}
+
+	h.nomad.setAllocs("web",
+		nomadx.Alloc{ID: "a0", JobVersion: ours - 1, ClientStatus: "failed", Failure: "before the register"},
+		nomadx.Alloc{ID: "a1", JobVersion: ours, ClientStatus: "complete"},
+		nomadx.Alloc{ID: "a2", JobVersion: scaled, ClientStatus: "running"},
+	)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateCompleted {
+		t.Fatalf("deployment with every allocation running or complete = %s (%q), want completed", got.State, got.Error)
+	}
+}
+
+func TestAnAllocationOfTheRegisteredVersionStillFailsTheDeploymentAfterAScale(t *testing.T) {
+	h := newHarness(t)
+	d := registered(t, h, scaledJob(t, h, "auto"))
+	ours := h.liveVersion()
+
+	h.scaleAppliedTo(3, d.AppliedIndex+1)
+	h.nomad.setAllocs("web",
+		nomadx.Alloc{ID: "a1", JobVersion: ours, ClientStatus: "failed", Failure: "oom"},
+		nomadx.Alloc{ID: "a2", JobVersion: h.liveVersion(), ClientStatus: "running"},
+	)
+	h.step(h.get(d.ID))
+
+	if got := h.get(d.ID); got.State != store.StateFailed || !strings.Contains(got.Error, "oom") {
+		t.Fatalf("deployment = %s (%q), want failed on the allocation of the registered version", got.State, got.Error)
+	}
+}
+
+func TestAnOutsideEditWhileWaitingForHealthStillFails(t *testing.T) {
+	h := newHarness(t)
+	d := registered(t, h, scaledJob(t, h, "auto"))
+
+	h.editLive(d.AppliedIndex + 1)
+	h.step(h.get(d.ID))
+
+	if got := h.get(d.ID); got.State != store.StateFailed {
+		t.Fatalf("deployment after an outside edit = %s, want failed", got.State)
+	}
+}
+
+// A deployment registered before the version was recorded can't tell the
+// allocations of a scale: any move of the index fails it, as it did then.
+func TestAScaleWhileWaitingForHealthFailsADeploymentWithoutItsVersion(t *testing.T) {
+	h := newHarness(t)
+	d := registered(t, h, scaledJob(t, h, "auto"))
+
+	h.scaleAppliedTo(3, d.AppliedIndex+1)
+	d.AppliedVersion = nil
+	h.step(d)
+
+	if got := h.get(d.ID); got.State != store.StateFailed {
+		t.Fatalf("deployment = %s, want failed", got.State)
 	}
 }

@@ -204,6 +204,7 @@ func TestRecoveryAfterRestart(t *testing.T) {
 				job := managed("web", "auto", nil)
 				d := h.applyingWithIndex("web", job, 9)
 				h.liveApplied("web", job, 12, 4)
+				h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
 				h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running"})
 				return d
 			},
