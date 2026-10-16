@@ -1,8 +1,9 @@
 // Code editor for HCL: <textarea data-editor="hcl"> stays the form's field,
 // with the same text laid under it in color, and Tab and Enter indent. Without
 // JavaScript the textarea works as it is. Esc, then Tab, leaves the field.
+// A <pre data-editor="hcl"> only gets the colors.
 (function () {
-  var selector = 'textarea[data-editor="hcl"]';
+  var selector = '[data-editor="hcl"]';
   // A comment, a string, a constant, or a name with what follows it: "=" makes
   // it an attribute, a label or "{" a block.
   var token = /(#[^\n]*|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|("(?:[^"\\\n]|\\.)*"?)|(\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w-]*)(?=\s*([={"]?))/g;
@@ -57,6 +58,10 @@
       return;
     }
     ta.dataset.enhanced = "1";
+    if (ta.tagName === "PRE") {
+      ta.innerHTML = highlight(ta.textContent);
+      return;
+    }
     var wrap = document.createElement("div");
     var view = document.createElement("pre");
     var hint = document.createElement("p");

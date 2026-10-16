@@ -356,6 +356,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("GET /admin/policies", s.page(management(), s.policiesPage))
 	mux.Handle("GET /admin/policies/new", s.page(management(), s.newPolicyPage))
 	mux.Handle("GET /admin/policies/{name}/edit", s.page(management(), s.policyPage))
+	mux.Handle("GET /admin/policies/{name}/view", s.page(carriesPolicy(), s.policyView))
 	mux.Handle("GET /admin/binding-rules", s.page(management(), s.rulesPage))
 	mux.Handle("GET /admin/binding-rules/new", s.page(management(), s.newRulePage))
 	mux.Handle("GET /admin/changes", s.page(management(), s.changesPage))

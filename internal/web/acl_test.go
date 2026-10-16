@@ -1017,3 +1017,34 @@ func TestAnACLPolicyCalledNewHasItsPage(t *testing.T) {
 	mustContain(t, page, "New ACL policy", `id="policy-name"`)
 	mustNotContain(t, page, "called new")
 }
+
+// The token pages link each ACL policy to a read-only page, which opens to
+// whoever the API lets read the policy, and only a management token gets Edit.
+func TestAnACLPolicyHasAReadOnlyPage(t *testing.T) {
+	client := dashboardAs(t, &fakeStore{}, &fakeEngine{}, `namespace "*" { policy = "read" }`)
+	mustContain(t, client.get("/admin"), `href="/admin/policies/login-carol/view"`)
+	page := client.get("/admin/policies/login-carol/view")
+	mustContain(t, page, "login-carol", "policy = &#34;read&#34;", `href="/admin"`, `<pre class="code-block" data-editor="hcl">`)
+	mustNotContain(t, page, `href="/admin/policies/login-carol/edit"`)
+	if err := client.tokens.PutACLPolicy(t.Context(), store.ACLPolicy{Name: "other", Rules: `namespace "*" { policy = "write" }`}, store.Audit{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"other", "missing"} {
+		if rec := client.page("GET", "/admin/policies/"+name+"/view", nil); rec.Code != http.StatusForbidden {
+			t.Errorf("a client token on the ACL policy %s: status %d, want 403", name, rec.Code)
+		}
+	}
+
+	manager := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	if rec := manager.page("POST", "/admin/policies", url.Values{"name": {"readers"}, "description": {"see all"}, "rules": {`namespace "*" { policy = "read" }`}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: status %d", rec.Code)
+	}
+	if rec := manager.page("POST", "/admin/tokens", url.Values{"name": {"ci"}, "type": {"client"}, "policy": {"readers"}, "expires": {"30"}}); rec.Code != http.StatusOK {
+		t.Fatalf("create the token: status %d", rec.Code)
+	}
+	mustContain(t, manager.get("/admin/tokens"), `href="/admin/policies/readers/view"`)
+	mustContain(t, manager.get("/admin/policies/readers/view"), "see all", "policy = &#34;read&#34;", `href="/admin/policies/readers/edit"`, `href="/admin/policies"`)
+	if rec := manager.page("GET", "/admin/policies/missing/view", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("a management token on a missing ACL policy: status %d, want 404", rec.Code)
+	}
+}
