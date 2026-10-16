@@ -104,11 +104,22 @@ func (s *journalStore) MoveCASIndex(ctx context.Context, id string, in store.Sta
 	return nil
 }
 
-func (s *journalStore) SetApplied(ctx context.Context, id string, appliedIndex uint64, evalID string) error {
+func (s *journalStore) MoveAppliedIndex(ctx context.Context, id string, from, to uint64) error {
 	if err := s.write("applied"); err != nil {
 		return err
 	}
-	if err := s.Store.SetApplied(ctx, id, appliedIndex, evalID); err != nil {
+	if err := s.Store.MoveAppliedIndex(ctx, id, from, to); err != nil {
+		return err
+	}
+	s.j.add("store:applied")
+	return nil
+}
+
+func (s *journalStore) SetApplied(ctx context.Context, id string, appliedIndex, appliedVersion uint64, evalID string) error {
+	if err := s.write("applied"); err != nil {
+		return err
+	}
+	if err := s.Store.SetApplied(ctx, id, appliedIndex, appliedVersion, evalID); err != nil {
 		return err
 	}
 	s.j.add("store:applied")

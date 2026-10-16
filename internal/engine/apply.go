@@ -416,7 +416,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		return
 	}
 	appliedIndex := derefUint64(applied.JobModifyIndex)
-	if err := e.store.SetApplied(ctx, d.ID, appliedIndex, evalID); err != nil {
+	if err := e.store.SetApplied(ctx, d.ID, appliedIndex, derefUint64(applied.Version), evalID); err != nil {
 		log.ErrorContext(ctx, "record applied index", "error", err)
 		return
 	}
@@ -465,7 +465,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 		}
 	}
 
-	verdict, reason, err := e.applyHealth(ctx, d)
+	verdict, reason, err := e.applyHealth(ctx, log, d)
 	if errors.Is(err, nomadx.ErrJobNotFound) {
 		// Nops reads without stale queries, so a job it just registered is never
 		// reported missing: it was removed after the register.
@@ -556,7 +556,14 @@ const (
 // via the allocations of that job version (a batch job, or an update stanza
 // that produces no Nomad deployment). healthWaiting means neither healthy nor
 // failed; reason says why for healthFailed.
-func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (health, string, error) {
+//
+// A live index that moved after the register while a fresh plan of the
+// deployment's spec, with the live counts of the groups with a scaling block,
+// shows nothing to apply is a scale: the applied index moves to it, saved
+// before the check goes on, and the allocations of the scales count with
+// those of the version nops registered. A scale moves the allocations still
+// running to its version, and leaves those that ended at theirs.
+func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Deployment) (health, string, error) {
 	dep, err := e.nomad.LatestDeployment(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return healthWaiting, "", err
@@ -586,20 +593,34 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (health, 
 	// still the one nops registered: after an outside edit (for instance while
 	// nops was down) they belong to someone else's spec.
 	if liveIndex := derefUint64(live.JobModifyIndex); liveIndex != d.AppliedIndex {
-		return healthFailed, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
-			liveIndex, d.AppliedIndex), nil
+		scaled, err := e.scaledSinceRegister(ctx, d, live)
+		if err != nil {
+			return healthWaiting, "", err
+		}
+		if !scaled {
+			return healthFailed, fmt.Sprintf("job modified outside nops while waiting for health (live index %d, applied %d)",
+				liveIndex, d.AppliedIndex), nil
+		}
+		if moved, err := e.moveAppliedIndex(ctx, log, d, liveIndex); !moved {
+			return healthWaiting, "", err
+		}
 	}
 	if neverHasAllocations(live) {
 		return healthHealthy, "", nil // registered at the applied index: nothing to wait for
 	}
+	// Without a registered version on record (a deployment registered before
+	// it was), the live version is the registered one: the index has not moved.
 	version := derefUint64(live.Version)
+	if d.AppliedVersion != nil {
+		version = *d.AppliedVersion
+	}
 	allocs, err := e.nomad.Allocations(ctx, d.Namespace, d.JobID)
 	if err != nil {
 		return healthWaiting, "", err
 	}
 	var ours []nomadx.Alloc
 	for _, a := range allocs {
-		if a.JobVersion == version {
+		if a.JobVersion >= version {
 			ours = append(ours, a)
 		}
 	}
@@ -617,6 +638,46 @@ func (e *Engine) applyHealth(ctx context.Context, d *store.Deployment) (health, 
 		}
 	}
 	return healthHealthy, "", nil
+}
+
+// scaledSinceRegister reports whether the live job, whose index moved since
+// d's register, is still d's spec but for the counts of its groups with a
+// scaling block: a fresh plan of the spec with the live counts shows nothing
+// to apply. A deployment registered before its version was recorded has no
+// way to count the allocations of a scale, and any move is an edit.
+func (e *Engine) scaledSinceRegister(ctx context.Context, d *store.Deployment, live *api.Job) (bool, error) {
+	if d.AppliedVersion == nil {
+		return false, nil
+	}
+	job, err := parseJobSpec(d)
+	if err != nil {
+		return false, err
+	}
+	if job, err = substituteScalingCounts(job, live); err != nil {
+		return false, err
+	}
+	plan, err := e.nomad.Plan(ctx, job)
+	if err != nil {
+		return false, err
+	}
+	return plan.Diff == nil || plan.Diff.Type == "None", nil
+}
+
+// moveAppliedIndex moves d's applied index to the live index `to` after a
+// scale, persisted before the wait for health goes on (invariant 7), and
+// reports whether it did. A conflict (the deployment moved on meanwhile) is
+// logged and skipped, like a transition's.
+func (e *Engine) moveAppliedIndex(ctx context.Context, log *slog.Logger, d *store.Deployment, to uint64) (bool, error) {
+	if err := e.store.MoveAppliedIndex(ctx, d.ID, d.AppliedIndex, to); err != nil {
+		if errors.Is(err, store.ErrStateConflict) {
+			log.WarnContext(ctx, "applied index move skipped", "error", err)
+			return false, nil
+		}
+		return false, fmt.Errorf("move applied index of %s: %w", d.ID, err)
+	}
+	log.InfoContext(ctx, "live job scaled while waiting for health: deployment kept at the new index", "from", d.AppliedIndex, "to", to)
+	d.AppliedIndex = to
+	return true, nil
 }
 
 // canaryHealth is the verdict on a running Nomad deployment of the job nops

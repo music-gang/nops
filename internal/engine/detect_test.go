@@ -956,7 +956,7 @@ func TestBlockedByAppliedFailureSurvivesLiveIndexChange(t *testing.T) {
 		store.Transition{From: store.StateDetected, Actor: "nops"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.SetApplied(context.Background(), d.ID, 1, "eval-1"); err != nil {
+	if err := h.store.SetApplied(context.Background(), d.ID, 1, 0, "eval-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.Transition(context.Background(), d.ID, store.StateFailed,

@@ -5,8 +5,11 @@ package integration
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/nomad/api"
 
 	"github.com/music-gang/nops/internal/store"
 )
@@ -124,5 +127,92 @@ func TestE2EAScaleIsNotAnOutsideEdit(t *testing.T) {
 	time.Sleep(2 * time.Second) // ten detection cycles
 	if got := e.latest(jobID); got.ID != d3.ID {
 		t.Errorf("after a scale, latest deployment = %s, want the rejected %s", describe(got), d3.ID)
+	}
+}
+
+// scaledBatchHCL is a managed batch job under auto whose group has a scaling
+// block, so Nomad creates no deployment to track it. Its group is placed only
+// on a node with the meta key gate set to "open": until then its allocations
+// are not placed, and nops waits for health.
+func scaledBatchHCL(id, gate string) string {
+	return fmt.Sprintf(`
+job %q {
+  type = "batch"
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+  }
+  group "g" {
+    count = 1
+    constraint {
+      attribute = "${meta.%s}"
+      value     = "open"
+    }
+    scaling {
+      min     = 1
+      max     = 3
+      enabled = true
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }
+}
+`, id, gate)
+}
+
+// setNodeMeta sets the meta key on every node of the cluster, removed when the
+// test ends.
+func (e *e2eEnv) setNodeMeta(key, value string) {
+	e.t.Helper()
+	nodes, _, err := e.raw.Nodes().List(nil)
+	if err != nil {
+		e.t.Fatalf("list nodes: %v", err)
+	}
+	for _, n := range nodes {
+		if _, err := e.raw.Nodes().Meta().Apply(&api.NodeMetaApplyRequest{NodeID: n.ID, Meta: map[string]*string{key: &value}}, nil); err != nil {
+			e.t.Fatalf("set meta %s on node %s: %v", key, n.ID, err)
+		}
+		id := n.ID
+		e.t.Cleanup(func() {
+			_, _ = e.raw.Nodes().Meta().Apply(&api.NodeMetaApplyRequest{NodeID: id, Meta: map[string]*string{key: nil}}, nil)
+		})
+	}
+}
+
+// TestE2EAScaleWhileWaitingForHealthIsNotAnOutsideEdit scales a batch job
+// while nops waits for it to be healthy: the deployment keeps waiting, and
+// completes once the allocations of the version nops registered and of the
+// scale run.
+func TestE2EAScaleWhileWaitingForHealthIsNotAnOutsideEdit(t *testing.T) {
+	e := newE2E(t)
+	jobID := uniqueID(t, e.raw, "scaledbatch")
+	gate := strings.ReplaceAll(jobID, "-", "_")
+	e.repo.commit(t, "job "+jobID, map[string]string{file(jobID): scaledBatchHCL(jobID, gate)})
+
+	d := e.waitNew(jobID, "", store.StateApplying)
+	deadline := time.Now().Add(e2eWait)
+	for d.AppliedIndex == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("not registered within %s: %s", e2eWait, describe(d))
+		}
+		time.Sleep(100 * time.Millisecond)
+		d = e.deployment(d.ID)
+	}
+
+	e.scale(jobID, 2)
+	time.Sleep(2 * time.Second) // ten apply cycles
+	if got := e.deployment(d.ID); got.State != store.StateApplying {
+		t.Fatalf("after a scale: %s, want it still applying", describe(got))
+	}
+
+	e.setNodeMeta(gate, "open")
+	e.waitState(d.ID, store.StateCompleted)
+	if got := e.liveCount(jobID); got != 2 {
+		t.Errorf("live count = %d, want the scale's 2", got)
 	}
 }
