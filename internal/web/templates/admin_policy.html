@@ -102,3 +102,18 @@
 {{end}}
 {{template "admin_close" .}}
 {{end}}
+
+{{define "admin_policy_view"}}
+{{template "admin_open" .}}
+<div class="subhead">
+  <div>
+    <p class="crumbs">{{if .Manage}}<a href="{{.Base}}/admin/policies">ACL policies</a>{{else}}<a href="{{.Base}}/admin">Your token</a>{{end}}</p>
+    <h2 class="subhead__title"><span class="mono">{{.Policy.Name}}</span></h2>
+    {{if .Policy.Description}}<p class="subhead__desc">{{.Policy.Description}}</p>{{end}}
+  </div>
+  {{if .Manage}}<a class="btn" href="{{.Base}}/admin/policies/{{.Policy.Name}}/edit">Edit</a>{{end}}
+</div>
+
+<pre class="code-block" data-editor="hcl">{{.Policy.Rules}}</pre>
+{{template "admin_close" .}}
+{{end}}

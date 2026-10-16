@@ -131,6 +131,14 @@ func globally(c acl.Capability) check {
 	return func(_ *server, _ *http.Request, sub *subject) (bool, error) { return sub.acl.Global(c), nil }
 }
 
+// carriesPolicy needs a token that may read the ACL policy of the route: a
+// management token, or one that carries it.
+func carriesPolicy() check {
+	return func(_ *server, r *http.Request, sub *subject) (bool, error) {
+		return carries(sub, r.PathValue("name")), nil
+	}
+}
+
 // management needs a management token.
 func management() check {
 	return func(_ *server, _ *http.Request, sub *subject) (bool, error) { return sub.acl.Management(), nil }

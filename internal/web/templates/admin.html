@@ -50,7 +50,7 @@
     <dt>Name</dt><dd title="{{.Self.Name}}">{{.Self.Name}}</dd>
     <dt>Type</dt><dd><span class="label">{{.Self.Kind}}</span>{{if .Self.Session}} <span class="muted">session</span>{{end}}</dd>
     {{if .Self.AccessorID}}<dt>Accessor ID</dt><dd class="mono" title="{{.Self.AccessorID}}">{{.Self.AccessorID}}</dd>{{end}}
-    {{if eq .Self.Kind "client"}}<dt>ACL policies</dt><dd>{{range $i, $p := .Self.Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>{{end}}
+    {{if eq .Self.Kind "client"}}<dt>ACL policies</dt><dd>{{range $i, $p := .Self.Policies}}{{if $i}}, {{end}}<a class="mono" href="{{$.Base}}/admin/policies/{{$p}}/view">{{$p}}</a>{{else}}<span class="muted">none</span>{{end}}</dd>{{end}}
     {{if .Self.Created.ISO}}
     <dt>{{if .Self.Session}}Session started{{else}}Created{{end}}</dt><dd>{{template "time" .Self.Created}}{{if not .Self.Session}} by {{.Self.Creator}}{{end}}</dd>
     <dt>Expires</dt><dd>{{if .Self.Expires.ISO}}{{template "time" .Self.Expires}}{{else}}never{{end}}</dd>

@@ -588,6 +588,19 @@ legend.field__label + .field__caption { margin: -4px 0 8px; }
 .form__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .box__body > .form__actions, .confirm-list + .form__actions { margin-top: 16px; }
 
+/* Code shown as it is, such as the rules of an ACL policy. */
+.code-block {
+  margin: 0;
+  padding: 8px 12px;
+  font: 13px/20px var(--font-mono);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 /* The code editor (editor.js): the textarea, its text transparent, over the
    same text in color. Both lay it out alike, without wrapping. */
 .code-editor { position: relative; }

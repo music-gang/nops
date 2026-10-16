@@ -190,6 +190,11 @@ type policyPageData struct {
 	Delete bool // the deletion waits for a confirmation
 }
 
+type policyViewData struct {
+	adminBase
+	Policy store.ACLPolicy
+}
+
 type adminRulesData struct {
 	adminBase
 	Rules []ruleRow
@@ -407,6 +412,26 @@ func (s *server) policyPage(w http.ResponseWriter, r *http.Request) {
 		Form:      policyForm{Name: p.Name, Description: p.Description, Rules: p.Rules, Existing: true},
 		Delete:    r.URL.Query().Get("delete") == "1",
 	})
+}
+
+// policyView is GET /admin/policies/{name}/view: an ACL policy, read-only. A
+// management token comes from the list of ACL policies, a client token from
+// its own.
+func (s *server) policyView(w http.ResponseWriter, r *http.Request) {
+	p, err := s.access.ACLPolicy(r.Context(), r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.notFoundMessage(w, r, "This ACL policy does not exist.")
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, "read an ACL policy", err)
+		return
+	}
+	section := "self"
+	if subjectOf(r.Context()).acl.Management() {
+		section = "policies"
+	}
+	s.render(w, r, "admin_policy_view", policyViewData{adminBase: s.adminBase(r, section), Policy: p})
 }
 
 // savePolicy is POST /admin/policies: create an ACL policy or replace one.

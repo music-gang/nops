@@ -61,7 +61,7 @@
       <tr>
         <td class="cell-ellipsis"><span class="row__title" title="{{.Name}}">{{.Name}}</span>{{if .Current}} <span class="label" title="The token you are using">current</span>{{end}}<div class="cell-sub mono" title="Accessor ID">{{.AccessorID}}</div></td>
         <td class="hide-sm"><span class="label">{{.Kind}}</span></td>
-        <td class="hide-sm cell-ellipsis">{{range $i, $p := .Policies}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="hide-sm cell-ellipsis">{{range $i, $p := .Policies}}{{if $i}}, {{end}}<a class="mono" href="{{$.Base}}/admin/policies/{{$p}}/view">{{$p}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="hide-sm cell-ellipsis">
           {{if .Session}}
           <span class="mono" title="{{.Identity}}">{{or .Identity "—"}}</span>
