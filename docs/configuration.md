@@ -6,11 +6,12 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
 
 ## Rules
 
-- Every option has a flag and an environment variable: `NOPS_` plus the flag
-  name in upper case, dashes as underscores (`-apply-timeout` →
-  `NOPS_APPLY_TIMEOUT`).
-- Precedence: flag, then variable, then default. An empty variable counts as
-  unset.
+- Every option but the [`repository` blocks](#repositories) has a flag and
+  an environment variable: `NOPS_` plus the flag name in upper case, dashes
+  as underscores (`-apply-timeout` → `NOPS_APPLY_TIMEOUT`).
+- Precedence: flag, then variable, then the
+  [configuration file](#configuration-file), then default. An empty variable
+  counts as unset.
 - Nops ignores the standard `NOMAD_*` variables, so the ones Nomad sets for a
   job don't change what Nops manages.
 - Durations use Go syntax (`90s`, `5m`, `1h`) and must be positive.
@@ -53,9 +54,12 @@ inject secrets into the environment. These variables have no flag.
 
 ## Git
 
+The `-git-*` options are the repository named `default`. Set without
+`-git-url`, they stop Nops.
+
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-git-url` | `NOPS_GIT_URL` | **required** | URL of the repository of jobs. |
+| `-git-url` | `NOPS_GIT_URL` | none | URL of the `default` repository. Required without a `repository` block. |
 | `-git-branch` | `NOPS_GIT_BRANCH` | `main` | Branch to read. |
 | `-git-path` | `NOPS_GIT_PATH` | none | Subdirectory holding the job files. Unset: the root. |
 | `-git-username` | `NOPS_GIT_USERNAME` | `git` | Username sent with the token: `oauth2` for GitLab, the user name for Gitea. |
@@ -63,6 +67,38 @@ inject secrets into the environment. These variables have no flag.
 
 Nops reads private repositories over HTTPS with a token. It doesn't support
 SSH. The release image can't read `file://` URLs.
+
+## Configuration file
+
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository` blocks. |
+
+### Repositories
+
+Each `repository` block is one more repository of jobs:
+
+```hcl
+repository "apps" {
+  url        = "https://git.example.com/ops/apps.git"
+  branch     = "main"
+  path       = "nomad"
+  token_file = "/secrets/apps-token"
+}
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `url` | **required** | URL of the repository. |
+| `branch` | `main` | Branch to read. |
+| `path` | none | Subdirectory holding the job files. Unset: the root. |
+| `username` | `git` | Username sent with the token. |
+| `token_file` | none | File holding the HTTPS token. Unset: public repository. |
+
+- The name, made of letters, digits, `-` and `_`, labels the repository on
+  the dashboard, in metrics, and in notifications.
+- A name used twice, or a `repository "default"` block next to `-git-url`,
+  stops Nops.
 
 ## Dashboard
 
@@ -124,7 +160,7 @@ when you set its URL. You can turn on several.
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-db-path` | `NOPS_DB_PATH` | `nops.db` | SQLite database file. Keep it on persistent storage. |
-| `-git-poll-interval` | `NOPS_GIT_POLL_INTERVAL` | `1m` | How often Nops fetches the repository. |
+| `-git-poll-interval` | `NOPS_GIT_POLL_INTERVAL` | `1m` | How often Nops polls each repository. |
 | `-drift-interval` | `NOPS_DRIFT_INTERVAL` | `5m` | How often Nops checks Nomad for drift without a new commit. |
 | `-engine-interval` | `NOPS_ENGINE_INTERVAL` | `5s` | How often the engine advances active deployments. |
 | `-hook-poll-interval` | `NOPS_HOOK_POLL_INTERVAL` | `5s` | How often Nops checks a running hook. |

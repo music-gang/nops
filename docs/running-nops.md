@@ -137,8 +137,8 @@ authorization code flow at your provider:
 
 ## The git webhook
 
-The webhook makes Nops fetch git right after a push, instead of at the next
-poll. Generate a random secret into a file, pass it with
+The webhook makes Nops poll every repository right after a push, instead of
+at the next poll. Generate a random secret into a file, pass it with
 `-webhook-secret-file`, then add a webhook at your forge:
 
 ```sh

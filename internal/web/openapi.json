@@ -640,7 +640,7 @@
       },
       "Deployment": {
         "type": "object",
-        "required": ["id", "namespace", "job", "state", "policy", "spec_hash", "commit_sha", "created_at", "updated_at"],
+        "required": ["id", "namespace", "job", "state", "policy", "spec_hash", "repository", "commit_sha", "created_at", "updated_at"],
         "properties": {
           "id": { "type": "string" },
           "namespace": { "type": "string" },
@@ -648,6 +648,7 @@
           "state": { "type": "string" },
           "policy": { "type": "string", "enum": ["auto", "approval", "none"] },
           "spec_hash": { "type": "string" },
+          "repository": { "type": "string", "description": "The name of the repository the commit is in." },
           "commit_sha": { "type": "string" },
           "commit_subject": { "type": "string" },
           "commit_author": { "type": "string" },
@@ -693,6 +694,7 @@
             "type": "object",
             "required": ["deployments"],
             "properties": {
+              "repository": { "type": "string", "description": "The name of the repository the job file is in." },
               "file": { "type": "string" },
               "diff": { "type": "object", "description": "The redacted plan diff of the drift, as Nomad's JSON. Absent without drift." },
               "issues": { "type": "array", "items": { "$ref": "#/components/schemas/Issue" } },

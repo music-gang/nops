@@ -105,9 +105,11 @@ type Hooks interface {
 	Run(ctx context.Context, req hooks.Request) (hooks.Result, error)
 }
 
-// Snapshots is what detection needs from gitwatch. *gitwatch.Watcher implements it.
+// Snapshots is what detection needs from gitwatch: the last good snapshot of
+// every repository, and a signal when any of them has a new commit.
+// *gitwatch.Group implements it.
 type Snapshots interface {
-	Snapshot() gitwatch.Snapshot
+	Snapshots() []gitwatch.Snapshot
 	Changed() <-chan struct{}
 }
 
@@ -132,7 +134,10 @@ func keyOf(job *api.Job) jobKey { return jobKey{namespace: *job.Namespace, id: *
 type Observation struct {
 	JobID     string
 	Namespace string
-	FilePath  string
+	// Repository and FilePath are where the job file was read: the name of its
+	// repository, and its path there.
+	Repository string
+	FilePath   string
 	// Policy is the effective policy read from the job's meta, including "none".
 	Policy meta.Policy
 	// SpecHash is the spec hash a deployment of this job would have now: what a

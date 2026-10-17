@@ -330,31 +330,42 @@ func (f *fakeNomad) LatestDeployment(_ context.Context, ns, jobID string) (*api.
 
 // -- fake Snapshots and Notifier ------------------------------------------
 
+// fakeSnapshots holds one snapshot per repository, in the order they were
+// first set. set and setCommit set the one named "default".
 type fakeSnapshots struct {
 	mu      sync.Mutex
-	snap    gitwatch.Snapshot
+	snaps   []gitwatch.Snapshot
 	changed chan struct{}
 }
 
 func newFakeSnapshots() *fakeSnapshots { return &fakeSnapshots{changed: make(chan struct{}, 1)} }
 
 func (f *fakeSnapshots) set(commit string, files ...gitwatch.File) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.snap = gitwatch.Snapshot{Commit: commit, Files: files}
+	f.setRepo(gitwatch.Snapshot{Repository: "default", Commit: commit, Files: files})
 }
 
 // setCommit is set with the commit's subject and author too.
 func (f *fakeSnapshots) setCommit(commit, subject, author string, files ...gitwatch.File) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.snap = gitwatch.Snapshot{Commit: commit, Subject: subject, Author: author, Files: files}
+	f.setRepo(gitwatch.Snapshot{Repository: "default", Commit: commit, Subject: subject, Author: author, Files: files})
 }
 
-func (f *fakeSnapshots) Snapshot() gitwatch.Snapshot {
+// setRepo replaces the snapshot of snap.Repository, or adds it.
+func (f *fakeSnapshots) setRepo(snap gitwatch.Snapshot) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.snap
+	for i := range f.snaps {
+		if f.snaps[i].Repository == snap.Repository {
+			f.snaps[i] = snap
+			return
+		}
+	}
+	f.snaps = append(f.snaps, snap)
+}
+
+func (f *fakeSnapshots) Snapshots() []gitwatch.Snapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]gitwatch.Snapshot(nil), f.snaps...)
 }
 
 func (f *fakeSnapshots) Changed() <-chan struct{} { return f.changed }

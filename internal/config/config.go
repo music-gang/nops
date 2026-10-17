@@ -1,11 +1,12 @@
-// Package config reads the nops settings from flags and NOPS_* environment
-// variables and validates them.
+// Package config reads the nops settings from flags, NOPS_* environment
+// variables and the HCL file of -config, and validates them.
 //
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
-// variable, the variable over the default. nops reads nothing else: the
-// standard NOMAD_* variables are ignored. The reference for users is
-// docs/configuration.md: keep it aligned with the options table here.
+// variable, the variable over the default. The file holds only what a flag
+// cannot: the repository blocks. nops reads nothing else: the standard NOMAD_*
+// variables are ignored. The reference for users is docs/configuration.md:
+// keep it aligned with the options table and the file's schema here.
 package config
 
 import (
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,9 +27,14 @@ import (
 	// and the image has no /usr/share/zoneinfo to look it up in.
 	_ "time/tzdata"
 
+	"github.com/hashicorp/hcl/v2/gohcl"
+	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/nomad/api"
 	"github.com/music-gang/nops/internal/secret"
 )
+
+// DefaultRepository is the name of the repository the -git-* options describe.
+const DefaultRepository = "default"
 
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
@@ -44,12 +51,21 @@ type Config struct {
 	NomadClientKey     string
 	NomadTLSSkipVerify bool
 
+	// The -git-* options: the repository named DefaultRepository, when GitURL
+	// is set.
 	GitURL       string
 	GitBranch    string
 	GitPath      string // subdirectory holding the job files; "" is the root
 	GitUsername  string
 	GitTokenFile string
 	GitToken     string // content of GitTokenFile, read by Load
+
+	// ConfigFile is the HCL file of -config, "" without one.
+	ConfigFile string
+	// Repositories are the repositories nops reads: DefaultRepository first
+	// when GitURL is set, then the file's repository blocks in their order.
+	// Load makes sure there is at least one.
+	Repositories []Repository
 
 	DBPath     string
 	ListenAddr string
@@ -127,6 +143,17 @@ type Config struct {
 	LogLevel slog.Level
 }
 
+// Repository is one repository of jobs.
+type Repository struct {
+	Name      string
+	URL       string
+	Branch    string
+	Path      string // subdirectory holding the job files; "" is the root
+	Username  string
+	TokenFile string
+	Token     string // content of TokenFile, read by Load
+}
+
 type option struct {
 	name    string // flag name; the env var is derived from it
 	def     string
@@ -161,8 +188,10 @@ var options = []option{
 	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
 		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
 
-	{name: "git-url", usage: "URL of the git repository holding the jobs (required)",
-		set: func(c *Config, v string) (err error) { c.GitURL, err = required(v); return }},
+	{name: "config", usage: "HCL `file` of the repository blocks",
+		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
+	{name: "git-url", usage: "URL of the git repository named default (required without a repository block in -config)",
+		set: func(c *Config, v string) error { c.GitURL = v; return nil }},
 	{name: "git-branch", def: "main", usage: "branch to read",
 		set: func(c *Config, v string) (err error) { c.GitBranch, err = required(v); return }},
 	{name: "git-path", usage: "subdirectory of the repository holding the job files (empty: root)",
@@ -372,12 +401,15 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 
 	c := &Config{}
 	var errs []error
+	explicit := make(map[string]bool) // the options given by flag or variable
 	for i, o := range options {
 		v, source := o.def, "-"+o.name+" / "+o.env()
 		if set[o.name] {
 			v, source = vals[i].s, "flag -"+o.name
+			explicit[o.name] = true
 		} else if e := getenv(o.env()); e != "" {
 			v, source = e, o.env()
+			explicit[o.name] = true
 		}
 		if err := o.set(c, v); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", source, err))
@@ -397,6 +429,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		errs = append(errs, errors.New("NOPS_NOMAD_NAMESPACE was replaced by NOPS_NOMAD_NAMESPACES (a comma-separated list)"))
 	}
 	errs = append(errs, resolveSecretValues(c, getenv)...)
+	errs = append(errs, c.loadRepositories(explicit)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -479,12 +512,19 @@ func (c *Config) check() []error {
 		c.PublicURL = publicURLDefault(c.ListenAddr)
 	}
 	c.BasePath = basePathOf(c.PublicURL)
-	if c.GitToken != "" {
-		if c.GitURL != "" && !strings.HasPrefix(strings.ToLower(c.GitURL), "https://") {
-			errs = append(errs, fmt.Errorf("a git token needs an https:// -git-url, got %q", c.GitURL))
+	for _, r := range c.Repositories {
+		if r.Token == "" {
+			continue
 		}
-		if c.GitUsername == "" {
-			errs = append(errs, errors.New("a git token needs a non-empty -git-username"))
+		url, username := "-git-url", "-git-username"
+		if r.Name != DefaultRepository || c.GitURL == "" { // a repository block
+			url, username = fmt.Sprintf("url in repository %q", r.Name), fmt.Sprintf("username in repository %q", r.Name)
+		}
+		if r.URL != "" && !strings.HasPrefix(strings.ToLower(r.URL), "https://") {
+			errs = append(errs, fmt.Errorf("a git token needs an https:// %s, got %q", url, r.URL))
+		}
+		if r.Username == "" {
+			errs = append(errs, fmt.Errorf("a git token needs a non-empty %s", username))
 		}
 	}
 	for _, t := range []struct{ token, url, name, urlOpt string }{
@@ -537,6 +577,118 @@ func (c *Config) check() []error {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
 	}
 	return errs
+}
+
+// repositoryName is what a repository block's label may be: it names the
+// repository on the dashboard, in a metric label and in a notification.
+var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// fileConfig is the schema of the -config file.
+type fileConfig struct {
+	Repositories []fileRepository `hcl:"repository,block"`
+}
+
+type fileRepository struct {
+	Name      string  `hcl:"name,label"`
+	URL       string  `hcl:"url"`
+	Branch    *string `hcl:"branch,optional"`
+	Path      string  `hcl:"path,optional"`
+	Username  *string `hcl:"username,optional"`
+	TokenFile string  `hcl:"token_file,optional"`
+}
+
+// loadRepositories fills c.Repositories from the -git-* options and the
+// repository blocks of c.ConfigFile. explicit tells the -git-* options given
+// by flag or variable from their defaults: without -git-url they describe no
+// repository, so one given is an error rather than ignored.
+func (c *Config) loadRepositories(explicit map[string]bool) []error {
+	var errs []error
+	if c.GitURL != "" {
+		c.Repositories = append(c.Repositories, Repository{
+			Name: DefaultRepository, URL: c.GitURL, Branch: c.GitBranch, Path: c.GitPath,
+			Username: c.GitUsername, TokenFile: c.GitTokenFile, Token: c.GitToken,
+		})
+	} else {
+		for _, name := range []string{"git-branch", "git-path", "git-username", "git-token-file"} {
+			if explicit[name] {
+				errs = append(errs, fmt.Errorf("-%s is set without -git-url", name))
+			}
+		}
+		if c.GitToken != "" && !explicit["git-token-file"] {
+			errs = append(errs, errors.New("NOPS_GIT_TOKEN is set without -git-url"))
+		}
+	}
+	if c.ConfigFile != "" {
+		repos, fileErrs := readConfigFile(c.ConfigFile)
+		c.Repositories = append(c.Repositories, repos...)
+		errs = append(errs, fileErrs...)
+	}
+
+	seen := make(map[string]bool, len(c.Repositories))
+	for _, r := range c.Repositories {
+		switch {
+		case seen[r.Name] && r.Name == DefaultRepository && c.GitURL != "":
+			errs = append(errs, fmt.Errorf("-config %s: repository %q is the one of -git-url: set one or the other", c.ConfigFile, r.Name))
+		case seen[r.Name]:
+			errs = append(errs, fmt.Errorf("-config %s: repository %q is declared twice", c.ConfigFile, r.Name))
+		}
+		seen[r.Name] = true
+	}
+	if len(c.Repositories) == 0 && len(errs) == 0 {
+		errs = append(errs, errors.New("-git-url or a repository block in -config is required"))
+	}
+	return errs
+}
+
+// readConfigFile reads the repository blocks of the -config file at path.
+// Every error names the file, and the block it is about.
+func readConfigFile(path string) ([]Repository, []error) {
+	f, diags := hclparse.NewParser().ParseHCLFile(path)
+	if diags.HasErrors() {
+		return nil, []error{fmt.Errorf("-config: %w", diags)}
+	}
+	var fc fileConfig
+	if diags := gohcl.DecodeBody(f.Body, nil, &fc); diags.HasErrors() {
+		return nil, []error{fmt.Errorf("-config: %w", diags)}
+	}
+	var (
+		repos []Repository
+		errs  []error
+	)
+	for _, b := range fc.Repositories {
+		r := Repository{Name: b.Name, Branch: "main", Username: "git", TokenFile: b.TokenFile}
+		var blockErrs []error
+		fail := func(attr string, err error) {
+			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: %s: %w", path, b.Name, attr, err))
+		}
+		if !repositoryName.MatchString(b.Name) {
+			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: the name may hold only letters, digits, - and _", path, b.Name))
+		}
+		var err error
+		if r.URL, err = required(b.URL); err != nil {
+			fail("url", err)
+		}
+		if b.Branch != nil {
+			if r.Branch, err = required(*b.Branch); err != nil {
+				fail("branch", err)
+			}
+		}
+		if r.Path, err = gitPath(b.Path); err != nil {
+			fail("path", err)
+		}
+		if b.Username != nil {
+			r.Username = *b.Username
+		}
+		if r.Token, err = secretFile(b.TokenFile); err != nil {
+			fail("token_file", err)
+		}
+		if len(blockErrs) > 0 {
+			errs = append(errs, blockErrs...)
+			continue
+		}
+		repos = append(repos, r)
+	}
+	return repos, errs
 }
 
 // Nomad returns the Nomad client configuration. It is built field by field,

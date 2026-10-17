@@ -119,9 +119,13 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 	cases := map[string]any{
 		"overview": overviewData{
 			baseData: baseData{Actor: "alice", Nav: "overview"},
-			Git: gitView{Known: true, SHA: "abc", Short: "abc", URL: "https://git.test/c/abc", Subject: "s", Author: "me", CommittedAt: tv,
-				CheckedAt: tv, Error: "network is down", ErrorAt: tv, CanFetch: true},
-			Cycle: cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
+			Git: []gitView{
+				{Name: "default", ShowName: true, Known: true, SHA: "abc", Short: "abc", URL: "https://git.test/c/abc", Subject: "s", Author: "me", CommittedAt: tv,
+					CheckedAt: tv, Error: "network is down", ErrorAt: tv},
+				{Name: "apps", ShowName: true, CheckedAt: tv},
+			},
+			CanFetch: true,
+			Cycle:    cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
 			Attention: []attentionItem{
 				{Kind: "pending", KindLabel: "Needs approval", KindClass: "state-pending", Title: "default/web", Path: "/deployments/d1", Detail: "d", When: tv},
 				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/deployments/d1/retry"},

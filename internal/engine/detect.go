@@ -18,16 +18,19 @@ import (
 )
 
 // parsedFile is one snapshot file Nomad could parse, classified by its meta.
+// commit is the commit of its repository the file was read at.
 type parsedFile struct {
-	path string
-	job  *api.Job
-	cfg  meta.Config
+	path   string
+	commit commitRef
+	job    *api.Job
+	cfg    meta.Config
 }
 
 // Detect runs one detection cycle: parse every file of the current gitwatch
-// snapshot, create, supersede or complete deployments for managed jobs
-// (freezing the hooks each one runs), and deregister the hook revisions no
-// deployment needs any more. It never applies anything (see engine-apply).
+// snapshots, those of every repository as one set, create, supersede or
+// complete deployments for managed jobs (freezing the hooks each one runs),
+// and deregister the hook revisions no deployment needs any more. It never
+// applies anything (see engine-apply).
 //
 // It returns an error only for a failure that must stop the whole cycle: a
 // store failure (invariant 7: never act on Nomad with unpersisted state) or a
@@ -51,19 +54,17 @@ func (e *Engine) Detect(ctx context.Context) error {
 // detect is Detect without the bookkeeping: the returned Status carries the
 // counts of the cycle, whether or not it ended in an error.
 func (e *Engine) detect(ctx context.Context) (Status, error) {
-	snap := e.snapshots.Snapshot()
-	ref := commitRef{sha: snap.Commit, subject: snap.Subject, author: snap.Author}
-	commit := snap.Commit
 	var st Status
 
-	parsed, cache, unparsed := e.parseFiles(ctx, snap)
+	parsed, cache, unparsed := e.parseFiles(ctx, e.snapshots.Snapshots())
 	e.replaceParseCache(cache)
 	st.Unparsed = unparsed
 
-	hookFiles, managed := e.classify(ctx, commit, parsed)
+	hookFiles, managed := e.classify(ctx, parsed)
 	st.Managed = len(managed)
 
-	// A hook is found among the hooks of its job's own namespace only.
+	// A hook is found among the hooks of its job's own namespace only, in any
+	// repository.
 	hooks := make(map[string]map[string]parsedFile)
 	for _, h := range hookFiles {
 		ns := *h.job.Namespace
@@ -112,7 +113,7 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		if pause == nil {
 			pause = all
 		}
-		obs, ok, err := e.reconcileJob(ctx, ref, mf, hooks[key.namespace], pause, window, lift)
+		obs, ok, err := e.reconcileJob(ctx, mf, hooks[key.namespace], pause, window, lift)
 		if err != nil {
 			return st, err
 		}
@@ -165,16 +166,20 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	return st, nil
 }
 
-// commitRef is the commit a detection cycle reads, as a deployment records it.
-type commitRef struct{ sha, subject, author string }
+// commitRef is the commit of a repository a file was read at, as a deployment
+// records it.
+type commitRef struct{ repo, sha, subject, author string }
 
-// parseFiles parses every file of the snapshot through Nomad, reusing the
+// fileName is how a log line names a file: its repository and its path.
+func (pf parsedFile) fileName() string { return pf.commit.repo + ":" + pf.path }
+
+// parseFiles parses every file of the snapshots through Nomad, reusing the
 // previous cycle's cache entry when the (content, vars) pair is unchanged.
 // The returned cache replaces the engine's: an entry for a file no longer in
-// the snapshot is dropped, so the cache never grows across cycles.
-func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int) {
+// any snapshot is dropped, so the cache never grows across cycles.
+func (e *Engine) parseFiles(ctx context.Context, snaps []gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int) {
 	prev := e.snapshotParseCache()
-	next = make(map[string]parseEntry, len(snap.Files))
+	next = make(map[string]parseEntry)
 	// A file is parsed in the first managed namespace whatever it declares, so
 	// the token needs a rule there anyway (docs/running-nops.md#the-nomad-token).
 	// No namespace at all is refused by the client.
@@ -182,43 +187,54 @@ func (e *Engine) parseFiles(ctx context.Context, snap gitwatch.Snapshot) (parsed
 	if len(e.namespaces) > 0 {
 		parseNS = e.namespaces[0]
 	}
-	parsed = make([]parsedFile, 0, len(snap.Files))
-
-	for _, f := range snap.Files {
-		key := parseCacheKey(f.Content, f.Vars)
-		entry, ok := e.cachedParse(prev, key)
-		if !ok {
-			job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, f.Vars)
-			if err == nil && job != nil {
-				defaultNamespace(job)
+	for _, snap := range snaps {
+		ref := commitRef{repo: snap.Repository, sha: snap.Commit, subject: snap.Subject, author: snap.Author}
+		for _, f := range snap.Files {
+			if pf, ok := e.parseFile(ctx, parseNS, prev, next, ref, f); ok {
+				parsed = append(parsed, pf)
+			} else {
+				unparsed++
 			}
-			entry = parseEntry{job: job, err: err}
 		}
-		// Only a success is kept: a failure may be Nomad unreachable for a
-		// moment, and would otherwise stick until the content changed.
-		if entry.err == nil {
-			next[key] = entry
-		}
-
-		switch {
-		case entry.err != nil:
-			e.log.ErrorContext(ctx, "parse job file", "file", f.Path, "commit", snap.Commit, "error", entry.err)
-			unparsed++
-			continue
-		case entry.job.ID == nil || *entry.job.ID == "":
-			e.log.ErrorContext(ctx, "parsed job has no ID", "file", f.Path, "commit", snap.Commit)
-			unparsed++
-			continue
-		}
-		if ns := *entry.job.Namespace; !e.managedNS[ns] {
-			e.log.ErrorContext(ctx, "job declares a namespace nops does not manage", "file", f.Path,
-				"job", *entry.job.ID, "declared_namespace", ns, "managed_namespaces", e.namespaces)
-			unparsed++
-			continue
-		}
-		parsed = append(parsed, parsedFile{path: f.Path, job: entry.job, cfg: meta.Parse(entry.job.Meta)})
 	}
 	return parsed, next, unparsed
+}
+
+// parseFile parses one file read at ref in namespace parseNS, and records a
+// successful parse in next. ok is false for a file that does not count as a
+// job, logged here: its parse failed, it has no ID, or it declares a namespace
+// nops does not manage.
+func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, bool) {
+	log := e.log.With("repo", ref.repo, "file", f.Path, "commit", ref.sha)
+	key := parseCacheKey(f.Content, f.Vars)
+	entry, ok := e.cachedParse(prev, key)
+	if !ok {
+		job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, f.Vars)
+		if err == nil && job != nil {
+			defaultNamespace(job)
+		}
+		entry = parseEntry{job: job, err: err}
+	}
+	// Only a success is kept: a failure may be Nomad unreachable for a
+	// moment, and would otherwise stick until the content changed.
+	if entry.err == nil {
+		next[key] = entry
+	}
+
+	switch {
+	case entry.err != nil:
+		log.ErrorContext(ctx, "parse job file", "error", entry.err)
+		return parsedFile{}, false
+	case entry.job.ID == nil || *entry.job.ID == "":
+		log.ErrorContext(ctx, "parsed job has no ID")
+		return parsedFile{}, false
+	}
+	if ns := *entry.job.Namespace; !e.managedNS[ns] {
+		log.ErrorContext(ctx, "job declares a namespace nops does not manage",
+			"job", *entry.job.ID, "declared_namespace", ns, "managed_namespaces", e.namespaces)
+		return parsedFile{}, false
+	}
+	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta)}, true
 }
 
 // defaultNamespace gives a parsed job that has no namespace the "default" one,
@@ -232,11 +248,11 @@ func defaultNamespace(job *api.Job) {
 }
 
 // classify groups parsed files by job, (namespace, ID): two files parsing to
-// the same job are both ignored, with an ERROR (the conservative reading, since nops
-// cannot tell which one is meant). Every issue found by meta.Parse is logged
+// the same job, in one repository or in two, are both ignored, with an ERROR
+// (the conservative reading, since nops cannot tell which one is meant). Every issue found by meta.Parse is logged
 // here, whatever the file turns out to be. A job with nops_role = "hook"
 // takes precedence over nops_managed on the same file.
-func (e *Engine) classify(ctx context.Context, commit string, parsed []parsedFile) (hooks, managed []parsedFile) {
+func (e *Engine) classify(ctx context.Context, parsed []parsedFile) (hooks, managed []parsedFile) {
 	byKey := make(map[jobKey][]parsedFile, len(parsed))
 	for _, pf := range parsed {
 		key := keyOf(pf.job)
@@ -256,17 +272,17 @@ func (e *Engine) classify(ctx context.Context, commit string, parsed []parsedFil
 	for _, key := range keys {
 		group := byKey[key]
 		if len(group) > 1 {
-			paths := make([]string, len(group))
+			files := make([]string, len(group))
 			for i, pf := range group {
-				paths[i] = pf.path
+				files[i] = pf.fileName()
 			}
 			e.log.ErrorContext(ctx, "two files parse to the same job ID: both ignored",
-				"job", key.id, "namespace", key.namespace, "files", paths, "commit", commit)
+				"job", key.id, "namespace", key.namespace, "files", files)
 			continue
 		}
 		pf := group[0]
 		for _, iss := range pf.cfg.Issues {
-			logIssue(ctx, e.log, key.id, pf.path, commit, iss)
+			logIssue(ctx, e.log, key.id, pf, iss)
 		}
 		switch {
 		case pf.cfg.IsHook:
@@ -278,8 +294,8 @@ func (e *Engine) classify(ctx context.Context, commit string, parsed []parsedFil
 	return hooks, managed
 }
 
-func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string, iss meta.Issue) {
-	args := []any{"job", jobID, "file", path, "commit", commit, "key", iss.Key, "message", iss.Message}
+func logIssue(ctx context.Context, log *slog.Logger, jobID string, pf parsedFile, iss meta.Issue) {
+	args := []any{"job", jobID, "repo", pf.commit.repo, "file", pf.path, "commit", pf.commit.sha, "key", iss.Key, "message", iss.Message}
 	if iss.Severity == meta.SeverityError {
 		log.ErrorContext(ctx, "invalid meta key", args...)
 		return
@@ -294,10 +310,10 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID, path, commit string,
 // any. ok is false when the job
 // was skipped because of a Nomad failure scoped to it (already logged): the
 // caller keeps no observation for it this cycle rather than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
+func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
-	jobID, ns := key.id, key.namespace
-	log := e.log.With("job", jobID, "namespace", ns, "commit", commit.sha)
+	jobID, ns, commit := key.id, key.namespace, mf.commit
+	log := e.log.With("job", jobID, "namespace", ns, "repo", commit.repo, "commit", commit.sha)
 
 	targetHash, err := specHash(mf.job)
 	if err != nil {
@@ -359,7 +375,7 @@ func (e *Engine) reconcileJob(ctx context.Context, commit commitRef, mf parsedFi
 	}
 
 	obs = Observation{
-		JobID: jobID, Namespace: ns, FilePath: mf.path,
+		JobID: jobID, Namespace: ns, Repository: commit.repo, FilePath: mf.path,
 		Policy: mf.cfg.Policy, SpecHash: hash, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
 		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
 	}
@@ -525,7 +541,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		return "", "", fmt.Errorf("marshal job spec of %s: %w", jobID, err)
 	}
 	d := &store.Deployment{
-		JobID: jobID, Namespace: key.namespace, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
+		JobID: jobID, Namespace: key.namespace, Repository: commit.repo, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
 		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), DiffHash: diffHash, Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen, WindowLiftedBy: liftedBy,
 	}

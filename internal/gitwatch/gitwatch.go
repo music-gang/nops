@@ -36,6 +36,9 @@ const varsSuffix = ".vars.hcl"
 
 // Options configures a Watcher.
 type Options struct {
+	// Name identifies the repository: in its snapshots, its logs, and what
+	// the dashboard and the metrics show.
+	Name        string
 	URL, Branch string
 	// Path is the subdirectory holding the job files, relative to the
 	// repository root. Empty means the root.
@@ -57,9 +60,11 @@ type File struct {
 	Vars     string
 }
 
-// Snapshot is every job file at one commit.
+// Snapshot is every job file of one repository at one commit.
 type Snapshot struct {
-	Commit string
+	// Repository is the Name of the repository it was read from.
+	Repository string
+	Commit     string
 	// Subject is the first line of the commit message, Author the author's
 	// name (no email) and CommittedAt the commit time. They exist so a
 	// deployment can say which change it came from without asking git again:
@@ -114,13 +119,14 @@ func New(o Options, log *slog.Logger) *Watcher {
 func (w *Watcher) Start(ctx context.Context) error {
 	snap, err := w.fetch(ctx)
 	if err != nil {
-		return fmt.Errorf("gitwatch: initial clone: %w", err)
+		return fmt.Errorf("gitwatch: initial clone of repository %q: %w", w.opts.Name, err)
 	}
 	w.mu.Lock()
 	w.snap = snap
 	w.status = Status{CheckedAt: w.now()}
 	w.mu.Unlock()
-	w.log.InfoContext(ctx, "gitwatch: initial clone", "commit", snap.Commit, "files", len(snap.Files))
+	w.log.InfoContext(ctx, "gitwatch: initial clone", "repo", w.opts.Name, "url", StripCredentials(w.opts.URL),
+		"branch", w.opts.Branch, "path", w.opts.Path, "commit", snap.Commit, "files", len(snap.Files))
 	return nil
 }
 
@@ -176,7 +182,7 @@ func (w *Watcher) Changed() <-chan struct{} {
 func (w *Watcher) poll(ctx context.Context) {
 	head, err := w.remoteHead(ctx)
 	if err != nil {
-		w.log.ErrorContext(ctx, "gitwatch: list remote refs", "error", err)
+		w.log.ErrorContext(ctx, "gitwatch: list remote refs", "repo", w.opts.Name, "error", err)
 		w.failed(err)
 		return
 	}
@@ -186,7 +192,7 @@ func (w *Watcher) poll(ctx context.Context) {
 	}
 	snap, err := w.fetch(ctx)
 	if err != nil {
-		w.log.ErrorContext(ctx, "gitwatch: fetch", "error", err)
+		w.log.ErrorContext(ctx, "gitwatch: fetch", "repo", w.opts.Name, "error", err)
 		w.failed(err)
 		return
 	}
@@ -194,7 +200,7 @@ func (w *Watcher) poll(ctx context.Context) {
 	w.snap = snap
 	w.status = Status{CheckedAt: w.now()}
 	w.mu.Unlock()
-	w.log.InfoContext(ctx, "gitwatch: new commit", "commit", snap.Commit, "files", len(snap.Files))
+	w.log.InfoContext(ctx, "gitwatch: new commit", "repo", w.opts.Name, "commit", snap.Commit, "files", len(snap.Files))
 	select {
 	case w.changed <- struct{}{}:
 	default:
@@ -267,7 +273,7 @@ func (w *Watcher) fetch(ctx context.Context) (Snapshot, error) {
 	if w.opts.Path != "" {
 		tree, err = tree.Tree(w.opts.Path)
 		if err != nil {
-			return Snapshot{}, fmt.Errorf("git-path %q: %w", w.opts.Path, err)
+			return Snapshot{}, fmt.Errorf("path %q: %w", w.opts.Path, err)
 		}
 	}
 	files, err := w.collect(tree)
@@ -275,6 +281,7 @@ func (w *Watcher) fetch(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return Snapshot{
+		Repository:  w.opts.Name,
 		Commit:      head.Hash().String(),
 		Subject:     subject(commit.Message),
 		Author:      commit.Author.Name,
@@ -391,7 +398,7 @@ func (w *Watcher) collect(tree *object.Tree) ([]File, error) {
 	}
 	for key, v := range vars {
 		if !used[key] {
-			w.log.Warn("gitwatch: vars file with no matching job", "path", v.path)
+			w.log.Warn("gitwatch: vars file with no matching job", "repo", w.opts.Name, "path", v.path)
 		}
 	}
 

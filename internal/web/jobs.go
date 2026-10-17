@@ -403,7 +403,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		k := jobSync(*obs, latest)
 		data.InRepo, data.Policy = true, obs.Policy
 		data.Sync, data.SyncLabel, data.SyncClass = k, k.label(), k.class()
-		data.File, data.Observed = obs.FilePath, s.when(obs.ObservedAt)
+		data.File, data.Observed = obs.Repository+": "+obs.FilePath, s.when(obs.ObservedAt)
 		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
 		if data.Blocked && allows(r, ns, acl.Retry) {
