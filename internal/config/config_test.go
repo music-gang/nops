@@ -67,6 +67,7 @@ func TestLoadDefaults(t *testing.T) {
 		GitURL:           repo,
 		GitBranch:        "main",
 		GitUsername:      "git",
+		Repositories:     []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git"}},
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
 		AuthMode:         "oidc",
@@ -132,6 +133,13 @@ func TestLoadEveryOption(t *testing.T) {
 	key := writeFile(t, "key.pem", "key")
 	nomadTok := writeFile(t, "nomad-token", "nomad-secret\n")
 	gitTok := writeFile(t, "git-token", "  git-secret\n")
+	appsTok := writeFile(t, "apps-token", "apps-secret\n")
+	configFile := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url        = "https://git.example.com/ops/apps.git"
+  token_file = "`+appsTok+`"
+}
+`)
 	webhookURL := writeFile(t, "webhook-url", "https://n8n.example.com/webhook/abc\n")
 	webhookTok := writeFile(t, "webhook-token", "webhook-secret")
 	discordURL := writeFile(t, "discord-url", "https://discord.com/api/webhooks/1/abc\n")
@@ -165,6 +173,7 @@ func TestLoadEveryOption(t *testing.T) {
 		"git-path":                  "jobs/apps",
 		"git-username":              "oauth2",
 		"git-token-file":            gitTok,
+		"config":                    configFile,
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
 		"webhook-secret-file":       webhookSecret,
@@ -189,21 +198,26 @@ func TestLoadEveryOption(t *testing.T) {
 		"log-level":                 "debug",
 	}
 	commonWant := Config{
-		NomadAddr:              "https://nomad.example.com:4646",
-		NomadUIURL:             "https://infra.example.com/nomad",
-		NomadNamespaces:        []string{"apps", "infra"},
-		NomadTokenFile:         nomadTok,
-		NomadToken:             "nomad-secret",
-		NomadCACert:            ca,
-		NomadClientCert:        cert,
-		NomadClientKey:         key,
-		NomadTLSSkipVerify:     true,
-		GitURL:                 repo,
-		GitBranch:              "prod",
-		GitPath:                "jobs/apps",
-		GitUsername:            "oauth2",
-		GitTokenFile:           gitTok,
-		GitToken:               "git-secret",
+		NomadAddr:          "https://nomad.example.com:4646",
+		NomadUIURL:         "https://infra.example.com/nomad",
+		NomadNamespaces:    []string{"apps", "infra"},
+		NomadTokenFile:     nomadTok,
+		NomadToken:         "nomad-secret",
+		NomadCACert:        ca,
+		NomadClientCert:    cert,
+		NomadClientKey:     key,
+		NomadTLSSkipVerify: true,
+		GitURL:             repo,
+		GitBranch:          "prod",
+		GitPath:            "jobs/apps",
+		GitUsername:        "oauth2",
+		GitTokenFile:       gitTok,
+		GitToken:           "git-secret",
+		ConfigFile:         configFile,
+		Repositories: []Repository{
+			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret"},
+			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret"},
+		},
 		DBPath:                 "/var/lib/nops/nops.db",
 		ListenAddr:             "127.0.0.1:9000",
 		WebhookSecretFile:      webhookSecret,
@@ -351,7 +365,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"nomad-client-cert", missing, "no such file"},
 		{"nomad-client-key", missing, "no such file"},
 		{"nomad-tls-skip-verify", "maybe", "invalid syntax"},
-		{"git-url", "", "required"},
+		{"config", missing, "no such file"},
+		{"config", dir, "is a directory"},
 		{"git-branch", "", "required"},
 		{"git-path", "/etc", "must be a relative path"},
 		{"git-path", "..", "must be a relative path"},
@@ -778,7 +793,7 @@ func TestLoadReportsEveryError(t *testing.T) {
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"-git-url / NOPS_GIT_URL: required", "flag -apply-timeout:", "flag -log-level:"} {
+	for _, want := range []string{"-git-url or a repository block in -config is required", "flag -apply-timeout:", "flag -log-level:"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -833,7 +848,7 @@ func TestFlagsThatTakeAFileQuoteIt(t *testing.T) {
 	if strings.Contains(out.String(), "`") {
 		t.Error("the usage prints the quotes of a value name")
 	}
-	file := map[string]bool{"db-path": true, "nomad-ca-cert": true, "nomad-client-cert": true, "nomad-client-key": true}
+	file := map[string]bool{"config": true, "db-path": true, "nomad-ca-cert": true, "nomad-client-cert": true, "nomad-client-key": true}
 	FlagSet(io.Discard).VisitAll(func(f *flag.Flag) {
 		name, _ := flag.UnquoteUsage(f)
 		if want := file[f.Name] || strings.HasSuffix(f.Name, "-file"); (name == "file") != want {
@@ -1207,5 +1222,79 @@ func TestLoadSyncWindowTimeZone(t *testing.T) {
 	c, err = Load([]string{"-git-url", repo, "-sync-window-time-zone", "Europe/Rome"}, envOf(nil), io.Discard)
 	if err != nil || c.SyncWindowLocation.String() != "Europe/Rome" {
 		t.Errorf("-sync-window-time-zone Europe/Rome = %v, %v", c.SyncWindowLocation, err)
+	}
+}
+
+func TestLoadRepositoriesFromTheFile(t *testing.T) {
+	tok := writeFile(t, "apps-token", "apps-secret\n")
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url        = "https://git.example.com/ops/apps.git"
+  branch     = "prod"
+  path       = "./nomad/"
+  username   = "oauth2"
+  token_file = "`+tok+`"
+}
+
+repository "default" {
+  url = "https://git.example.com/ops/jobs.git"
+}
+`)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Repository{
+		{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "prod", Path: "nomad", Username: "oauth2", TokenFile: tok, Token: "apps-secret"},
+		{Name: "default", URL: "https://git.example.com/ops/jobs.git", Branch: "main", Username: "git"},
+	}
+	if !reflect.DeepEqual(c.Repositories, want) {
+		t.Errorf("repositories:\n got %+v\nwant %+v", c.Repositories, want)
+	}
+}
+
+func TestLoadRepositoriesInvalid(t *testing.T) {
+	dir := t.TempDir()
+	tok := writeFile(t, "token", "secret")
+	block := func(name, body string) string { return "repository \"" + name + "\" {\n" + body + "\n}\n" }
+	apps := block("apps", `url = "https://git.example.com/ops/apps.git"`)
+	tests := []struct {
+		name string
+		file string // "" for no -config
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{"no repository", "", nil, nil, "-git-url or a repository block in -config is required"},
+		{"an empty file", " ", nil, nil, "-git-url or a repository block in -config is required"},
+		{"a -git-* option without -git-url", apps, []string{"-git-branch=prod"}, nil, "-git-branch is set without -git-url"},
+		{"a -git-* variable without -git-url", apps, nil, map[string]string{"NOPS_GIT_PATH": "jobs"}, "-git-path is set without -git-url"},
+		{"a git token without -git-url", apps, nil, map[string]string{"NOPS_GIT_TOKEN": "secret"}, "NOPS_GIT_TOKEN is set without -git-url"},
+		{"a git token file without -git-url", apps, []string{"-git-token-file=" + tok}, nil, "-git-token-file is set without -git-url"},
+		{"default next to -git-url", block("default", `url = "https://git.example.com/x.git"`), []string{"-git-url=" + repo}, nil, `repository "default" is the one of -git-url`},
+		{"a name twice", apps + apps, nil, nil, `repository "apps" is declared twice`},
+		{"a bad name", block("my apps", `url = "https://git.example.com/x.git"`), nil, nil, "the name may hold only letters, digits, - and _"},
+		{"no url", block("apps", `branch = "main"`), nil, nil, `Missing required argument`},
+		{"an empty url", block("apps", `url = ""`), nil, nil, `repository "apps": url: required`},
+		{"an empty branch", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`branch = ""`), nil, nil, `repository "apps": branch: required`},
+		{"a path outside", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`path = "../x"`), nil, nil, `repository "apps": path: "../x" must be a relative path`},
+		{"a missing token file", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token_file = "`+filepath.Join(dir, "missing")+`"`), nil, nil, `repository "apps": token_file: open`},
+		{"a token over http", block("apps", `url = "http://git.example.com/x.git"`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs an https:// url in repository "apps"`},
+		{"a token without username", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`username = ""`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs a non-empty username in repository "apps"`},
+		{"an unknown attribute", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token = "secret"`), nil, nil, "Unsupported argument"},
+		{"an unknown block", apps + "nomad {\n}\n", nil, nil, "Unsupported block type"},
+		{"not HCL", "repository {", nil, nil, "-config: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := tt.args
+			if tt.file != "" {
+				args = append([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, args...)
+			}
+			_, err := Load(args, envOf(tt.env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
 	}
 }

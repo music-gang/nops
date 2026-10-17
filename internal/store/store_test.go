@@ -489,8 +489,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 14 {
-		t.Errorf("user_version = %d, %v; want 14", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 15 {
+		t.Errorf("user_version = %d, %v; want 15", v, err)
 	}
 }
 
@@ -989,8 +989,26 @@ func TestUpgradeFromV1(t *testing.T) {
 	if got.JobID != "web" || got.State != StateFailed || got.CommitSubject != "" || !got.RetriedAt.IsZero() {
 		t.Errorf("upgraded deployment = %+v", got)
 	}
+	if got.Repository != "default" {
+		t.Errorf("upgraded deployment's repository = %q, want default", got.Repository)
+	}
 	if err := s.MarkRetried(context.Background(), "old", "iacopo"); err != nil {
 		t.Errorf("MarkRetried on an upgraded row: %v", err)
+	}
+}
+
+func TestDeploymentRecordsItsRepository(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	apps := newDep("web")
+	apps.Repository = "apps"
+	mustCreate(t, s, apps)
+	unnamed := mustCreate(t, s, newDep("api"))
+	for id, want := range map[string]string{apps.ID: "apps", unnamed.ID: "default"} {
+		got, err := s.GetDeployment(ctx, id)
+		if err != nil || got.Repository != want {
+			t.Errorf("repository of %s = %+v, %v; want %s", id, got, err, want)
+		}
 	}
 }
 

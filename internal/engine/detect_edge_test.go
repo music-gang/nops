@@ -24,7 +24,7 @@ func TestLogIssue(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 
-	logIssue(context.Background(), log, "web", "web.nomad.hcl", "c1", meta.Issue{
+	logIssue(context.Background(), log, "web", parsedFile{path: "web.nomad.hcl", commit: commitRef{repo: "default", sha: "c1"}}, meta.Issue{
 		Severity: meta.SeverityError, Key: "nops_policy", Message: "invalid value",
 	})
 	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "nops_policy") {
@@ -32,7 +32,7 @@ func TestLogIssue(t *testing.T) {
 	}
 
 	buf.Reset()
-	logIssue(context.Background(), log, "web", "web.nomad.hcl", "c1", meta.Issue{
+	logIssue(context.Background(), log, "web", parsedFile{path: "web.nomad.hcl", commit: commitRef{repo: "default", sha: "c1"}}, meta.Issue{
 		Severity: meta.SeverityWarn, Key: "nops_typo", Message: "unknown key",
 	})
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "nops_typo") {

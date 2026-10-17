@@ -157,6 +157,7 @@ type deploymentCard struct {
 	RetryOfPath string
 	RetryPath   string
 
+	Repository   string
 	CommitSHA    string
 	CommitShort  string
 	CommitURL    string // "" when there is no link
@@ -193,6 +194,7 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		Error:          d.Error,
 		Retried:        !d.RetriedAt.IsZero(),
 		WindowLiftedBy: d.WindowLiftedBy,
+		Repository:     d.Repository,
 		CommitSHA:      d.CommitSHA,
 		CommitShort:    shortCommit(d.CommitSHA),
 		CommitSubj:     d.CommitSubject,
@@ -214,7 +216,7 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		c.RetryOfPath = s.deploymentPath(d.RetryOf)
 	}
 	if s.commitURL != nil {
-		c.CommitURL = s.commitURL(d.CommitSHA)
+		c.CommitURL = s.commitURL(d.Repository, d.CommitSHA)
 	}
 	return c
 }

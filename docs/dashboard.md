@@ -8,8 +8,9 @@ retry, pause, and resume deployments. Every page needs a
 
 - **Overview** (`/`): what needs you (approvals, blocked jobs, recent
   failures, meta errors, paused jobs, orphans), what is deploying, the latest
-  completed deployments, and the state of git and detection. *Fetch now* asks
-  for a git poll without waiting for the interval. *Pause* pauses every job.
+  completed deployments, the head and last poll of each repository, and
+  detection. *Fetch now* polls every repository without waiting for the
+  interval. *Pause* pauses every job.
 - **Jobs** (`/jobs`): every managed job with its [sync state](#sync-state-of-a-job),
   policy and last deployment, filterable by state.
 - **Job** (`/jobs/{namespace}/{job}`): the job's drift, hooks, sync window,

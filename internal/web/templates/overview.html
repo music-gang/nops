@@ -4,26 +4,29 @@
 
 <div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 <section class="box strip">
+  {{range $i, $git := .Git}}
   <div class="strip__row">
     <span class="strip__label">Git</span>
-    {{if .Git.Known}}
+    {{if $git.Known}}
     <span class="strip__main">
-      {{if .Git.URL}}<a class="mono" href="{{.Git.URL}}" target="_blank" rel="noopener noreferrer" title="{{.Git.SHA}}">{{.Git.Short}}</a>{{else}}<span class="mono" title="{{.Git.SHA}}">{{.Git.Short}}</span>{{end}}
-      <span class="strip__text" title="{{.Git.Subject}}">{{.Git.Subject}}</span>
+      {{if $git.ShowName}}<span class="muted">{{$git.Name}}</span>{{end}}
+      {{if $git.URL}}<a class="mono" href="{{$git.URL}}" target="_blank" rel="noopener noreferrer" title="{{$git.SHA}}">{{$git.Short}}</a>{{else}}<span class="mono" title="{{$git.SHA}}">{{$git.Short}}</span>{{end}}
+      <span class="strip__text" title="{{$git.Subject}}">{{$git.Subject}}</span>
     </span>
-    <span class="strip__meta hide-sm">{{if .Git.Author}}by {{.Git.Author}} &middot; {{end}}committed {{template "time" .Git.CommittedAt}}</span>
+    <span class="strip__meta hide-sm">{{if $git.Author}}by {{$git.Author}} &middot; {{end}}committed {{template "time" $git.CommittedAt}}</span>
     {{else}}
-    <span class="strip__main muted">no commit read yet</span>
+    <span class="strip__main muted">{{if $git.ShowName}}{{$git.Name}}: {{end}}no commit read yet</span>
     {{end}}
-    <span class="strip__meta">repository checked {{template "time" .Git.CheckedAt}}</span>
-    {{if .Git.CanFetch}}
-    <form method="post" action="{{.Base}}/fetch" class="strip__action">
+    <span class="strip__meta">repository checked {{template "time" $git.CheckedAt}}</span>
+    {{if and (eq $i 0) $.CanFetch}}
+    <form method="post" action="{{$.Base}}/fetch" class="strip__action">
       <button type="submit" class="btn btn--sm">Fetch now</button>
     </form>
     {{end}}
   </div>
-  {{if .Git.Error}}
-  <p class="flash flash--error flash--flat">The last poll of the repository failed {{template "time" .Git.ErrorAt}}, so Nops is working from the last commit it read: {{.Git.Error}}</p>
+  {{if $git.Error}}
+  <p class="flash flash--error flash--flat">The last poll of the repository{{if $git.ShowName}} {{$git.Name}}{{end}} failed {{template "time" $git.ErrorAt}}, so Nops is working from the last commit it read: {{$git.Error}}</p>
+  {{end}}
   {{end}}
 
   <div class="strip__row">

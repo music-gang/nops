@@ -51,7 +51,7 @@ and `/api/backup` answers the database file.
 | `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. Answers `{"deployment_id": "..."}`, empty when the next detection cycle starts it. |
 | `POST /api/pause` | [Pause every job](policies.md#pausing-a-job). Optional body: `{"reason": "..."}`. |
 | `POST /api/resume` | Resume every job. |
-| `POST /api/fetch` | Ask for a git poll now. |
+| `POST /api/fetch` | Ask for a poll of every repository now. |
 | `GET /api/backup` | A [backup](running-nops.md#backups) of the database, as a SQLite file. |
 | `GET /api/acl/policies` | The [ACL policies](acl.md#acl-policies): all with a management token, the token's own otherwise. |
 | `GET /api/acl/policies/{name}` | One ACL policy with its rules. |

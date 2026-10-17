@@ -129,7 +129,7 @@ func allAdapters(t *testing.T) (Options, map[string]*server) {
 	srvs := map[string]*server{}
 	o := Options{
 		PublicURL:  publicURL + "/",
-		CommitURL:  func(sha string) string { return commitBase + sha },
+		CommitURL:  func(_, sha string) string { return commitBase + sha },
 		NomadUIURL: nomadUI + "/",
 		Timeout:    time.Second,
 	}
@@ -193,8 +193,15 @@ func TestWebhook(t *testing.T) {
 	log, buf := logger()
 	New(Options{
 		Webhook: Endpoint{URL: srv.URL + "/hook", Token: "tok"}, PublicURL: publicURL + "/", Timeout: time.Second,
-		CommitURL: func(sha string) string { return commitBase + sha }, NomadUIURL: nomadUI,
-	}, log).Notify(context.Background(), withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf, d.WindowLiftedBy = "01J8ZW", "bob" }), "pre")
+		CommitURL: func(repo, sha string) string {
+			if repo != "apps" {
+				return ""
+			}
+			return commitBase + sha
+		}, NomadUIURL: nomadUI,
+	}, log).Notify(context.Background(), withState(failed, store.StateFailed, func(d *store.Deployment) {
+		d.RetryOf, d.WindowLiftedBy, d.Repository = "01J8ZW", "bob", "apps"
+	}), "pre")
 
 	reqs := srv.requests()
 	if len(reqs) != 1 || buf.Len() > 0 {
@@ -211,7 +218,7 @@ func TestWebhook(t *testing.T) {
 	want := Event{
 		Event: "deployment", DeploymentID: "01J8ZX", Job: "web", Namespace: "apps", State: "failed", Phase: "pre",
 		Policy: "approval", ApprovedBy: "alice", RetryOf: "01J8ZW", DeployedNowBy: "bob",
-		Error: "pre-hook web-migrate failed: exit 1", Commit: commitSHA,
+		Error: "pre-hook web-migrate failed: exit 1", Repository: "apps", Commit: commitSHA,
 		CommitSubject: "Bump web to 1.4.0", CommitAuthor: "Alice", CommitURL: commitLink,
 		URL: deploymentURL, NomadURL: nomadLink, Time: updated,
 	}

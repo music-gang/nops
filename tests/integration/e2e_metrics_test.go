@@ -47,9 +47,9 @@ func TestE2EMetrics(t *testing.T) {
 
 	want := []string{
 		`nops_build_info{version="` + testVersion + `"} 1`,
-		`nops_loop_last_success_timestamp_seconds{loop="git"} `,
-		`nops_loop_last_success_timestamp_seconds{loop="detection"} `,
-		`nops_loop_last_success_timestamp_seconds{loop="apply"} `,
+		`nops_loop_last_success_timestamp_seconds{loop="git",repo="default"} `,
+		`nops_loop_last_success_timestamp_seconds{loop="detection",repo=""} `,
+		`nops_loop_last_success_timestamp_seconds{loop="apply",repo=""} `,
 		`nops_deployments{state="pending_approval"} 1`,
 		`nops_waiting_since_timestamp_seconds{job="` + jobID + `",namespace="default",waiting="approval"} `,
 		`nops_job_info{job="` + jobID + `",namespace="default",policy="approval"} 1`,

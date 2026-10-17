@@ -42,9 +42,9 @@ func (f fakeEngine) ApplySucceededAt() time.Time        { return f.applyAt }
 func (f fakeEngine) Observations() []engine.Observation { return f.obs }
 func (f fakeEngine) PausedAll() *engine.Hold            { return f.paused }
 
-type fakeGit struct{ status gitwatch.Status }
+type fakeGit []gitwatch.Repo
 
-func (f fakeGit) Status() gitwatch.Status { return f.status }
+func (f fakeGit) Repositories() []gitwatch.Repo { return f }
 
 type fakeNotifier map[string]uint64
 
@@ -68,7 +68,11 @@ func options() Options {
 // case: a deployment per kind of wait, a job per kind of trouble.
 func TestCollect(t *testing.T) {
 	o := options()
-	o.Git = fakeGit{gitwatch.Status{CheckedAt: at(1000), Error: "a later poll failed", ErrorAt: at(1100)}}
+	o.Git = fakeGit{
+		{Name: "default", Status: gitwatch.Status{CheckedAt: at(1000), Error: "a later poll failed", ErrorAt: at(1100)}},
+		{Name: "apps", Status: gitwatch.Status{CheckedAt: at(1500)}},
+		{Name: "never-reached"},
+	}
 	o.Engine = fakeEngine{
 		status:  engine.Status{At: at(2100), SucceededAt: at(2000), Error: "disk on fire", Unparsed: 2, Skipped: 1, Orphans: 3},
 		applyAt: at(3000),
@@ -142,11 +146,12 @@ nops_job_paused{job="extra",namespace="infra"} 0
 nops_job_paused{job="proxy",namespace="infra"} 0
 nops_job_paused{job="typo",namespace="infra"} 0
 nops_job_paused{job="web",namespace="apps"} 0
-# HELP nops_loop_last_success_timestamp_seconds When each loop last ran to the end: git (a poll reached the remote), detection (a cycle ended without error), apply (a cycle read the active deployments). Absent before the first one.
+# HELP nops_loop_last_success_timestamp_seconds When each loop last ran to the end: git (a poll of the repository named by repo reached the remote), detection (a cycle ended without error), apply (a cycle read the active deployments). Absent before the first one.
 # TYPE nops_loop_last_success_timestamp_seconds gauge
-nops_loop_last_success_timestamp_seconds{loop="apply"} 3000
-nops_loop_last_success_timestamp_seconds{loop="detection"} 2000
-nops_loop_last_success_timestamp_seconds{loop="git"} 1000
+nops_loop_last_success_timestamp_seconds{loop="apply",repo=""} 3000
+nops_loop_last_success_timestamp_seconds{loop="detection",repo=""} 2000
+nops_loop_last_success_timestamp_seconds{loop="git",repo="apps"} 1500
+nops_loop_last_success_timestamp_seconds{loop="git",repo="default"} 1000
 # HELP nops_notifications_failed_total Notifications an adapter failed to deliver since nops started.
 # TYPE nops_notifications_failed_total counter
 nops_notifications_failed_total{adapter="discord"} 0

@@ -44,9 +44,9 @@ type Engine interface {
 	PausedAll() *engine.Hold
 }
 
-// Git is how the git watcher's polls went. *gitwatch.Watcher implements it.
+// Git is how the polls of each repository went. *gitwatch.Group implements it.
 type Git interface {
-	Status() gitwatch.Status
+	Repositories() []gitwatch.Repo
 }
 
 // Notifier counts the notifications each adapter failed to deliver.
@@ -137,8 +137,8 @@ func newCollector(o Options) *collector {
 		buildInfo: prometheus.NewDesc("nops_build_info",
 			"Always 1; the version label is the running build.", []string{"version"}, nil),
 		loopSuccess: prometheus.NewDesc("nops_loop_last_success_timestamp_seconds",
-			"When each loop last ran to the end: git (a poll reached the remote), detection (a cycle ended without error), apply (a cycle read the active deployments). Absent before the first one.",
-			[]string{"loop"}, nil),
+			"When each loop last ran to the end: git (a poll of the repository named by repo reached the remote), detection (a cycle ended without error), apply (a cycle read the active deployments). Absent before the first one.",
+			[]string{"loop", "repo"}, nil),
 		deployments: prometheus.NewDesc("nops_deployments",
 			"Active deployments per state.", []string{"state"}, nil),
 		waitingSince: prometheus.NewDesc("nops_waiting_since_timestamp_seconds",
@@ -188,18 +188,21 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	gauge := func(d *prometheus.Desc, v float64, labels ...string) {
 		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, labels...)
 	}
-	timestamp := func(loop string, t time.Time) {
+	// repo is "" for the loops that are not about one repository.
+	timestamp := func(loop, repo string, t time.Time) {
 		if !t.IsZero() {
-			gauge(c.loopSuccess, unixSeconds(t), loop)
+			gauge(c.loopSuccess, unixSeconds(t), loop, repo)
 		}
 	}
 
 	gauge(c.buildInfo, 1, c.o.Version)
 
 	st := c.o.Engine.Status()
-	timestamp(loopGit, c.o.Git.Status().CheckedAt)
-	timestamp(loopDetection, st.SucceededAt)
-	timestamp(loopApply, c.o.Engine.ApplySucceededAt())
+	for _, r := range c.o.Git.Repositories() {
+		timestamp(loopGit, r.Name, r.Status.CheckedAt)
+	}
+	timestamp(loopDetection, "", st.SucceededAt)
+	timestamp(loopApply, "", c.o.Engine.ApplySucceededAt())
 
 	if err := c.collectDeployments(gauge); err != nil {
 		ch <- prometheus.NewInvalidMetric(c.deployments, err)
