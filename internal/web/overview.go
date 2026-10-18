@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/music-gang/nops/internal/acl"
+	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -21,6 +22,13 @@ type gitView struct {
 	ErrorAt                timeView
 }
 
+// gitSummary is what the Overview says of several repositories in one line.
+type gitSummary struct {
+	Count, Failing int
+	// CheckedAt is the oldest poll: how fresh the least fresh repository is.
+	CheckedAt timeView
+}
+
 // cycleView is how the last detection cycle went.
 type cycleView struct {
 	Ran                        bool
@@ -35,7 +43,8 @@ type cycleView struct {
 type overviewData struct {
 	baseData
 	Git               []gitView
-	CanFetch          bool // POST /fetch is served
+	GitSummary        *gitSummary // with several repositories; nil with one
+	CanFetch          bool        // POST /fetch is served
 	Cycle             cycleView
 	CanPause          bool // POST /pause is allowed to this token
 	Attention         []attentionItem
@@ -43,8 +52,7 @@ type overviewData struct {
 	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
 }
 
-func (s *server) gitViews() []gitView {
-	repos := s.git.Repositories()
+func (s *server) gitViews(repos []gitwatch.Repo) []gitView {
 	views := make([]gitView, len(repos))
 	for i, repo := range repos {
 		snap, st := repo.Snapshot, repo.Status
@@ -59,6 +67,22 @@ func (s *server) gitViews() []gitView {
 		}
 	}
 	return views
+}
+
+// summarize is the Overview's line for several repositories.
+func (s *server) summarize(repos []gitwatch.Repo) *gitSummary {
+	sum := &gitSummary{Count: len(repos)}
+	var oldest time.Time
+	for i, repo := range repos {
+		if repo.Status.Error != "" {
+			sum.Failing++
+		}
+		if at := repo.Status.CheckedAt; i == 0 || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	sum.CheckedAt = s.when(oldest)
+	return sum
 }
 
 func (s *server) cycleView() cycleView {
@@ -88,13 +112,17 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "list recently completed deployments", err)
 		return
 	}
+	repos := s.git.Repositories()
 	data := overviewData{
 		baseData:  s.base(r, "overview"),
-		Git:       s.gitViews(),
+		Git:       s.gitViews(repos),
 		CanFetch:  s.trigger != nil && subjectOf(r.Context()).acl.Global(acl.Fetch),
 		Cycle:     s.cycleView(),
 		CanPause:  subjectOf(r.Context()).acl.Global(acl.Pause),
 		Attention: s.attention(r, s.observations(r), active, latest),
+	}
+	if len(repos) > 1 {
+		data.GitSummary = s.summarize(repos)
 	}
 	for _, d := range active {
 		if d.State != store.StatePendingApproval {
@@ -105,4 +133,19 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		data.RecentlyCompleted = append(data.RecentlyCompleted, s.card(d))
 	}
 	s.render(w, r, "overview", data)
+}
+
+type repositoriesData struct {
+	baseData
+	Git []gitView
+}
+
+// repositories is GET /repositories: the head and last poll of each
+// repository, which the Overview keeps to one line.
+func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
+	views := s.gitViews(s.git.Repositories())
+	for i := range views {
+		views[i].ShowName = true
+	}
+	s.render(w, r, "repositories", repositoriesData{baseData: s.base(r, "overview"), Git: views})
 }

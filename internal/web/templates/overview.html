@@ -4,28 +4,33 @@
 
 <div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 <section class="box strip">
-  {{range $i, $git := .Git}}
+  {{with .GitSummary}}
   <div class="strip__row">
     <span class="strip__label">Git</span>
-    {{if $git.Known}}
     <span class="strip__main">
-      {{if $git.ShowName}}<span class="muted">{{$git.Name}}</span>{{end}}
-      {{if $git.URL}}<a class="mono" href="{{$git.URL}}" target="_blank" rel="noopener noreferrer" title="{{$git.SHA}}">{{$git.Short}}</a>{{else}}<span class="mono" title="{{$git.SHA}}">{{$git.Short}}</span>{{end}}
-      <span class="strip__text" title="{{$git.Subject}}">{{$git.Subject}}</span>
+      <a href="{{$.Base}}/repositories">{{.Count}} repositories</a>
+      {{if .Failing}}<span class="muted">&middot; {{.Failing}} failing</span>{{end}}
     </span>
-    <span class="strip__meta hide-sm">{{if $git.Author}}by {{$git.Author}} &middot; {{end}}committed {{template "time" $git.CommittedAt}}</span>
-    {{else}}
-    <span class="strip__main muted">{{if $git.ShowName}}{{$git.Name}}: {{end}}no commit read yet</span>
-    {{end}}
-    <span class="strip__meta">repository checked {{template "time" $git.CheckedAt}}</span>
-    {{if and (eq $i 0) $.CanFetch}}
+    {{if .CheckedAt.ISO}}<span class="strip__meta">repositories checked {{template "time" .CheckedAt}}</span>{{end}}
+    {{if $.CanFetch}}
     <form method="post" action="{{$.Base}}/fetch" class="strip__action">
-      <button type="submit" class="btn btn--sm">{{if $git.ShowName}}Fetch all{{else}}Fetch now{{end}}</button>
+      <button type="submit" class="btn btn--sm">Fetch all</button>
     </form>
     {{end}}
   </div>
-  {{if $git.Error}}
-  <p class="flash flash--error flash--flat">The last poll of the repository{{if $git.ShowName}} {{$git.Name}}{{end}} failed {{template "time" $git.ErrorAt}}, so Nops is working from the last commit it read: {{$git.Error}}</p>
+  {{range $.Git}}{{template "git_error" .}}{{end}}
+  {{else}}
+  {{range .Git}}
+  <div class="strip__row">
+    <span class="strip__label">Git</span>
+    {{template "git_row" .}}
+    {{if $.CanFetch}}
+    <form method="post" action="{{$.Base}}/fetch" class="strip__action">
+      <button type="submit" class="btn btn--sm">Fetch now</button>
+    </form>
+    {{end}}
+  </div>
+  {{template "git_error" .}}
   {{end}}
   {{end}}
 
@@ -149,4 +154,25 @@
 </section>
 </div>
 {{template "chrome_foot" .}}
+{{end}}
+
+{{/* What a repository's row says: its head, and when it was read. */}}
+{{define "git_row"}}
+    {{if .Known}}
+    <span class="strip__main">
+      {{if .ShowName}}<span class="muted">{{.Name}}</span>{{end}}
+      {{if .URL}}<a class="mono" href="{{.URL}}" target="_blank" rel="noopener noreferrer" title="{{.SHA}}">{{.Short}}</a>{{else}}<span class="mono" title="{{.SHA}}">{{.Short}}</span>{{end}}
+      <span class="strip__text" title="{{.Subject}}">{{.Subject}}</span>
+    </span>
+    <span class="strip__meta hide-sm">{{if .Author}}by {{.Author}} &middot; {{end}}committed {{template "time" .CommittedAt}}</span>
+    {{else}}
+    <span class="strip__main muted">{{if .ShowName}}{{.Name}}: {{end}}no commit read yet</span>
+    {{end}}
+    <span class="strip__meta">repository checked {{template "time" .CheckedAt}}</span>
+{{end}}
+
+{{define "git_error"}}
+  {{if .Error}}
+  <p class="flash flash--error flash--flat">The last poll of the repository{{if .ShowName}} {{.Name}}{{end}} failed {{template "time" .ErrorAt}}, so Nops is working from the last commit it read: {{.Error}}</p>
+  {{end}}
 {{end}}

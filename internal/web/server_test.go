@@ -124,8 +124,9 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 					CheckedAt: tv, Error: "network is down", ErrorAt: tv},
 				{Name: "apps", ShowName: true, CheckedAt: tv},
 			},
-			CanFetch: true,
-			Cycle:    cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
+			GitSummary: &gitSummary{Count: 2, Failing: 1, CheckedAt: tv},
+			CanFetch:   true,
+			Cycle:      cycleView{Ran: true, At: tv, Took: "1ms", Error: "disk", Managed: 2, Skipped: 1, Unparsed: 1, OrphanCheckSkipped: true},
 			Attention: []attentionItem{
 				{Kind: "pending", KindLabel: "Needs approval", KindClass: "state-pending", Title: "default/web", Path: "/deployments/d1", Detail: "d", When: tv},
 				{Kind: "blocked", KindLabel: "Blocked", KindClass: "state-failed", Title: "default/web", Path: "/jobs/default/web", Detail: "d", When: tv, RetryPath: "/deployments/d1/retry"},
@@ -133,6 +134,13 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			},
 			InProgress:        []deploymentCard{dc},
 			RecentlyCompleted: []deploymentCard{dc},
+		},
+		"repositories": repositoriesData{
+			baseData: baseData{Nav: "overview"},
+			Git: []gitView{
+				{Name: "default", ShowName: true, Known: true, SHA: "abc", Short: "abc", Subject: "s", CheckedAt: tv, Error: "network is down", ErrorAt: tv},
+				{Name: "apps", ShowName: true, CheckedAt: tv},
+			},
 		},
 		"jobs": jobsData{
 			baseData: baseData{Nav: "jobs"}, Rows: []jobRow{row}, Total: 1,
