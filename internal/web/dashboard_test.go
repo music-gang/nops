@@ -270,8 +270,8 @@ func TestOverviewSeveralRepositories(t *testing.T) {
 		`href="https://git.test/commit/0123456789abcdef"`, "fix: the thing",
 		`href="https://git.test/apps/commit/fedcba9876543210"`, "feat: web",
 		"The last poll of the repository apps failed", "authentication required")
-	if n := strings.Count(page, "Fetch now"); n != 1 {
-		t.Errorf("%d Fetch now buttons, want 1 for every repository", n)
+	if n := strings.Count(page, "Fetch all"); n != 1 || strings.Contains(page, "Fetch now") {
+		t.Errorf("%d Fetch all buttons, and Fetch now: %v; want one Fetch all for every repository", n, strings.Contains(page, "Fetch now"))
 	}
 	if n := strings.Count(page, "flash--error"); n != 1 {
 		t.Errorf("%d error flashes, want 1: only apps failed", n)

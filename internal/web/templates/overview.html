@@ -20,7 +20,7 @@
     <span class="strip__meta">repository checked {{template "time" $git.CheckedAt}}</span>
     {{if and (eq $i 0) $.CanFetch}}
     <form method="post" action="{{$.Base}}/fetch" class="strip__action">
-      <button type="submit" class="btn btn--sm">Fetch now</button>
+      <button type="submit" class="btn btn--sm">{{if $git.ShowName}}Fetch all{{else}}Fetch now{{end}}</button>
     </form>
     {{end}}
   </div>
