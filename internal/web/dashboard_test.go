@@ -266,10 +266,9 @@ func TestOverviewSeveralRepositories(t *testing.T) {
 		Status: gitwatch.Status{CheckedAt: testNow.Add(-3 * time.Hour), Error: "authentication required", ErrorAt: testNow.Add(-2 * time.Minute)}}}
 
 	page := ts.get("/")
-	mustContain(t, page,
-		`href="https://git.test/commit/0123456789abcdef"`, "fix: the thing",
-		`href="https://git.test/apps/commit/fedcba9876543210"`, "feat: web",
+	mustContain(t, page, "2 repositories", "1 failing", `href="/repositories"`,
 		"The last poll of the repository apps failed", "authentication required")
+	mustNotContain(t, page, "fix: the thing", "feat: web")
 	if n := strings.Count(page, "Fetch all"); n != 1 || strings.Contains(page, "Fetch now") {
 		t.Errorf("%d Fetch all buttons, and Fetch now: %v; want one Fetch all for every repository", n, strings.Contains(page, "Fetch now"))
 	}
@@ -278,10 +277,39 @@ func TestOverviewSeveralRepositories(t *testing.T) {
 	}
 }
 
+func TestRepositoriesPage(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef", Subject: "fix: the thing"}
+	ts.git.status = gitwatch.Status{CheckedAt: testNow.Add(-time.Minute)}
+	ts.git.more = []gitwatch.Repo{{Name: "apps", Snapshot: gitwatch.Snapshot{Repository: "apps", Commit: "fedcba9876543210", Subject: "feat: web"},
+		Status: gitwatch.Status{CheckedAt: testNow.Add(-3 * time.Hour), Error: "authentication required", ErrorAt: testNow.Add(-2 * time.Minute)}}}
+
+	page := ts.get("/repositories")
+	mustContain(t, page,
+		`href="https://git.test/commit/0123456789abcdef"`, "fix: the thing",
+		`href="https://git.test/apps/commit/fedcba9876543210"`, "feat: web",
+		"The last poll of the repository apps failed", "authentication required")
+	if n := strings.Count(page, "flash--error"); n != 1 {
+		t.Errorf("%d error flashes, want 1: only apps failed", n)
+	}
+}
+
+func TestRepositoriesPageWithOneRepository(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef", Subject: "fix: the thing"}
+	page := ts.get("/repositories")
+	mustContain(t, page, "fix: the thing", "default")
+	if n := strings.Count(page, "strip__row"); n != 1 {
+		t.Errorf("%d rows, want 1", n)
+	}
+}
+
 func TestOverviewOneRepositoryHasNoName(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef"}
-	mustNotContain(t, ts.get("/"), `<span class="muted">default</span>`)
+	page := ts.get("/")
+	mustNotContain(t, page, `<span class="muted">default</span>`, "repositories")
+	mustContain(t, page, "Fetch now")
 }
 
 func TestDeploymentPageLinksTheCommitOfItsRepository(t *testing.T) {

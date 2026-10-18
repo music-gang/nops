@@ -1,0 +1,18 @@
+{{define "repositories"}}
+{{template "chrome_head" .}}
+<div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
+<div class="pagehead">
+  <p class="crumbs"><a href="{{.Base}}/">Overview</a></p>
+  <h1 class="pagehead__title">Repositories</h1>
+</div>
+<section class="box strip">
+  {{range .Git}}
+  <div class="strip__row">
+    {{template "git_row" .}}
+  </div>
+  {{template "git_error" .}}
+  {{end}}
+</section>
+</div>
+{{template "chrome_foot" .}}
+{{end}}

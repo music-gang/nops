@@ -71,7 +71,7 @@ func TestPagesLinkVersionedAssets(t *testing.T) {
 	d := sampleDeployment()
 	d.State = store.StateCompleted
 	ts := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "")
-	for _, p := range []string{"/", "/jobs", "/history", "/deployments/d1"} {
+	for _, p := range []string{"/", "/repositories", "/jobs", "/history", "/deployments/d1"} {
 		page := ts.get(p)
 		mustContain(t, page, `href="`+css+`"`, `src="`+js+`"`)
 		mustNotContain(t, page, `"/static/app.css"`, `"/static/htmx.min.js"`)
@@ -96,7 +96,7 @@ func TestPagesLoadTheErrorPagesScript(t *testing.T) {
 	d := sampleDeployment()
 	d.State = store.StateCompleted
 	ts := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "")
-	for _, p := range []string{"/", "/jobs", "/history", "/deployments/d1"} {
+	for _, p := range []string{"/", "/repositories", "/jobs", "/history", "/deployments/d1"} {
 		mustContain(t, ts.get(p), `src="`+js+`"`)
 	}
 
@@ -128,7 +128,7 @@ func TestPagesLinkTheIconsAndTheLogo(t *testing.T) {
 	d := sampleDeployment()
 	d.State = store.StateCompleted
 	ts := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "")
-	for _, p := range []string{"/", "/jobs", "/history", "/deployments/d1"} {
+	for _, p := range []string{"/", "/repositories", "/jobs", "/history", "/deployments/d1"} {
 		page := ts.get(p)
 		mustContain(t, page, icons...)
 		mustContain(t, page, "<title>Nops</title>")

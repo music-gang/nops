@@ -37,11 +37,11 @@ repository "apps" {
 	e.repo.commit(t, "hook "+hookID, map[string]string{file(hookID): traceHook(hookID, dir)})
 	deadline := time.Now().Add(e2eWait)
 	for {
-		if _, page := e.dash.get(t, "/"); strings.Contains(page, "hook "+hookID) {
+		if _, page := e.dash.get(t, "/repositories"); strings.Contains(page, "hook "+hookID) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the overview never showed the hook's commit")
+			t.Fatalf("the repositories page never showed the hook's commit")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

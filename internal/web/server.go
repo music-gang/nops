@@ -330,6 +330,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.Handle("GET /static/", noStoreExempt(http.StripPrefix("/static/", static)))
 
 	mux.Handle("GET /{$}", s.page(anyToken(), s.index))
+	mux.Handle("GET /repositories", s.page(anyToken(), s.repositories))
 	mux.Handle("GET /jobs", s.page(anyToken(), s.jobs))
 	mux.Handle("GET /jobs/{namespace}/{job}", s.page(inNamespace(acl.Read), s.job))
 	mux.Handle("GET /history", s.page(anyToken(), s.history))
