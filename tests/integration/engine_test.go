@@ -26,8 +26,8 @@ type staticSnapshot struct {
 	changed chan struct{}
 }
 
-func (s staticSnapshot) Snapshot() gitwatch.Snapshot { return s.snap }
-func (s staticSnapshot) Changed() <-chan struct{}    { return s.changed }
+func (s staticSnapshot) Snapshots() []gitwatch.Snapshot { return []gitwatch.Snapshot{s.snap} }
+func (s staticSnapshot) Changed() <-chan struct{}       { return s.changed }
 
 type noopNotifier struct{}
 

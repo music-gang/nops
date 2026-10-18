@@ -36,7 +36,7 @@ import (
 // shutdownTimeout is how long the dashboard's HTTP server gets to finish an
 // in-flight request after a signal, before Shutdown gives up and returns.
 // The three background loops need no timeout of their own: they already
-// select on ctx.Done() (gitwatch.Watcher.Run, Engine.RunDetection,
+// select on ctx.Done() (gitwatch.Group.Run, Engine.RunDetection,
 // Engine.RunApply) and a hook wait (internal/hooks) respects the same ctx,
 // so cancellation unwinds them promptly.
 const shutdownTimeout = 10 * time.Second
@@ -98,6 +98,15 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	hooksRunner := hooks.New(nomadClient, st, log, cfg.HookPollInterval)
 
+	watchers := make([]*gitwatch.Watcher, len(cfg.Repositories))
+	for i, r := range cfg.Repositories {
+		watchers[i] = gitwatch.New(gitwatch.Options{
+			Name: r.Name, URL: r.URL, Branch: r.Branch, Path: r.Path,
+			Username: r.Username, Token: r.Token, PollInterval: cfg.GitPollInterval,
+		}, log)
+	}
+	repos := gitwatch.NewGroup(watchers...)
+
 	notifier := notify.New(notify.Options{
 		Webhook:    notify.Endpoint{URL: cfg.NotifyWebhookURL, Token: cfg.NotifyWebhookToken},
 		Discord:    notify.Endpoint{URL: cfg.NotifyDiscordURL},
@@ -105,21 +114,17 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Ntfy:       notify.Endpoint{URL: cfg.NotifyNtfyURL, Token: cfg.NotifyNtfyToken},
 		Gotify:     notify.Endpoint{URL: cfg.NotifyGotifyURL, Token: cfg.NotifyGotifyToken},
 		PublicURL:  cfg.PublicURL,
-		CommitURL:  func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
+		CommitURL:  repos.CommitURL,
 		NomadUIURL: cfg.NomadUIURL,
 		Timeout:    cfg.NotifyTimeout,
 	}, log)
 
-	watcher := gitwatch.New(gitwatch.Options{
-		URL: cfg.GitURL, Branch: cfg.GitBranch, Path: cfg.GitPath,
-		Username: cfg.GitUsername, Token: cfg.GitToken, PollInterval: cfg.GitPollInterval,
-	}, log)
-	if err := watcher.Start(ctx); err != nil {
+	if err := repos.Start(ctx); err != nil {
 		return fmt.Errorf("git watcher: %w", err)
 	}
 
 	eng := engine.New(engine.Options{
-		Store: st, Nomad: nomadClient, Snapshots: watcher, Notifier: notifier, Hooks: hooksRunner,
+		Store: st, Nomad: nomadClient, Snapshots: repos, Notifier: notifier, Hooks: hooksRunner,
 		Namespaces: cfg.NomadNamespaces, DriftInterval: cfg.DriftInterval,
 		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, SyncWindowLocation: cfg.SyncWindowLocation, Log: log,
 	})
@@ -130,7 +135,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	metricsHandler, err := metrics.Handler(metrics.Options{
-		Store: st, Engine: eng, Git: watcher, Notifier: notifier, ACL: cfg.ACL,
+		Store: st, Engine: eng, Git: repos, Notifier: notifier, ACL: cfg.ACL,
 		Version: version.String(), Log: log,
 	})
 	if err != nil {
@@ -138,8 +143,8 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: watcher, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: watcher.Trigger,
-		CommitURL:     func(sha string) string { return gitwatch.CommitURL(cfg.GitURL, sha) },
+		Auth: auth, Store: st, Engine: eng, Git: repos, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: repos.Trigger,
+		CommitURL:     repos.CommitURL,
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
 	})
 	if err != nil {
@@ -152,7 +157,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	for _, loop := range []func(context.Context){watcher.Run, eng.RunDetection, eng.RunApply} {
+	for _, loop := range []func(context.Context){repos.Run, eng.RunDetection, eng.RunApply} {
 		wg.Add(1)
 		go func(loop func(context.Context)) {
 			defer wg.Done()
@@ -193,8 +198,13 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 // startupAttrs is what the "starting" line says: which build runs, and the
 // settings that tell one instance from another. Only addresses, names and
 // paths: never a secret, and not whether one is set either (a missing
-// required secret already stops Load).
+// required secret already stops Load). Each repository's URL, branch and path
+// are on the line of its initial clone.
 func startupAttrs(cfg *config.Config) []any {
+	repos := make([]string, len(cfg.Repositories))
+	for i, r := range cfg.Repositories {
+		repos[i] = r.Name
+	}
 	return []any{
 		"version", version.String(),
 		"go", runtime.Version(),
@@ -202,9 +212,8 @@ func startupAttrs(cfg *config.Config) []any {
 		"nomad_addr", cfg.NomadAddr,
 		"nomad_ui_url", gitwatch.StripCredentials(cfg.NomadUIURL),
 		"namespaces", cfg.NomadNamespaces,
-		"git_url", gitwatch.StripCredentials(cfg.GitURL),
-		"git_branch", cfg.GitBranch,
-		"git_path", cfg.GitPath,
+		"config", cfg.ConfigFile,
+		"repositories", repos,
 		"auth_mode", cfg.AuthMode,
 		"acl", cfg.ACL,
 		"db_path", cfg.DBPath,

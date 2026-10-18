@@ -98,7 +98,11 @@ type Deployment struct {
 	ID        string
 	JobID     string
 	Namespace string
-	CommitSHA string
+	// Repository is the name of the repository the job file was read from,
+	// CommitSHA's repository. CreateDeployment records "default" when it is
+	// empty.
+	Repository string
+	CommitSHA  string
 	// CommitSubject and CommitAuthor describe CommitSHA (first line of the
 	// message, author name); empty for a deployment created before they
 	// were recorded.
@@ -406,10 +410,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
-		(id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff, diff_hash,
+		(id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff, diff_hash,
 		 policy, state, error, cas_index, retry_of, window_lifted_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-		id, d.JobID, d.Namespace, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff, d.DiffHash,
+		VALUES (?, ?, ?, COALESCE(NULLIF(?, ''), 'default'), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		id, d.JobID, d.Namespace, d.Repository, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff, d.DiffHash,
 		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, d.WindowLiftedBy, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -670,7 +674,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 	return parseTime(ts)
 }
 
-const deploymentCols = `id, job_id, namespace, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
+const deploymentCols = `id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
 	plan_diff, diff_hash, policy, state, cas_index, applied_index, applied_version, eval_id, error, decided_by, decided_at,
 	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
 
@@ -688,7 +692,7 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
-	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan, &diffHash,
+	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.Repository, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan, &diffHash,
 		&policy, &state, &cas, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
 		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err

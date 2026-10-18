@@ -78,17 +78,21 @@ func TestNewAuthenticatorPicksTheRightBackend(t *testing.T) {
 func TestStartupAttrs(t *testing.T) {
 	cfg := &config.Config{
 		ListenAddr: ":8080", NomadAddr: "https://nomad.example.com:4646", NomadNamespaces: []string{"default", "prod"},
-		GitURL: "https://ci:git-secret@git.example.com/ops/jobs.git", GitBranch: "main", GitPath: "jobs",
+		ConfigFile: "/etc/nops.hcl",
+		Repositories: []config.Repository{
+			{Name: "default", URL: "https://ci:git-secret@git.example.com/ops/jobs.git", Branch: "main", Path: "jobs", Token: "git-secret"},
+			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main"},
+		},
 		AuthMode: "oidc", DBPath: "/data/nops.db", BasePath: "/nops",
-		NomadToken: "nomad-secret", GitToken: "git-secret", OIDCClientSecret: "oidc-secret", WebhookSecret: "hook-secret",
+		NomadToken: "nomad-secret", OIDCClientSecret: "oidc-secret", WebhookSecret: "hook-secret",
 	}
 	var buf bytes.Buffer
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("starting", startupAttrs(cfg)...)
 	line := buf.String()
 	for _, want := range []string{
 		"version=", "go=go", "listen_addr=:8080", "nomad_addr=https://nomad.example.com:4646",
-		"namespaces=\"[default prod]\"", "git_url=https://git.example.com/ops/jobs.git",
-		"git_branch=main", "git_path=jobs", "auth_mode=oidc", "acl=false", "db_path=/data/nops.db", "base_path=/nops",
+		"namespaces=\"[default prod]\"", "config=/etc/nops.hcl", "repositories=\"[default apps]\"",
+		"auth_mode=oidc", "acl=false", "db_path=/data/nops.db", "base_path=/nops",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("starting line %q does not contain %q", line, want)

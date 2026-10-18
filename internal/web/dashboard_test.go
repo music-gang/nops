@@ -258,6 +258,43 @@ func TestOverviewGitFailure(t *testing.T) {
 	mustContain(t, page, "The last poll of the repository failed", "2m ago", "working from the last commit it read", "authentication required", "3h ago")
 }
 
+func TestOverviewSeveralRepositories(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef", Subject: "fix: the thing"}
+	ts.git.status = gitwatch.Status{CheckedAt: testNow.Add(-time.Minute)}
+	ts.git.more = []gitwatch.Repo{{Name: "apps", Snapshot: gitwatch.Snapshot{Repository: "apps", Commit: "fedcba9876543210", Subject: "feat: web"},
+		Status: gitwatch.Status{CheckedAt: testNow.Add(-3 * time.Hour), Error: "authentication required", ErrorAt: testNow.Add(-2 * time.Minute)}}}
+
+	page := ts.get("/")
+	mustContain(t, page,
+		`href="https://git.test/commit/0123456789abcdef"`, "fix: the thing",
+		`href="https://git.test/apps/commit/fedcba9876543210"`, "feat: web",
+		"The last poll of the repository apps failed", "authentication required")
+	if n := strings.Count(page, "Fetch all"); n != 1 || strings.Contains(page, "Fetch now") {
+		t.Errorf("%d Fetch all buttons, and Fetch now: %v; want one Fetch all for every repository", n, strings.Contains(page, "Fetch now"))
+	}
+	if n := strings.Count(page, "flash--error"); n != 1 {
+		t.Errorf("%d error flashes, want 1: only apps failed", n)
+	}
+}
+
+func TestOverviewOneRepositoryHasNoName(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
+	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef"}
+	mustNotContain(t, ts.get("/"), `<span class="muted">default</span>`)
+}
+
+func TestDeploymentPageLinksTheCommitOfItsRepository(t *testing.T) {
+	d := sampleDeployment()
+	d.Repository = "apps"
+	ts := newTestServer(t, &fakeStore{deployment: d, hooks: sampleHooks()}, &fakeEngine{}, "")
+	page := ts.get("/deployments/d1")
+	if n := strings.Count(page, `href="https://git.test/apps/commit/abc123def456"`); n != 2 {
+		t.Errorf("%d links to the commit in apps, want 2 (header and Details)", n)
+	}
+	mustContain(t, page, "<dt>Repository</dt><dd>apps</dd>")
+}
+
 func TestOverviewCycleProblems(t *testing.T) {
 	t.Run("aborted", func(t *testing.T) {
 		ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Error: "disk on fire"}}, "")
@@ -486,7 +523,7 @@ func TestJobPage(t *testing.T) {
 	older.CommitSubject = ""
 	st := &fakeStore{byJob: []*store.Deployment{pending, older}}
 	en := &fakeEngine{observations: []engine.Observation{{
-		JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, Drift: true, FilePath: "apps/web.nomad.hcl",
+		JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, Drift: true, Repository: "infra", FilePath: "apps/web.nomad.hcl",
 		PlanDiff: diffJSON(t, sampleDiff()), ObservedAt: testNow.Add(-2 * time.Minute),
 		PreHooks: []engine.HookRef{{JobID: "web-migrate", Timeout: 10 * time.Minute}},
 		Issues:   []meta.Issue{{Severity: meta.SeverityWarn, Key: "nops_post_hook_timeout", Message: "unusual value"}},
@@ -495,7 +532,7 @@ func TestJobPage(t *testing.T) {
 
 	page := ts.get("/jobs/default/web")
 	mustContain(t, page,
-		"default/web", "Awaiting approval", "apps/web.nomad.hcl", "2m ago",
+		"default/web", "Awaiting approval", "infra: apps/web.nomad.hcl", "2m ago",
 		// the hooks it declares
 		"web-migrate", "10m", ">none<",
 		// the drift, summarized and in full

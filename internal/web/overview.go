@@ -8,15 +8,17 @@ import (
 	"github.com/music-gang/nops/internal/store"
 )
 
-// gitView is the repository nops reads, as the Overview's strip shows it.
+// gitView is one repository nops reads, as the Overview's strip shows it.
 type gitView struct {
+	Name string
+	// ShowName is true with more than one repository: alone, it is just git.
+	ShowName               bool
 	Known                  bool // there is a snapshot to describe
 	SHA, Short, URL        string
 	Subject, Author        string
 	CommittedAt, CheckedAt timeView
 	Error                  string // the last poll's failure, "" if it succeeded
 	ErrorAt                timeView
-	CanFetch               bool // POST /fetch is served
 }
 
 // cycleView is how the last detection cycle went.
@@ -32,7 +34,8 @@ type cycleView struct {
 
 type overviewData struct {
 	baseData
-	Git               gitView
+	Git               []gitView
+	CanFetch          bool // POST /fetch is served
 	Cycle             cycleView
 	CanPause          bool // POST /pause is allowed to this token
 	Attention         []attentionItem
@@ -40,17 +43,22 @@ type overviewData struct {
 	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
 }
 
-func (s *server) gitView(r *http.Request) gitView {
-	snap, st := s.git.Snapshot(), s.git.Status()
-	v := gitView{
-		Known: snap.Commit != "", SHA: snap.Commit, Short: shortCommit(snap.Commit),
-		Subject: snap.Subject, Author: snap.Author, CommittedAt: s.when(snap.CommittedAt),
-		CheckedAt: s.when(st.CheckedAt), Error: st.Error, ErrorAt: s.when(st.ErrorAt), CanFetch: s.trigger != nil && subjectOf(r.Context()).acl.Global(acl.Fetch),
+func (s *server) gitViews() []gitView {
+	repos := s.git.Repositories()
+	views := make([]gitView, len(repos))
+	for i, repo := range repos {
+		snap, st := repo.Snapshot, repo.Status
+		views[i] = gitView{
+			Name: repo.Name, ShowName: len(repos) > 1,
+			Known: snap.Commit != "", SHA: snap.Commit, Short: shortCommit(snap.Commit),
+			Subject: snap.Subject, Author: snap.Author, CommittedAt: s.when(snap.CommittedAt),
+			CheckedAt: s.when(st.CheckedAt), Error: st.Error, ErrorAt: s.when(st.ErrorAt),
+		}
+		if s.commitURL != nil {
+			views[i].URL = s.commitURL(repo.Name, snap.Commit)
+		}
 	}
-	if s.commitURL != nil {
-		v.URL = s.commitURL(snap.Commit)
-	}
-	return v
+	return views
 }
 
 func (s *server) cycleView() cycleView {
@@ -82,7 +90,8 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	data := overviewData{
 		baseData:  s.base(r, "overview"),
-		Git:       s.gitView(r),
+		Git:       s.gitViews(),
+		CanFetch:  s.trigger != nil && subjectOf(r.Context()).acl.Global(acl.Fetch),
 		Cycle:     s.cycleView(),
 		CanPause:  subjectOf(r.Context()).acl.Global(acl.Pause),
 		Attention: s.attention(r, s.observations(r), active, latest),

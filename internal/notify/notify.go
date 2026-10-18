@@ -33,8 +33,9 @@ type Options struct {
 	Ntfy      Endpoint // topic URL; Token is sent as Authorization: Bearer
 	Gotify    Endpoint // server URL (messages go to <URL>/message); Token is the app token
 	PublicURL string   // external URL of the dashboard; empty means no links
-	// CommitURL returns the web address of a commit, or "" if there is none.
-	CommitURL func(sha string) string
+	// CommitURL returns the web address of a commit of the named repository,
+	// or "" if there is none.
+	CommitURL func(repo, sha string) string
 	// NomadUIURL is the address of the Nomad UI as a browser reaches it; empty
 	// means no link to the job in Nomad.
 	NomadUIURL string
@@ -67,6 +68,8 @@ type Event struct {
 	Policy     string `json:"policy,omitempty"`
 	ApprovedBy string `json:"approved_by,omitempty"`
 	Error      string `json:"error"`
+	// Repository is the name of the repository the commit is in.
+	Repository string `json:"repository,omitempty"`
 	Commit     string `json:"commit"`
 	// CommitSubject and CommitAuthor are empty for a deployment created before
 	// they were recorded; CommitURL when the repository is not an http(s) URL.
@@ -124,7 +127,7 @@ type Notifier struct {
 	senders   []sender
 	publicURL string
 	nomadUI   string
-	commitURL func(sha string) string
+	commitURL func(repo, sha string) string
 	client    *http.Client
 	log       *slog.Logger
 }
@@ -172,6 +175,7 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment, phase string
 		Policy:        string(d.Policy),
 		ApprovedBy:    d.DecidedBy,
 		Error:         d.Error,
+		Repository:    d.Repository,
 		Commit:        d.CommitSHA,
 		CommitSubject: d.CommitSubject,
 		CommitAuthor:  d.CommitAuthor,
@@ -182,7 +186,7 @@ func (n *Notifier) Notify(ctx context.Context, d *store.Deployment, phase string
 		logo:          logoURL(n.publicURL),
 	}
 	if n.commitURL != nil {
-		e.CommitURL = n.commitURL(d.CommitSHA)
+		e.CommitURL = n.commitURL(d.Repository, d.CommitSHA)
 	}
 	if d.State == store.StatePendingApproval {
 		e.Changes = n.changes(ctx, d)

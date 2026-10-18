@@ -9,8 +9,8 @@ are in [philosophy](philosophy.md).
 | Package | Role |
 |---|---|
 | `cmd/nops` | Runs the server (`nops serve`): wires everything together and runs the loops and the dashboard. Any other command goes to `internal/cli`. |
-| `internal/config` | Flags and environment variables. |
-| `internal/gitwatch` | Keeps the repository in memory and polls it. |
+| `internal/config` | Flags, environment variables, and the configuration file. |
+| `internal/gitwatch` | Keeps each repository in memory and polls it. |
 | `internal/nomadx` | Nomad client: parse, plan, CAS register, dispatch. |
 | `internal/meta` | Reads and validates the `nops_*` keys. |
 | `internal/acl` | Parses ACL policies and binding rules and decides what a token may do. |
@@ -36,16 +36,18 @@ Nops moves deployments forward on its own:
 3. **Recovery** is the first apply cycle after a start: it resumes whatever a
    restart interrupted ([deployment lifecycle](deployment-lifecycle.md#recovery-after-a-crash)).
 
-## Reading the repository
+## Reading the repositories
 
-`gitwatch` keeps a shallow, in-memory clone of `-git-branch` and fetches it
-again when the head moves. Nops reads every `*.nomad.hcl` or `*.nomad` file
-under `-git-path`, with its optional `<name>.vars.hcl`. Nomad parses each
-file. Its meta decides what it is: `nops_role = "hook"` makes a hook,
-`nops_managed = "true"` a managed job; Nops ignores anything else.
+`gitwatch` keeps a shallow, in-memory clone of each repository's branch and
+fetches it again when its head moves. Nops reads every `*.nomad.hcl` or
+`*.nomad` file under the repository's path, with its optional
+`<name>.vars.hcl`. Nomad parses each file. Its meta decides what it is:
+`nops_role = "hook"` makes a hook, `nops_managed = "true"` a managed job;
+Nops ignores anything else. Detection reads the files of every repository as
+one set, so a hook serves the jobs of its namespace in any repository.
 
-If a fetch fails, Nops keeps working on the last good snapshot and shows the
-error on the Overview.
+If a fetch fails, Nops keeps working on that repository's last good snapshot
+and shows the error on the Overview.
 
 ## Detection
 
@@ -71,6 +73,8 @@ shows that spec, only the redacted diff.
   spec or hooks.
 - A task group with a `scaling` block keeps its live count, so Nops doesn't
   fight the autoscaler.
+- Two files that declare the same job, in one repository or in two, are
+  both ignored with an ERROR.
 - A missing or invalid hook fails the deployment at detection.
 - While any file doesn't parse, Nops doesn't treat missing jobs as removed:
   an unparsed file looks the same as a deleted one.

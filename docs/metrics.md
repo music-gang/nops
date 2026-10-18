@@ -43,7 +43,7 @@ at the bare path.
 | Metric | Labels | Value |
 |---|---|---|
 | `nops_build_info` | `version` | Always 1. |
-| `nops_loop_last_success_timestamp_seconds` | `loop` | When the `git`, `detection` or `apply` loop last succeeded. |
+| `nops_loop_last_success_timestamp_seconds` | `loop`, `repo` | When the `git`, `detection` or `apply` loop last succeeded. A `git` series has the repository's name in `repo`. |
 | `nops_deployments` | `state` | Active deployments per state. |
 | `nops_waiting_since_timestamp_seconds` | `namespace`, `job`, `waiting` | Since when a deployment waits for an `approval` or a `canary_promotion`. |
 | `nops_unparsed_files` | | Files the last detection cycle couldn't parse. |

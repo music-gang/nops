@@ -395,7 +395,7 @@ func TestAPIJob(t *testing.T) {
 	diff := diffJSON(t, sampleDiff())
 	deps := []*store.Deployment{dep("d2", "web", store.StateFailed, time.Hour), dep("d1", "web", store.StateCompleted, 2*time.Hour)}
 	en := &fakeEngine{observations: []engine.Observation{{
-		JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "web.nomad.hcl",
+		JobID: "web", Namespace: "default", Policy: meta.PolicyAuto, Repository: "apps", FilePath: "web.nomad.hcl",
 		Drift: true, PlanDiff: diff, SpecHash: "h", ObservedAt: testNow,
 		Issues: []meta.Issue{{Severity: meta.SeverityWarn, Key: "nops_timeout", Message: "too short"}},
 	}}}
@@ -407,16 +407,16 @@ func TestAPIJob(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 	var got struct {
-		Job, File   string
-		Diff        struct{ Type string }
-		Issues      []struct{ Key, Message string }
-		Deployments []struct{ ID string }
+		Job, Repository, File string
+		Diff                  struct{ Type string }
+		Issues                []struct{ Key, Message string }
+		Deployments           []struct{ ID, Repository string }
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Job != "web" || got.File != "web.nomad.hcl" || got.Diff.Type != "Edited" ||
-		len(got.Issues) != 1 || got.Issues[0].Key != "nops_timeout" || len(got.Deployments) != 2 || got.Deployments[0].ID != "d2" {
+	if got.Job != "web" || got.Repository != "apps" || got.File != "web.nomad.hcl" || got.Diff.Type != "Edited" ||
+		len(got.Issues) != 1 || got.Issues[0].Key != "nops_timeout" || len(got.Deployments) != 2 || got.Deployments[0].ID != "d2" || got.Deployments[0].Repository != "default" {
 		t.Errorf("job = %+v, want the file, the drift diff, the issue and both deployments", got)
 	}
 	if strings.Contains(rec.Body.String(), specMarker) {

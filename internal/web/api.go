@@ -185,6 +185,7 @@ type apiDeployment struct {
 	State         string     `json:"state"`
 	Policy        string     `json:"policy"`
 	SpecHash      string     `json:"spec_hash"`
+	Repository    string     `json:"repository"`
 	CommitSHA     string     `json:"commit_sha"`
 	CommitSubject string     `json:"commit_subject,omitempty"`
 	CommitAuthor  string     `json:"commit_author,omitempty"`
@@ -201,7 +202,7 @@ type apiDeployment struct {
 func deploymentOf(d *store.Deployment) apiDeployment {
 	return apiDeployment{
 		ID: d.ID, Namespace: d.Namespace, Job: d.JobID, State: string(d.State), Policy: string(d.Policy),
-		SpecHash: d.SpecHash, CommitSHA: d.CommitSHA, CommitSubject: d.CommitSubject, CommitAuthor: d.CommitAuthor,
+		SpecHash: d.SpecHash, Repository: d.Repository, CommitSHA: d.CommitSHA, CommitSubject: d.CommitSubject, CommitAuthor: d.CommitAuthor,
 		Error: d.Error, DecidedBy: d.DecidedBy, DecidedAt: timePtr(d.DecidedAt), RetryOf: d.RetryOf,
 		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
@@ -291,7 +292,10 @@ func (s *server) apiListJobs(w http.ResponseWriter, r *http.Request) {
 
 type apiJobDetail struct {
 	apiJob
-	File string `json:"file,omitempty"`
+	// Repository and File are where the job file was read: absent for a job
+	// that is not in git.
+	Repository string `json:"repository,omitempty"`
+	File       string `json:"file,omitempty"`
 	// Diff is the redacted plan diff of the drift, as Nomad's JSON; absent without drift.
 	Diff        json.RawMessage `json:"diff,omitempty"`
 	Issues      []apiIssue      `json:"issues,omitempty"`
@@ -313,7 +317,7 @@ func (s *server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 	var detail *apiJobDetail
 	for _, o := range s.engine.Observations() {
 		if o.Namespace == ns && o.JobID == id {
-			detail = &apiJobDetail{apiJob: jobOf(o, latest), File: o.FilePath, Issues: issuesOf(o.Issues)}
+			detail = &apiJobDetail{apiJob: jobOf(o, latest), Repository: o.Repository, File: o.FilePath, Issues: issuesOf(o.Issues)}
 			if o.PlanDiff != "" {
 				if !json.Valid([]byte(o.PlanDiff)) {
 					s.apiServerError(w, r, "read the drift diff", errors.New("the drift diff is not JSON"))

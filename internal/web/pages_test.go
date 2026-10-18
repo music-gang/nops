@@ -227,13 +227,17 @@ func (f *fakeEngine) Observations() []engine.Observation { return f.observations
 func (f *fakeEngine) Orphans() []engine.Orphan           { return f.orphans }
 func (f *fakeEngine) Status() engine.Status              { return f.status }
 
+// fakeGit is the repository named default, with snap and status, then the
+// repositories of more.
 type fakeGit struct {
 	snap   gitwatch.Snapshot
 	status gitwatch.Status
+	more   []gitwatch.Repo
 }
 
-func (f *fakeGit) Snapshot() gitwatch.Snapshot { return f.snap }
-func (f *fakeGit) Status() gitwatch.Status     { return f.status }
+func (f *fakeGit) Repositories() []gitwatch.Repo {
+	return append([]gitwatch.Repo{{Name: "default", Snapshot: f.snap, Status: f.status}}, f.more...)
+}
 
 // -- test setup --------------------------------------------------------------
 
@@ -340,11 +344,16 @@ func newTestServerLogin(t *testing.T, st Store, en *fakeEngine, secret string, n
 	}
 	opts := Options{
 		Auth: login, Store: st, Engine: en, Git: ts.git, Access: tokens, Nomad: nomad, NomadUIURL: nomadUI, WebhookSecret: secret,
-		Trigger:   func() { ts.trig++ },
-		CommitURL: func(sha string) string { return "https://git.test/commit/" + sha },
-		Now:       func() time.Time { return *ts.clock },
-		Version:   "v0.0.0-test",
-		Log:       log,
+		Trigger: func() { ts.trig++ },
+		CommitURL: func(repo, sha string) string {
+			if repo == "default" {
+				return "https://git.test/commit/" + sha
+			}
+			return "https://git.test/" + repo + "/commit/" + sha
+		},
+		Now:     func() time.Time { return *ts.clock },
+		Version: "v0.0.0-test",
+		Log:     log,
 	}
 	for _, mod := range mods {
 		mod(&opts)
@@ -396,7 +405,7 @@ const specMarker = "TOP-SECRET-JOB-SPEC-MARKER"
 
 func sampleDeployment() *store.Deployment {
 	return &store.Deployment{
-		ID: "d1", JobID: "web", Namespace: "default",
+		ID: "d1", JobID: "web", Namespace: "default", Repository: "default",
 		CommitSHA: "abc123def456", CommitSubject: "feat(web): scale up", CommitAuthor: "Iacopo",
 		SpecHash: "spec-hash-1", Policy: store.PolicyApproval, CASIndex: 42,
 		State: store.StatePendingApproval, PlanDiff: "",

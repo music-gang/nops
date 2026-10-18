@@ -138,8 +138,8 @@ The reasoning behind each is in [`docs/philosophy.md`](docs/philosophy.md);
 
 ```
 cmd/nops/              entrypoint: wiring of config, store, engine, web
-internal/config/       flags + env vars (NOPS_*), validation
-internal/gitwatch/     in-memory clone, polling, webhook trigger
+internal/config/       flags + env vars (NOPS_*), the -config file, validation
+internal/gitwatch/     in-memory clone of each repository, polling, webhook trigger
 internal/nomadx/       Nomad client wrapper (CAS-only register, error sentinels)
 internal/meta/         parsing/validation of the nops_* meta keys
 internal/acl/          ACL policies (HCL rules), binding rules (go-bexpr selectors), the capability check

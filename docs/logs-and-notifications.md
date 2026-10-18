@@ -3,7 +3,7 @@
 ## Logs
 
 Nops logs JSON lines through `log/slog`, with the keys `deployment_id`,
-`job`, `namespace`, `state`, `phase`, `hook_job` and `commit`.
+`job`, `namespace`, `state`, `phase`, `hook_job`, `repo` and `commit`.
 
 | Event | Level |
 |---|---|
@@ -45,6 +45,7 @@ Turn on one or more adapters in [configuration](configuration.md#notifications):
   "policy": "approval",
   "approved_by": "alice",
   "error": "pre-hook web-migrate failed: exit code 1",
+  "repository": "default",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "commit_subject": "Bump web to 1.4.0",
   "commit_author": "Alice",

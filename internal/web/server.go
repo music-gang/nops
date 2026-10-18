@@ -101,11 +101,11 @@ type AccessStore interface {
 	DeleteBindingRule(ctx context.Context, id string, by store.Audit) error
 }
 
-// Git is what the dashboard shows about the repository nops reads: the
-// commit it is on and how the last poll went. *gitwatch.Watcher implements it.
+// Git is what the dashboard shows about the repositories nops reads: the
+// commit each one is on and how its last poll went. *gitwatch.Group implements
+// it.
 type Git interface {
-	Snapshot() gitwatch.Snapshot
-	Status() gitwatch.Status
+	Repositories() []gitwatch.Repo
 }
 
 var (
@@ -140,9 +140,9 @@ type Options struct {
 	// Optional: without it the panel is not shown.
 	Nomad Nomad
 
-	// CommitURL returns the web address of a commit, or "" if there is none
-	// (the SHA is then shown without a link). Optional.
-	CommitURL func(sha string) string
+	// CommitURL returns the web address of a commit of the named repository,
+	// or "" if there is none (the SHA is then shown without a link). Optional.
+	CommitURL func(repo, sha string) string
 	// Now is the clock the relative times ("3m ago") are counted from.
 	// Optional: time.Now.
 	Now func() time.Time
@@ -195,7 +195,7 @@ type server struct {
 	nomadUI   string // "": no links into the Nomad UI
 	panels    panelCache
 	trigger   func()
-	commitURL func(sha string) string
+	commitURL func(repo, sha string) string
 	now       func() time.Time
 	secret    []byte
 	version   string

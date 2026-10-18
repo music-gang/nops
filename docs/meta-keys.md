@@ -57,7 +57,7 @@ job "api-backup" {
   fix it. The dashboard shows the job as *Invalid meta*.
 - A key that doesn't apply to the job, like `nops_timeout` on a job that isn't
   a hook, logs a WARN and is ignored.
-- A deployment whose hook is missing from the repository fails.
+- A deployment whose hook is missing from git fails.
 
 ## Syntax and parsing
 
