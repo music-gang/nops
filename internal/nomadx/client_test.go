@@ -103,7 +103,10 @@ func TestNamespaceIsPerCall(t *testing.T) {
 		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "apps", "hook", nil, ""); return err },
 		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "apps", "hook", "t"); return err },
 		"plan":        func(c *Client) error { _, err := c.Plan(ctx, testJobIn("apps", "web")); return err },
-		"register":    func(c *Client) error { _, err := c.RegisterCAS(ctx, testJobIn("apps", "web"), 1, false); return err },
+		"register": func(c *Client) error {
+			_, err := c.RegisterCAS(ctx, testJobIn("apps", "web"), 1, false, nil)
+			return err
+		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -135,7 +138,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 		"find":        func(c *Client) error { _, err := c.FindDispatched(ctx, "", "hook", "t"); return err },
 		"plan nil":    func(c *Client) error { _, err := c.Plan(ctx, unset); return err },
 		"plan empty":  func(c *Client) error { _, err := c.Plan(ctx, blank); return err },
-		"register":    func(c *Client) error { _, err := c.RegisterCAS(ctx, unset, 1, false); return err },
+		"register":    func(c *Client) error { _, err := c.RegisterCAS(ctx, unset, 1, false, nil); return err },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -154,7 +157,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 func TestRegisterCASAlwaysEnforcesIndex(t *testing.T) {
 	for _, idx := range []uint64{0, 42} {
 		s, c := newStub(t, 200, `{"EvalID":"e1","JobModifyIndex":7}`)
-		res, err := c.RegisterCAS(context.Background(), testJob("web"), idx, true)
+		res, err := c.RegisterCAS(context.Background(), testJob("web"), idx, true, nil)
 		if err != nil {
 			t.Fatalf("index %d: %v", idx, err)
 		}
@@ -178,6 +181,38 @@ func TestRegisterCASAlwaysEnforcesIndex(t *testing.T) {
 	}
 }
 
+// A register carries the source it is given, and returns the warnings of Nomad.
+func TestRegisterCASSendsTheSubmissionAndReturnsWarnings(t *testing.T) {
+	s, c := newStub(t, 200, `{"EvalID":"e1","JobModifyIndex":7,"Warnings":"submission dropped"}`)
+	sub := &api.JobSubmission{Source: "job \"web\" {}", Format: "hcl2", Variables: "count = 2"}
+	res, err := c.RegisterCAS(context.Background(), testJob("web"), 3, false, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warnings != "submission dropped" {
+		t.Errorf("warnings = %q", res.Warnings)
+	}
+	var req struct{ Submission *api.JobSubmission }
+	if err := json.Unmarshal(s.body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Submission == nil || req.Submission.Source != sub.Source || req.Submission.Format != "hcl2" || req.Submission.Variables != "count = 2" {
+		t.Errorf("submission = %+v (body %s)", req.Submission, s.body)
+	}
+
+	s, c = newStub(t, 200, `{"EvalID":"e1","JobModifyIndex":7}`)
+	if _, err := c.RegisterCAS(context.Background(), testJob("web"), 3, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	req.Submission = nil
+	if err := json.Unmarshal(s.body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Submission != nil {
+		t.Errorf("a register without a source sent %+v", req.Submission)
+	}
+}
+
 func TestRegisterCASConflict(t *testing.T) {
 	// The three messages Nomad returns, all as HTTP 500 (the integration test
 	// TestPlanAndRegisterCAS checks a real Nomad still says so).
@@ -187,7 +222,7 @@ func TestRegisterCASConflict(t *testing.T) {
 		"Enforcing job modify index 5: job does not exist",
 	} {
 		_, c := newStub(t, 500, msg)
-		_, err := c.RegisterCAS(context.Background(), testJob("web"), 1, false)
+		_, err := c.RegisterCAS(context.Background(), testJob("web"), 1, false, nil)
 		if !errors.Is(err, ErrCASConflict) {
 			t.Errorf("%q: err = %v, want ErrCASConflict", msg, err)
 		}
@@ -198,7 +233,7 @@ func TestRegisterCASConflict(t *testing.T) {
 
 	// Any other failure is not a conflict.
 	_, c := newStub(t, 500, "rpc error: no leader")
-	_, err := c.RegisterCAS(context.Background(), testJob("web"), 1, false)
+	_, err := c.RegisterCAS(context.Background(), testJob("web"), 1, false, nil)
 	if err == nil || errors.Is(err, ErrCASConflict) {
 		t.Errorf("non-CAS failure: err = %v", err)
 	}

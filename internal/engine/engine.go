@@ -32,7 +32,7 @@ type Nomad interface {
 	ParseHCL(ctx context.Context, ns, hcl, vars string) (*api.Job, error)
 	Job(ctx context.Context, ns, id string) (*api.Job, error)
 	Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, error)
-	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*nomadx.RegisterResult, error)
+	RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool, sub *api.JobSubmission) (*nomadx.RegisterResult, error)
 	// ListJobs and StopJob are used to deregister hook revisions nothing needs
 	// any more (see docs/archive/engine-detection.md#hook-revisions).
 	ListJobs(ctx context.Context, ns string) ([]nomadx.JobStub, error)

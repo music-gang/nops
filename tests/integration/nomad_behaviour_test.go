@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,7 +63,7 @@ func TestScaleChangesTheLiveJobsIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	before, err := c.Job(ctx, "default", id)
@@ -169,7 +170,7 @@ job %q {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, parent, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, parent, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	run, err := c.Dispatch(ctx, "default", id, nil, "")
@@ -217,7 +218,7 @@ func TestLongJobIDIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatalf("register with an ID of %d characters: %v", len(id), err)
 	}
 	live, err := c.Job(ctx, "default", id)
@@ -281,7 +282,7 @@ func TestCanaryWaitsForManualPromotion(t *testing.T) {
 		if err == nil {
 			index = *live.JobModifyIndex
 		}
-		if _, err := c.RegisterCAS(ctx, job, index, false); err != nil {
+		if _, err := c.RegisterCAS(ctx, job, index, false, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -363,7 +364,7 @@ func TestPromoteDeploymentAndTheAllocationFieldsThePanelReads(t *testing.T) {
 		if live, _, err := raw.Jobs().Info(id, nil); err == nil {
 			index = *live.JobModifyIndex
 		}
-		if _, err := c.RegisterCAS(ctx, job, index, false); err != nil {
+		if _, err := c.RegisterCAS(ctx, job, index, false, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -478,5 +479,98 @@ func TestNomadUIServesTheLinkedRoutes(t *testing.T) {
 		if !strings.Contains(bundle, want) {
 			t.Errorf("the UI's bundle does not contain %s (%s): the links of the dashboard may be wrong for this Nomad", want, what)
 		}
+	}
+}
+
+// sourceHCL is a batch job that differs between tags in its meta only.
+func sourceHCL(id, tag string) string {
+	return `
+job "` + id + `" {
+  type = "batch"
+  meta {
+    tag = "` + tag + `"
+  }
+  group "g" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "exit 0"]
+      }
+    }
+  }
+}`
+}
+
+// submissionOf is the source Nomad keeps with a version of a job, nil if it
+// keeps none (it answers 404).
+func submissionOf(t *testing.T, raw *api.Client, id string, version uint64) *api.JobSubmission {
+	t.Helper()
+	sub, _, err := raw.Jobs().Submission(id, int(version), &api.QueryOptions{Namespace: "default"})
+	var ue api.UnexpectedResponseError
+	if errors.As(err, &ue) && ue.StatusCode() == http.StatusNotFound {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("submission of %s v%d: %v", id, version, err)
+	}
+	return sub
+}
+
+// TestRegisterWithoutSourceAtTheNextVersion pins what makes nops register a job
+// at the live version plus one: Nomad takes a register without a source at a
+// version that isn't above the live one for a revert, and attaches the source
+// of that version, so a job first submitted with HCL shows its first file for
+// every version nops registers (`nomad job inspect -hcl`).
+func TestRegisterWithoutSourceAtTheNextVersion(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	id := uniqueID(t, raw, "source")
+	register := func(tag string, version *uint64, sub *api.JobSubmission) *api.Job {
+		t.Helper()
+		job, err := c.ParseHCL(ctx, "default", sourceHCL(id, tag), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		live, err := c.Job(ctx, "default", id)
+		var index uint64
+		if err == nil {
+			index = *live.JobModifyIndex
+		}
+		if version != nil {
+			job.Version = version
+		}
+		if _, err := c.RegisterCAS(ctx, job, index, false, sub); err != nil {
+			t.Fatalf("register %s: %v", tag, err)
+		}
+		got, err := c.Job(ctx, "default", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	first := sourceHCL(id, "one")
+	v0 := register("one", nil, &api.JobSubmission{Source: first, Format: "hcl2"})
+	if sub := submissionOf(t, raw, id, *v0.Version); sub == nil || sub.Source != first {
+		t.Fatalf("setup: the source of v%d is %+v, want the file it was submitted with", *v0.Version, sub)
+	}
+
+	// At version 0, as a parsed job is: the revert branch.
+	reverted := register("two", nil, nil)
+	if sub := submissionOf(t, raw, id, *reverted.Version); sub == nil || sub.Source != first {
+		t.Errorf("v%d registered at version 0 has source %+v, want the first file (Nomad's revert branch)", *reverted.Version, sub)
+	}
+
+	// At the live version plus one: no source of another version.
+	next := *reverted.Version + 1
+	got := register("three", &next, nil)
+	if *got.Version != next {
+		t.Fatalf("version = %d, want %d", *got.Version, next)
+	}
+	if sub := submissionOf(t, raw, id, *got.Version); sub != nil {
+		t.Errorf("v%d registered at the live version plus one has source %+v, want none", *got.Version, sub)
 	}
 }

@@ -26,7 +26,12 @@ type parsedFile struct {
 	commit commitRef
 	job    *api.Job
 	cfg    meta.Config
+	src    jobSource
 }
+
+// jobSource is what Nomad parsed a job from: the file and the var-file, with
+// nops_commit. A deployment keeps it to register it with the spec.
+type jobSource struct{ file, vars string }
 
 // Detect runs one detection cycle: parse every file of the current gitwatch
 // snapshots, those of every repository as one set, create, supersede or
@@ -259,7 +264,7 @@ func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[s
 			"job", id, "declared_namespace", ns, "managed_namespaces", e.namespaces)
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
-	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta)}, fileParsed, RefusedFile{}
+	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta), src: jobSource{file: f.Content, vars: vars}}, fileParsed, RefusedFile{}
 }
 
 // commitVariable is the HCL variable every job file may declare to get the
@@ -430,7 +435,7 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, diffHash, redacted, planJob, hold, liftedBy)
+	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, diffHash, redacted, planJob, mf.src, hold, liftedBy)
 	if err != nil {
 		return obs, true, err
 	}
@@ -498,7 +503,7 @@ func liftDropReason(l store.WindowLift, hash string, pause *Hold, window *Window
 // is a scale, not an outside edit: the deployment stays, at the new index, and
 // a failed or rejected one keeps blocking (invariant 2).
 func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
-	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, diffHash string, redacted []byte, planJob *api.Job, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
+	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, diffHash string, redacted []byte, planJob *api.Job, src jobSource, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
 
 	jobID := key.id
 	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
@@ -589,7 +594,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	}
 	d := &store.Deployment{
 		JobID: jobID, Namespace: key.namespace, Repository: commit.repo, CommitSHA: commit.sha, CommitSubject: commit.subject, CommitAuthor: commit.author,
-		SpecHash: hash, JobSpec: string(specJSON), PlanDiff: string(redacted), DiffHash: diffHash, Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
+		SpecHash: hash, JobSpec: string(specJSON), JobSource: src.file, JobVars: src.vars, PlanDiff: string(redacted), DiffHash: diffHash, Policy: storePolicy(cfg.Policy), CASIndex: liveIndex,
 		Hooks: frozen, WindowLiftedBy: liftedBy,
 	}
 	if retrying {

@@ -159,6 +159,9 @@ type RegisterResult struct {
 	// TestRegisterIdenticalSpecKeepsLiveIndex).
 	// Re-read the job with Job() when the live index matters.
 	JobModifyIndex uint64
+	// Warnings is what Nomad says about the job it accepted, such as a
+	// submission it dropped for its size. Empty when it has none.
+	Warnings string
 }
 
 // RegisterCAS registers job only if the live job's modify index equals
@@ -166,7 +169,12 @@ type RegisterResult struct {
 // variant without the check. preserveCounts keeps group counts owned by an
 // autoscaler. A failed check returns an error wrapping ErrCASConflict. The job
 // is registered in the namespace it declares.
-func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool) (*RegisterResult, error) {
+//
+// sub is the source Nomad keeps with the version, or nil for none. Without one,
+// a job whose Version is not above the live one gets the source of that
+// version, as a revert does: the caller sets Version to the live job's plus one
+// (TestRegisterWithoutSourceAtTheNextVersion).
+func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint64, preserveCounts bool, sub *api.JobSubmission) (*RegisterResult, error) {
 	w, err := c.write(ctx, jobNamespace(job))
 	if err != nil {
 		return nil, fmt.Errorf("register job %s: %w", deref(job.ID), err)
@@ -175,6 +183,7 @@ func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint
 		EnforceIndex:   true,
 		ModifyIndex:    modifyIndex,
 		PreserveCounts: preserveCounts,
+		Submission:     sub,
 	}, w)
 	if err != nil {
 		if isCASConflict(err) {
@@ -182,7 +191,7 @@ func (c *Client) RegisterCAS(ctx context.Context, job *api.Job, modifyIndex uint
 		}
 		return nil, fmt.Errorf("register job %s: %w", deref(job.ID), err)
 	}
-	return &RegisterResult{EvalID: resp.EvalID, JobModifyIndex: resp.JobModifyIndex}, nil
+	return &RegisterResult{EvalID: resp.EvalID, JobModifyIndex: resp.JobModifyIndex, Warnings: resp.Warnings}, nil
 }
 
 // JobStub is a job as the job listing describes it: enough to tell what a job

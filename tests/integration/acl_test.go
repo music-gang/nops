@@ -199,7 +199,7 @@ plugin { policy = "read" }`, func(id string) string { return volumeJobHCL(id, "c
 			if _, err := c.Plan(ctx, job); err != nil {
 				t.Errorf("Plan: %v, want it to pass: it checks no volume", err)
 			}
-			_, err = c.RegisterCAS(ctx, job, 0, false)
+			_, err = c.RegisterCAS(ctx, job, 0, false, nil)
 			switch {
 			case tc.register && err != nil:
 				t.Errorf("register: %v, want it accepted", err)
@@ -256,7 +256,7 @@ func TestPromoteNeedsSubmitJob(t *testing.T) {
 		if live, _, err := admin.Jobs().Info(id, nil); err == nil {
 			index = *live.JobModifyIndex
 		}
-		if _, err := adminX.RegisterCAS(ctx, job, index, false); err != nil {
+		if _, err := adminX.RegisterCAS(ctx, job, index, false, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -309,7 +309,7 @@ func TestDispatchNeedsDispatchJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adminX.RegisterCAS(ctx, hook, 0, false); err != nil {
+	if _, err := adminX.RegisterCAS(ctx, hook, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -334,7 +334,7 @@ func TestNomadPanelReadsWithReadJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adminX.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := adminX.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 

@@ -628,7 +628,7 @@ func (e *e2eEnv) editOutsideNops(jobID, jobHCL string) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if _, err := e.nomad.RegisterCAS(ctx, job, e.liveIndex(jobID), false); err != nil {
+	if _, err := e.nomad.RegisterCAS(ctx, job, e.liveIndex(jobID), false, nil); err != nil {
 		e.t.Fatalf("outside edit of %s: %v", jobID, err)
 	}
 }

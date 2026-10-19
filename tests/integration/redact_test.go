@@ -86,7 +86,7 @@ func TestRedactRealPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, v1, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, v1, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	v2, err := c.ParseHCL(ctx, "default", probeHCL(id, "new"), "")

@@ -8,7 +8,7 @@ Nops logs JSON lines through `log/slog`, with the keys `deployment_id`,
 | Event | Level |
 |---|---|
 | State transition, canary promotion, pause, resume | INFO |
-| Unknown meta key, notification not delivered | WARN |
+| Unknown meta key, notification not delivered, warning from Nomad on a register | WARN |
 | Deployment `failed`, invalid meta value, job that doesn't parse or that its repository may not declare | ERROR |
 | Nomad or SQLite error | ERROR |
 

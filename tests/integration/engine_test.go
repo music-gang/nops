@@ -147,7 +147,7 @@ func TestEngineDetectionAgainstRealNomad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, parsed, d.CASIndex, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, parsed, d.CASIndex, false, nil); err != nil {
 		t.Fatalf("apply out of band: %v", err)
 	}
 

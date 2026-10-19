@@ -83,7 +83,7 @@ func newHookEnv(t *testing.T, cmd string, isHook bool) *hookEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 

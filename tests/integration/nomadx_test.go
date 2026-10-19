@@ -230,15 +230,15 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	}
 
 	// A nonzero index for a job that does not exist is a conflict too.
-	if _, err := c.RegisterCAS(ctx, v1, 5, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, v1, 5, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("register at index 5 of a missing job: err = %v, want ErrCASConflict", err)
 	}
 
 	// Index 0 creates it. Registering with index 0 again is a conflict.
-	if _, err := c.RegisterCAS(ctx, v1, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, v1, 0, false, nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := c.RegisterCAS(ctx, v1, 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, v1, 0, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("second create with index 0: err = %v, want ErrCASConflict", err)
 	}
 	idx1 := liveIndex()
@@ -256,7 +256,7 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	}
 
 	// A wrong index is refused and the job stays untouched.
-	if _, err := c.RegisterCAS(ctx, v2, idx1+1000, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, v2, idx1+1000, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("wrong index: err = %v, want ErrCASConflict", err)
 	}
 	if got := liveIndex(); got != idx1 {
@@ -264,7 +264,7 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	}
 
 	// The right index applies the change.
-	res, err := c.RegisterCAS(ctx, v2, idx1, false)
+	res, err := c.RegisterCAS(ctx, v2, idx1, false, nil)
 	if err != nil {
 		t.Fatalf("register at the right index: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	t.Logf("register response JobModifyIndex=%d, live JobModifyIndex=%d", res.JobModifyIndex, idx2)
 
 	// The spec we approved earlier (index idx1) is now stale.
-	if _, err := c.RegisterCAS(ctx, v1, idx1, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, v1, idx1, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("stale index: err = %v, want ErrCASConflict", err)
 	}
 	if got := diffType(v2); got != "None" {
@@ -298,7 +298,7 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	live, err := c.Job(ctx, "default", id)
@@ -307,7 +307,7 @@ func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
 	}
 	before := *live.JobModifyIndex
 
-	res, err := c.RegisterCAS(ctx, job, before, false)
+	res, err := c.RegisterCAS(ctx, job, before, false, nil)
 	if err != nil {
 		t.Fatalf("identical register at the live index: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestPlanOfAnUnchangedScaledJobShowsNoChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	again, err := c.ParseHCL(ctx, "default", scalableHCL(id), "")
@@ -359,7 +359,7 @@ func TestDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, hook, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, hook, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,7 +432,7 @@ func TestListJobsCarriesMetaAndStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, hook, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, hook, 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	child, err := c.Dispatch(ctx, "default", id, map[string]string{"nops_deployment_id": "d1"}, "d1:pre")
@@ -498,7 +498,7 @@ func TestHookRevisionRegistration(t *testing.T) {
 	if err != nil || plan.Diff == nil || plan.Diff.Type != "Added" {
 		t.Fatalf("plan of an unregistered revision = %+v, %v; want Added", plan, err)
 	}
-	if _, err := c.RegisterCAS(ctx, &job, 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, &job, 0, false, nil); err != nil {
 		t.Fatalf("register under another ID than the name: %v", err)
 	}
 	live, err := c.Job(ctx, "default", revision)
@@ -515,14 +515,14 @@ func TestHookRevisionRegistration(t *testing.T) {
 	if plan, err := c.Plan(ctx, &job); err != nil || plan.Diff == nil || plan.Diff.Type == "None" {
 		t.Fatalf("plan of a stopped revision = %+v, %v; want a difference (it is not running)", plan, err)
 	}
-	if _, err := c.RegisterCAS(ctx, &job, 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, &job, 0, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("register of a stopped revision at index 0: %v; want a CAS conflict, the job exists", err)
 	}
 	stopped, err := c.Job(ctx, "default", revision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RegisterCAS(ctx, &job, *stopped.JobModifyIndex, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, &job, *stopped.JobModifyIndex, false, nil); err != nil {
 		t.Fatalf("register of a stopped revision at its own index: %v", err)
 	}
 	if again, err := c.Job(ctx, "default", revision); err != nil || again.Stop != nil && *again.Stop {
@@ -552,7 +552,7 @@ func TestSameJobIDInTwoNamespaces(t *testing.T) {
 	}
 
 	// Registered in A only: B and default do not have it.
-	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a"), 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a"), 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Job(ctx, nsA, id); err != nil {
@@ -569,10 +569,10 @@ func TestSameJobIDInTwoNamespaces(t *testing.T) {
 	if p, err := c.Plan(ctx, inNS(nsB, "b")); err != nil || p.Diff == nil || p.Diff.Type != "Added" {
 		t.Errorf("plan in %s = %+v, %v, want Added", nsB, p, err)
 	}
-	if _, err := c.RegisterCAS(ctx, inNS(nsB, "b"), 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, inNS(nsB, "b"), 0, false, nil); err != nil {
 		t.Errorf("register in %s: %v", nsB, err)
 	}
-	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a2"), 0, false); !errors.Is(err, nomadx.ErrCASConflict) {
+	if _, err := c.RegisterCAS(ctx, inNS(nsA, "a2"), 0, false, nil); !errors.Is(err, nomadx.ErrCASConflict) {
 		t.Errorf("register in %s at 0: err = %v, want ErrCASConflict", nsA, err)
 	}
 
@@ -632,7 +632,7 @@ job %q {
 		return j
 	}
 
-	if _, err := c.RegisterCAS(ctx, parse("auto"), 0, false); err != nil {
+	if _, err := c.RegisterCAS(ctx, parse("auto"), 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The plan compares against the allocations that exist: wait for one.
