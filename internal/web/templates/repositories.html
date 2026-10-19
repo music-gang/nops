@@ -11,6 +11,7 @@
     {{template "git_row" .}}
   </div>
   {{template "git_error" .}}
+  {{range .Refused}}{{template "refused" .}}{{end}}
   {{end}}
 </section>
 </div>

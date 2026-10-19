@@ -75,6 +75,11 @@ shows that spec, only the redacted diff.
   fight the autoscaler.
 - Two files that declare the same job, in one repository or in two, are
   both ignored with an ERROR.
+- Nops refuses a file whose job its repository's
+  [`jobs`](configuration.md#repositories) doesn't match, with an ERROR. A
+  refused file is not a job or a hook, so it can't make another repository's
+  job a duplicate, and it doesn't count as a file that doesn't parse. Its job
+  counts as removed from that repository.
 - A missing or invalid hook fails the deployment at detection.
 - While any file doesn't parse, Nops doesn't treat missing jobs as removed:
   an unparsed file looks the same as a deleted one.

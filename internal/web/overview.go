@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/music-gang/nops/internal/acl"
+	"github.com/music-gang/nops/internal/engine"
 	"github.com/music-gang/nops/internal/gitwatch"
 	"github.com/music-gang/nops/internal/store"
 )
@@ -20,6 +21,7 @@ type gitView struct {
 	CommittedAt, CheckedAt timeView
 	Error                  string // the last poll's failure, "" if it succeeded
 	ErrorAt                timeView
+	Refused                []engine.RefusedFile // files of the repository it may not declare, readable ones
 }
 
 // gitSummary is what the Overview says of several repositories in one line.
@@ -36,6 +38,9 @@ type cycleView struct {
 	Took                       string
 	Error                      string
 	Managed, Skipped, Unparsed int
+	// Refused counts every refused file, whatever the namespace and whoever
+	// asks; Overview.Refused lists the ones the subject can read.
+	Refused int
 	// OrphanCheckSkipped: jobs removed from git were not looked for this cycle.
 	OrphanCheckSkipped bool
 }
@@ -46,13 +51,14 @@ type overviewData struct {
 	GitSummary        *gitSummary // with several repositories; nil with one
 	CanFetch          bool        // POST /fetch is served
 	Cycle             cycleView
-	CanPause          bool // POST /pause is allowed to this token
+	Refused           []engine.RefusedFile // the files a repository may not declare, in namespaces the subject can read
+	CanPause          bool                 // POST /pause is allowed to this token
 	Attention         []attentionItem
 	InProgress        []deploymentCard // detected, pre_hook, applying, post_hook
 	RecentlyCompleted []deploymentCard // the most recent `completed` deployments
 }
 
-func (s *server) gitViews(repos []gitwatch.Repo) []gitView {
+func (s *server) gitViews(repos []gitwatch.Repo, refused []engine.RefusedFile) []gitView {
 	views := make([]gitView, len(repos))
 	for i, repo := range repos {
 		snap, st := repo.Snapshot, repo.Status
@@ -61,6 +67,11 @@ func (s *server) gitViews(repos []gitwatch.Repo) []gitView {
 			Known: snap.Commit != "", SHA: snap.Commit, Short: shortCommit(snap.Commit),
 			Subject: snap.Subject, Author: snap.Author, CommittedAt: s.when(snap.CommittedAt),
 			CheckedAt: s.when(st.CheckedAt), Error: st.Error, ErrorAt: s.when(st.ErrorAt),
+		}
+		for _, f := range refused {
+			if f.Repository == repo.Name {
+				views[i].Refused = append(views[i].Refused, f)
+			}
 		}
 		if s.commitURL != nil {
 			views[i].URL = s.commitURL(repo.Name, snap.Commit)
@@ -89,7 +100,7 @@ func (s *server) cycleView() cycleView {
 	st := s.engine.Status()
 	return cycleView{
 		Ran: !st.At.IsZero(), At: s.when(st.At), Took: st.Duration.Round(time.Millisecond).String(), Error: st.Error,
-		Managed: st.Managed, Skipped: st.Skipped, Unparsed: st.Unparsed, OrphanCheckSkipped: st.OrphanCheckSkipped,
+		Managed: st.Managed, Skipped: st.Skipped, Unparsed: st.Unparsed, Refused: len(st.Refused), OrphanCheckSkipped: st.OrphanCheckSkipped,
 	}
 }
 
@@ -113,9 +124,11 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repos := s.git.Repositories()
+	refused := s.refused(r)
 	data := overviewData{
 		baseData:  s.base(r, "overview"),
-		Git:       s.gitViews(repos),
+		Git:       s.gitViews(repos, nil),
+		Refused:   refused,
 		CanFetch:  s.trigger != nil && subjectOf(r.Context()).acl.Global(acl.Fetch),
 		Cycle:     s.cycleView(),
 		CanPause:  subjectOf(r.Context()).acl.Global(acl.Pause),
@@ -143,7 +156,7 @@ type repositoriesData struct {
 // repositories is GET /repositories: the head and last poll of each
 // repository, which the Overview keeps to one line.
 func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
-	views := s.gitViews(s.git.Repositories())
+	views := s.gitViews(s.git.Repositories(), s.refused(r))
 	for i := range views {
 		views[i].ShowName = true
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"sort"
 
 	"github.com/hashicorp/nomad/api"
@@ -56,9 +57,10 @@ func (e *Engine) Detect(ctx context.Context) error {
 func (e *Engine) detect(ctx context.Context) (Status, error) {
 	var st Status
 
-	parsed, cache, unparsed := e.parseFiles(ctx, e.snapshots.Snapshots())
+	parsed, cache, unparsed, refused := e.parseFiles(ctx, e.snapshots.Snapshots())
 	e.replaceParseCache(cache)
 	st.Unparsed = unparsed
+	st.Refused = refused
 
 	hookFiles, managed := e.classify(ctx, parsed)
 	st.Managed = len(managed)
@@ -176,8 +178,9 @@ func (pf parsedFile) fileName() string { return pf.commit.repo + ":" + pf.path }
 // parseFiles parses every file of the snapshots through Nomad, reusing the
 // previous cycle's cache entry when the (content, vars) pair is unchanged.
 // The returned cache replaces the engine's: an entry for a file no longer in
-// any snapshot is dropped, so the cache never grows across cycles.
-func (e *Engine) parseFiles(ctx context.Context, snaps []gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int) {
+// any snapshot is dropped, so the cache never grows across cycles. A refused
+// file is neither parsed nor unparsed: it is not a job at all.
+func (e *Engine) parseFiles(ctx context.Context, snaps []gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int, refused []RefusedFile) {
 	prev := e.snapshotParseCache()
 	next = make(map[string]parseEntry)
 	// A file is parsed in the first managed namespace whatever it declares, so
@@ -190,21 +193,33 @@ func (e *Engine) parseFiles(ctx context.Context, snaps []gitwatch.Snapshot) (par
 	for _, snap := range snaps {
 		ref := commitRef{repo: snap.Repository, sha: snap.Commit, subject: snap.Subject, author: snap.Author}
 		for _, f := range snap.Files {
-			if pf, ok := e.parseFile(ctx, parseNS, prev, next, ref, f); ok {
+			pf, outcome, rf := e.parseFile(ctx, parseNS, prev, next, ref, f)
+			switch outcome {
+			case fileParsed:
 				parsed = append(parsed, pf)
-			} else {
+			case fileRefused:
+				refused = append(refused, rf)
+			default:
 				unparsed++
 			}
 		}
 	}
-	return parsed, next, unparsed
+	return parsed, next, unparsed, refused
 }
 
+// fileOutcome is what became of a snapshot file.
+type fileOutcome int
+
+const (
+	fileParsed   fileOutcome = iota // a job, to classify
+	fileUnparsed                    // not a job: it failed to parse, has no ID, or names a namespace nops does not manage
+	fileRefused                     // not a job: its repository may not declare it
+)
+
 // parseFile parses one file read at ref in namespace parseNS, and records a
-// successful parse in next. ok is false for a file that does not count as a
-// job, logged here: its parse failed, it has no ID, or it declares a namespace
-// nops does not manage.
-func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, bool) {
+// successful parse in next. Anything but fileParsed is a file that does not
+// count as a job, logged here. The RefusedFile is set for fileRefused only.
+func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, fileOutcome, RefusedFile) {
 	log := e.log.With("repo", ref.repo, "file", f.Path, "commit", ref.sha)
 	key := parseCacheKey(f.Content, f.Vars)
 	entry, ok := e.cachedParse(prev, key)
@@ -224,17 +239,36 @@ func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[s
 	switch {
 	case entry.err != nil:
 		log.ErrorContext(ctx, "parse job file", "error", entry.err)
-		return parsedFile{}, false
+		return parsedFile{}, fileUnparsed, RefusedFile{}
 	case entry.job.ID == nil || *entry.job.ID == "":
 		log.ErrorContext(ctx, "parsed job has no ID")
-		return parsedFile{}, false
+		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
-	if ns := *entry.job.Namespace; !e.managedNS[ns] {
+	ns, id := *entry.job.Namespace, *entry.job.ID
+	// Refused before anything else is asked of the job: whoever pushed the file
+	// had no say over this one.
+	if patterns, ok := e.repoJobs[ref.repo]; ok && !jobAllowed(patterns, ns, id) {
+		log.ErrorContext(ctx, "the repository may not declare this job: file refused",
+			"job", id, "namespace", ns, "jobs", patterns)
+		return parsedFile{}, fileRefused, RefusedFile{Repository: ref.repo, Path: f.Path, Namespace: ns, JobID: id}
+	}
+	if !e.managedNS[ns] {
 		log.ErrorContext(ctx, "job declares a namespace nops does not manage",
-			"job", *entry.job.ID, "declared_namespace", ns, "managed_namespaces", e.namespaces)
-		return parsedFile{}, false
+			"job", id, "declared_namespace", ns, "managed_namespaces", e.namespaces)
+		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
-	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta)}, true
+	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta)}, fileParsed, RefusedFile{}
+}
+
+// jobAllowed reports whether one of the patterns ("<namespace>/<job ID>", already
+// checked by config) matches the job.
+func jobAllowed(patterns []string, ns, id string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, ns+"/"+id); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultNamespace gives a parsed job that has no namespace the "default" one,

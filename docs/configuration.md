@@ -84,6 +84,7 @@ repository "apps" {
   branch     = "main"
   path       = "nomad"
   token_file = "/secrets/apps-token"
+  jobs       = ["apps/*"]
 }
 ```
 
@@ -94,11 +95,18 @@ repository "apps" {
 | `path` | none | Subdirectory holding the job files. Unset: the root. |
 | `username` | `git` | Username sent with the token. |
 | `token_file` | none | File holding the HTTPS token. Unset: public repository. |
+| `jobs` | none | The jobs the repository may declare, as `<namespace>/<job ID>` patterns. Unset: any job. |
 
 - The name, made of letters, digits, `-` and `_`, labels the repository on
   the dashboard, in metrics, and in notifications.
-- A name used twice, or a `repository "default"` block next to `-git-url`,
-  stops Nops.
+- A `jobs` pattern follows Go's [`path.Match`](https://pkg.go.dev/path#Match):
+  `*` never crosses the `/`. A pattern without a `/` is a job ID in the
+  `default` namespace, and `api-*` doesn't match `api`. Nops
+  [refuses](architecture.md#rules-detection-keeps) a file whose job no
+  pattern matches.
+- A name used twice, a `repository "default"` block next to `-git-url`, an
+  empty `jobs`, or a pattern that is malformed or matches no managed
+  namespace stops Nops.
 
 ## Dashboard
 
