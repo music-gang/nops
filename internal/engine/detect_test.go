@@ -69,7 +69,8 @@ type fakeNomad struct {
 	parseByContent map[string]*api.Job
 	parseErr       map[string]error
 	parseCalls     map[string]int
-	parseNS        map[string]bool // the namespaces ParseHCL was asked in
+	parseNS        map[string]bool     // the namespaces ParseHCL was asked in
+	parseVars      map[string][]string // content -> the vars of each ParseHCL call
 
 	live   map[string]*api.Job // absent: ErrJobNotFound
 	jobErr map[string]error    // what Job returns instead of the live job
@@ -127,6 +128,7 @@ func newFakeNomad() *fakeNomad {
 		parseErr:       map[string]error{},
 		parseCalls:     map[string]int{},
 		parseNS:        map[string]bool{},
+		parseVars:      map[string][]string{},
 		live:           map[string]*api.Job{},
 		jobErr:         map[string]error{},
 		plan:           map[string]planFixture{},
@@ -165,11 +167,12 @@ func (f *fakeNomad) callCount() int {
 	return f.calls
 }
 
-func (f *fakeNomad) ParseHCL(_ context.Context, ns, content, _ string) (*api.Job, error) {
+func (f *fakeNomad) ParseHCL(_ context.Context, ns, content, vars string) (*api.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.parseCalls[content]++
+	f.parseVars[content] = append(f.parseVars[content], vars)
 	f.parseNS[ns] = true
 	if err, ok := f.parseErr[content]; ok {
 		return nil, err
@@ -1111,6 +1114,27 @@ func TestParseCacheAvoidsReparsing(t *testing.T) {
 	}
 	if got := len(h.engine.snapshotParseCache()); got != 1 {
 		t.Errorf("parse cache has %d entries, want 1 (old content dropped)", got)
+	}
+}
+
+func TestParseGivesTheFileItsCommit(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.setFile("web-v1", managed("web", "auto", nil))
+	h.snap.set("c1", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1", Vars: "count = 2"})
+	h.detect()
+
+	// The same content at a new commit is parsed again: the job may differ.
+	h.snap.set("c2", gitwatch.File{Path: "web.nomad.hcl", Content: "web-v1", Vars: "count = 2"})
+	h.detect()
+
+	got := h.nomad.parseVars["web-v1"]
+	if len(got) != 2 {
+		t.Fatalf("ParseHCL called %d times, want 2 (one per commit)", len(got))
+	}
+	for i, commit := range []string{"c1", "c2"} {
+		if !strings.Contains(got[i], "count = 2") || !strings.Contains(got[i], `nops_commit = "`+commit+`"`) {
+			t.Errorf("vars at %s = %q, want the file's own and nops_commit = %q", commit, got[i], commit)
+		}
 	}
 }
 

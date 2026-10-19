@@ -249,3 +249,77 @@ func TestEngineApplyAgainstRealNomad(t *testing.T) {
 		t.Errorf("live job was not registered")
 	}
 }
+
+// commitJobHCL is a managed job whose meta says the commit it was read at,
+// whole and short. declare says whether it declares the variable.
+func commitJobHCL(id string, declare bool) string {
+	decl, use := "", `"-"`
+	if declare {
+		decl = "variable \"nops_commit\" {\n  type = string\n}"
+		use = `var.nops_commit`
+	}
+	return fmt.Sprintf(`
+%s
+job %q {
+  type = "batch"
+  meta {
+    nops_managed = "true"
+    nops_policy  = "approval"
+    full         = %s
+    short        = %s
+  }
+  group "g" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "exit 0"]
+      }
+    }
+  }
+}`, decl, id, use, strings.Replace(use, "var.nops_commit", "substr(var.nops_commit, 0, 7)", 1))
+}
+
+// TestEngineGivesTheJobItsCommit checks against a real Nomad that nops_commit
+// reaches a job declaring it, that a job not declaring it parses all the same,
+// and that a var-file setting it does not parse.
+func TestEngineGivesTheJobItsCommit(t *testing.T) {
+	_, raw := newClient(t)
+	ctx := context.Background()
+	declaring := uniqueID(t, raw, "commitdecl")
+	plain := uniqueID(t, raw, "commitplain")
+	clash := uniqueID(t, raw, "commitclash")
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+
+	snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+		Commit: sha,
+		Files: []gitwatch.File{
+			{Path: "declaring.nomad.hcl", Content: commitJobHCL(declaring, true)},
+			{Path: "plain.nomad.hcl", Content: commitJobHCL(plain, false)},
+			{
+				Path: "clash.nomad.hcl", Content: commitJobHCL(clash, true),
+				VarsPath: "clash.vars.hcl", Vars: `nops_commit = "mine"`,
+			},
+		},
+	}}
+	e, st := newEngine(t, snap)
+	if err := e.Detect(ctx); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	d, err := st.ActiveDeployment(ctx, "default", declaring)
+	if err != nil {
+		t.Fatalf("ActiveDeployment of the declaring job: %v", err)
+	}
+	for _, want := range []string{`"full":"` + sha + `"`, `"short":"` + sha[:7] + `"`} {
+		if !strings.Contains(d.JobSpec, want) {
+			t.Errorf("job spec lacks %s: %s", want, d.JobSpec)
+		}
+	}
+	if _, err := st.ActiveDeployment(ctx, "default", plain); err != nil {
+		t.Errorf("a job that does not declare nops_commit has no deployment: %v", err)
+	}
+	if _, err := st.ActiveDeployment(ctx, "default", clash); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("job whose var-file sets nops_commit: err = %v, want ErrNotFound (it must not parse)", err)
+	}
+}
