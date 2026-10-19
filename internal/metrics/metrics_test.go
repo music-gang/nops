@@ -74,7 +74,8 @@ func TestCollect(t *testing.T) {
 		{Name: "never-reached"},
 	}
 	o.Engine = fakeEngine{
-		status:  engine.Status{At: at(2100), SucceededAt: at(2000), Error: "disk on fire", Unparsed: 2, Skipped: 1, Orphans: 3},
+		status: engine.Status{At: at(2100), SucceededAt: at(2000), Error: "disk on fire", Unparsed: 2, Skipped: 1, Orphans: 3,
+			Refused: []engine.RefusedFile{{Repository: "apps", Path: "a.nomad.hcl"}, {Repository: "apps", Path: "b.nomad.hcl"}}},
 		applyAt: at(3000),
 		obs: []engine.Observation{
 			{Namespace: "apps", JobID: "web", Policy: meta.PolicyAuto, Drift: true},
@@ -162,6 +163,11 @@ nops_orphan_jobs 3
 # HELP nops_paused 1 if a person paused every job.
 # TYPE nops_paused gauge
 nops_paused 1
+# HELP nops_refused_files Files the last detection cycle refused because the jobs attribute of their repository does not match the job they declare.
+# TYPE nops_refused_files gauge
+nops_refused_files{repo="apps"} 2
+nops_refused_files{repo="default"} 0
+nops_refused_files{repo="never-reached"} 0
 # HELP nops_unparsed_files Files the last detection cycle could not parse, or that name a namespace nops does not manage.
 # TYPE nops_unparsed_files gauge
 nops_unparsed_files 2

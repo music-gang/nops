@@ -20,6 +20,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -152,6 +153,9 @@ type Repository struct {
 	Username  string
 	TokenFile string
 	Token     string // content of TokenFile, read by Load
+	// Jobs are the "<namespace>/<job ID>" patterns of the jobs the repository
+	// may declare, path.Match syntax; nil is any job.
+	Jobs []string
 }
 
 type option struct {
@@ -589,12 +593,13 @@ type fileConfig struct {
 }
 
 type fileRepository struct {
-	Name      string  `hcl:"name,label"`
-	URL       string  `hcl:"url"`
-	Branch    *string `hcl:"branch,optional"`
-	Path      string  `hcl:"path,optional"`
-	Username  *string `hcl:"username,optional"`
-	TokenFile string  `hcl:"token_file,optional"`
+	Name      string    `hcl:"name,label"`
+	URL       string    `hcl:"url"`
+	Branch    *string   `hcl:"branch,optional"`
+	Path      string    `hcl:"path,optional"`
+	Username  *string   `hcl:"username,optional"`
+	TokenFile string    `hcl:"token_file,optional"`
+	Jobs      *[]string `hcl:"jobs,optional"`
 }
 
 // loadRepositories fills c.Repositories from the -git-* options and the
@@ -619,7 +624,7 @@ func (c *Config) loadRepositories(explicit map[string]bool) []error {
 		}
 	}
 	if c.ConfigFile != "" {
-		repos, fileErrs := readConfigFile(c.ConfigFile)
+		repos, fileErrs := readConfigFile(c.ConfigFile, c.NomadNamespaces)
 		c.Repositories = append(c.Repositories, repos...)
 		errs = append(errs, fileErrs...)
 	}
@@ -640,10 +645,11 @@ func (c *Config) loadRepositories(explicit map[string]bool) []error {
 	return errs
 }
 
-// readConfigFile reads the repository blocks of the -config file at path.
-// Every error names the file, and the block it is about.
-func readConfigFile(path string) ([]Repository, []error) {
-	f, diags := hclparse.NewParser().ParseHCLFile(path)
+// readConfigFile reads the repository blocks of the -config file at file.
+// Every error names the file, and the block it is about. namespaces are the
+// managed ones, which the namespace of a jobs pattern must match.
+func readConfigFile(file string, namespaces []string) ([]Repository, []error) {
+	f, diags := hclparse.NewParser().ParseHCLFile(file)
 	if diags.HasErrors() {
 		return nil, []error{fmt.Errorf("-config: %w", diags)}
 	}
@@ -659,10 +665,10 @@ func readConfigFile(path string) ([]Repository, []error) {
 		r := Repository{Name: b.Name, Branch: "main", Username: "git", TokenFile: b.TokenFile}
 		var blockErrs []error
 		fail := func(attr string, err error) {
-			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: %s: %w", path, b.Name, attr, err))
+			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: %s: %w", file, b.Name, attr, err))
 		}
 		if !repositoryName.MatchString(b.Name) {
-			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: the name may hold only letters, digits, - and _", path, b.Name))
+			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: the name may hold only letters, digits, - and _", file, b.Name))
 		}
 		var err error
 		if r.URL, err = required(b.URL); err != nil {
@@ -682,6 +688,11 @@ func readConfigFile(path string) ([]Repository, []error) {
 		if r.Token, err = secretFile(b.TokenFile); err != nil {
 			fail("token_file", err)
 		}
+		if b.Jobs != nil {
+			if r.Jobs, err = jobPatterns(*b.Jobs, namespaces); err != nil {
+				fail("jobs", err)
+			}
+		}
 		if len(blockErrs) > 0 {
 			errs = append(errs, blockErrs...)
 			continue
@@ -689,6 +700,34 @@ func readConfigFile(path string) ([]Repository, []error) {
 		repos = append(repos, r)
 	}
 	return repos, errs
+}
+
+// jobPatterns checks the jobs of a repository block and gives each pattern its
+// namespace: an entry without a "/" is a job ID in the default namespace. The
+// namespace of an entry must match a managed one, so a typo stops the start
+// instead of refusing every job.
+func jobPatterns(list, namespaces []string) ([]string, error) {
+	if len(list) == 0 {
+		return nil, errors.New("is empty: remove the block to stop reading the repository")
+	}
+	out := make([]string, len(list))
+	for i, p := range list {
+		if !strings.Contains(p, "/") {
+			p = api.DefaultNamespace + "/" + p
+		}
+		ns, id, _ := strings.Cut(p, "/")
+		if ns == "" || id == "" {
+			return nil, fmt.Errorf("%q must be <namespace>/<job ID>", list[i])
+		}
+		if _, err := path.Match(p, ""); err != nil {
+			return nil, fmt.Errorf("%q: %w", list[i], err)
+		}
+		if !slices.ContainsFunc(namespaces, func(managed string) bool { ok, _ := path.Match(ns, managed); return ok }) {
+			return nil, fmt.Errorf("%q matches no managed namespace (%s)", list[i], strings.Join(namespaces, ", "))
+		}
+		out[i] = p
+	}
+	return out, nil
 }
 
 // Nomad returns the Nomad client configuration. It is built field by field,

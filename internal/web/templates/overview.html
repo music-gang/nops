@@ -42,7 +42,7 @@
       <span class="muted">&middot; {{.Cycle.Managed}} managed {{if eq .Cycle.Managed 1}}job{{else}}jobs{{end}}</span>
     </span>
     {{if .Cycle.Error}}<span class="pill state-failed">aborted</span>
-    {{else if or .Cycle.Skipped .Cycle.Unparsed}}<span class="pill state-pending">degraded</span>
+    {{else if or .Cycle.Skipped .Cycle.Unparsed .Cycle.Refused}}<span class="pill state-pending">degraded</span>
     {{else}}<span class="pill state-success">OK</span>{{end}}
     {{else}}
     <span class="strip__main muted">waiting for the first cycle</span>
@@ -72,6 +72,7 @@
   {{if .Cycle.Error}}<p class="flash flash--error flash--flat">The last cycle stopped: {{.Cycle.Error}}</p>{{end}}
   {{if .Cycle.Skipped}}<p class="flash flash--warn flash--flat">{{.Cycle.Skipped}} {{if eq .Cycle.Skipped 1}}job was{{else}}jobs were{{end}} skipped in the last cycle because Nomad failed on {{if eq .Cycle.Skipped 1}}it{{else}}them{{end}}: their state below may be out of date. The logs say why.</p>{{end}}
   {{if .Cycle.Unparsed}}<p class="flash flash--warn flash--flat">{{.Cycle.Unparsed}} {{if eq .Cycle.Unparsed 1}}file{{else}}files{{end}} in the repository could not be parsed by Nomad and {{if eq .Cycle.Unparsed 1}}is{{else}}are{{end}} ignored. The logs say which.</p>{{end}}
+  {{range .Refused}}{{template "refused" .}}{{end}}
   {{if .Cycle.OrphanCheckSkipped}}<p class="flash flash--warn flash--flat">Jobs removed from git are not being looked for while a file does not parse: a broken file looks exactly like a removed one. What was found before stays listed.</p>{{end}}
 </section>
 
@@ -175,4 +176,9 @@
   {{if .Error}}
   <p class="flash flash--error flash--flat">The last poll of the repository{{if .ShowName}} {{.Name}}{{end}} failed {{template "time" .ErrorAt}}, so Nops is working from the last commit it read: {{.Error}}</p>
   {{end}}
+{{end}}
+
+{{/* A file of a repository whose jobs do not allow the job it declares. */}}
+{{define "refused"}}
+  <p class="flash flash--warn flash--flat">The repository {{.Repository}} may not declare the job <span class="mono">{{.Namespace}}/{{.JobID}}</span>: its file <span class="mono">{{.Path}}</span> is ignored.</p>
 {{end}}

@@ -10,10 +10,10 @@ retry, pause, and resume deployments. Every page needs a
   failures, meta errors, paused jobs, orphans), what is deploying, the latest
   completed deployments, the head and last poll of the repository (with
   several, how many there are and each one whose last poll failed), and
-  detection. *Fetch now*, or *Fetch all* with several repositories, polls
+  detection, with the files a repository may not declare. *Fetch now*, or *Fetch all* with several repositories, polls
   every repository without waiting for the interval. *Pause* pauses every job.
 - **Repositories** (`/repositories`): the head and last poll of each
-  repository. The Overview links it when Nops reads more than one.
+  repository, and the files it may not declare. The Overview links it when Nops reads more than one.
 - **Jobs** (`/jobs`): every managed job with its [sync state](#sync-state-of-a-job),
   policy and last deployment, filterable by state.
 - **Job** (`/jobs/{namespace}/{job}`): the job's drift, hooks, sync window,

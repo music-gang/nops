@@ -1253,6 +1253,30 @@ repository "default" {
 	}
 }
 
+func TestLoadRepositoryJobs(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url  = "https://git.example.com/ops/apps.git"
+  jobs = ["labs/billing-api", "lab*/billing-api-*", "crm"]
+}
+
+repository "infra" {
+  url = "https://git.example.com/ops/infra.git"
+}
+`)
+	c, err := Load([]string{"-config", file, "-nomad-namespaces", "default,labs"}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"labs/billing-api", "lab*/billing-api-*", "default/crm"}
+	if !reflect.DeepEqual(c.Repositories[0].Jobs, want) {
+		t.Errorf("jobs = %q, want %q", c.Repositories[0].Jobs, want)
+	}
+	if c.Repositories[1].Jobs != nil {
+		t.Errorf("a repository without jobs has %q, want nil: any job", c.Repositories[1].Jobs)
+	}
+}
+
 func TestLoadRepositoriesInvalid(t *testing.T) {
 	dir := t.TempDir()
 	tok := writeFile(t, "token", "secret")
@@ -1281,6 +1305,12 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		{"a missing token file", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token_file = "`+filepath.Join(dir, "missing")+`"`), nil, nil, `repository "apps": token_file: open`},
 		{"a token over http", block("apps", `url = "http://git.example.com/x.git"`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs an https:// url in repository "apps"`},
 		{"a token without username", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`username = ""`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs a non-empty username in repository "apps"`},
+		{"an empty jobs", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = []`), nil, nil, `repository "apps": jobs: is empty`},
+		{"a jobs entry without an ID", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["default/"]`), nil, nil, `jobs: "default/" must be <namespace>/<job ID>`},
+		{"a jobs entry without a namespace", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["/api"]`), nil, nil, `jobs: "/api" must be <namespace>/<job ID>`},
+		{"an empty jobs entry", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = [""]`), nil, nil, `jobs: "" must be <namespace>/<job ID>`},
+		{"a malformed jobs pattern", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["default/api-["]`), nil, nil, `jobs: "default/api-[": syntax error in pattern`},
+		{"a jobs namespace that is not managed", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["labs/api"]`), nil, nil, `jobs: "labs/api" matches no managed namespace (default)`},
 		{"an unknown attribute", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token = "secret"`), nil, nil, "Unsupported argument"},
 		{"an unknown block", apps + "nomad {\n}\n", nil, nil, "Unsupported block type"},
 		{"not HCL", "repository {", nil, nil, "-config: "},

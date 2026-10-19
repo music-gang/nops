@@ -9,6 +9,7 @@ package engine
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -230,6 +231,16 @@ type Status struct {
 	// orphans of the last complete check are then kept as they were.
 	Orphans            int
 	OrphanCheckSkipped bool
+	// Refused are the files whose job their repository may not declare
+	// (Options.RepositoryJobs): not jobs, not hooks and not unparsed files.
+	Refused []RefusedFile
+}
+
+// RefusedFile is a file whose job its repository may not declare.
+type RefusedFile struct {
+	Repository, Path string
+	// Namespace and JobID are the job the file declares.
+	Namespace, JobID string
 }
 
 // Engine runs the detection cycle (parse, plan, create and supersede
@@ -242,8 +253,9 @@ type Engine struct {
 	notifier       Notifier
 	hooks          Hooks
 	log            *slog.Logger
-	namespaces     []string        // the managed namespaces, in the order configured
-	managedNS      map[string]bool // the same, for lookups
+	namespaces     []string            // the managed namespaces, in the order configured
+	managedNS      map[string]bool     // the same, for lookups
+	repoJobs       map[string][]string // Options.RepositoryJobs
 	driftInterval  time.Duration
 	engineInterval time.Duration
 	applyTimeout   time.Duration
@@ -285,6 +297,10 @@ type Options struct {
 	// a job that declares any other is an error, and the deployments of any
 	// other are left alone.
 	Namespaces []string
+	// RepositoryJobs are the patterns of the jobs each repository may declare,
+	// by repository name, as "<namespace>/<job ID>" in path.Match syntax
+	// (config.Repository.Jobs). A repository not in it may declare any job.
+	RepositoryJobs map[string][]string
 	// DriftInterval is how often a detection cycle runs when there is no new commit.
 	DriftInterval time.Duration
 	// EngineInterval is how often the apply loop advances non-terminal deployments.
@@ -322,6 +338,7 @@ func New(o Options) *Engine {
 		log:            log,
 		namespaces:     o.Namespaces,
 		managedNS:      managedNS,
+		repoJobs:       maps.Clone(o.RepositoryJobs),
 		driftInterval:  o.DriftInterval,
 		engineInterval: o.EngineInterval,
 		applyTimeout:   o.ApplyTimeout,

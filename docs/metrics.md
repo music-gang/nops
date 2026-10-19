@@ -47,6 +47,7 @@ at the bare path.
 | `nops_deployments` | `state` | Active deployments per state. |
 | `nops_waiting_since_timestamp_seconds` | `namespace`, `job`, `waiting` | Since when a deployment waits for an `approval` or a `canary_promotion`. |
 | `nops_unparsed_files` | | Files the last detection cycle couldn't parse. |
+| `nops_refused_files` | `repo` | Files the last cycle refused because the repository's `jobs` doesn't match their job. |
 | `nops_detection_skipped_jobs` | | Jobs the last cycle couldn't plan because of a Nomad error. |
 | `nops_orphan_jobs` | | [Orphans](architecture.md#orphan-jobs): removed from git, still running. |
 | `nops_paused` | | 1 if someone paused every job. |
@@ -82,7 +83,7 @@ groups:
         annotations:
           summary: "{{ $labels.namespace }}/{{ $labels.job }} has waited for {{ $labels.waiting }} for over a day"
       - alert: NopsCannotReadAJob
-        expr: nops_unparsed_files > 0 or nops_job_invalid_meta == 1
+        expr: nops_unparsed_files > 0 or nops_refused_files > 0 or nops_job_invalid_meta == 1
         for: 15m
       - alert: NopsNotificationsFailing
         expr: increase(nops_notifications_failed_total[1h]) > 0

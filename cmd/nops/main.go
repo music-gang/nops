@@ -125,7 +125,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	eng := engine.New(engine.Options{
 		Store: st, Nomad: nomadClient, Snapshots: repos, Notifier: notifier, Hooks: hooksRunner,
-		Namespaces: cfg.NomadNamespaces, DriftInterval: cfg.DriftInterval,
+		Namespaces: cfg.NomadNamespaces, RepositoryJobs: repositoryJobs(cfg.Repositories), DriftInterval: cfg.DriftInterval,
 		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, SyncWindowLocation: cfg.SyncWindowLocation, Log: log,
 	})
 
@@ -239,4 +239,16 @@ func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, 
 		// config.Load's check() already refuses any other value.
 		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)
 	}
+}
+
+// repositoryJobs gives the engine the jobs each repository may declare: those
+// with a jobs attribute only, since any other may declare any job.
+func repositoryJobs(repos []config.Repository) map[string][]string {
+	out := map[string][]string{}
+	for _, r := range repos {
+		if r.Jobs != nil {
+			out[r.Name] = r.Jobs
+		}
+	}
+	return out
 }

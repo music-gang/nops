@@ -125,7 +125,8 @@ type collector struct {
 	o Options
 
 	buildInfo, loopSuccess, deployments, waitingSince *prometheus.Desc
-	unparsedFiles, skippedJobs, orphanJobs, paused    *prometheus.Desc
+	unparsedFiles, refusedFiles, skippedJobs          *prometheus.Desc
+	orphanJobs, paused                                *prometheus.Desc
 	jobInfo, jobDrift, jobPaused, jobBlocked, jobMeta *prometheus.Desc
 	notificationsFailed, tokenExpires                 *prometheus.Desc
 }
@@ -146,6 +147,9 @@ func newCollector(o Options) *collector {
 			append(job, "waiting"), nil),
 		unparsedFiles: prometheus.NewDesc("nops_unparsed_files",
 			"Files the last detection cycle could not parse, or that name a namespace nops does not manage.", nil, nil),
+		refusedFiles: prometheus.NewDesc("nops_refused_files",
+			"Files the last detection cycle refused because the jobs attribute of their repository does not match the job they declare.",
+			[]string{"repo"}, nil),
 		skippedJobs: prometheus.NewDesc("nops_detection_skipped_jobs",
 			"Managed jobs the last detection cycle could not plan because of a Nomad failure.", nil, nil),
 		orphanJobs: prometheus.NewDesc("nops_orphan_jobs",
@@ -174,7 +178,7 @@ func newCollector(o Options) *collector {
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{
 		c.buildInfo, c.loopSuccess, c.deployments, c.waitingSince,
-		c.unparsedFiles, c.skippedJobs, c.orphanJobs, c.paused,
+		c.unparsedFiles, c.refusedFiles, c.skippedJobs, c.orphanJobs, c.paused,
 		c.jobInfo, c.jobDrift, c.jobPaused, c.jobBlocked, c.jobMeta,
 		c.notificationsFailed, c.tokenExpires,
 	} {
@@ -216,6 +220,13 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	if !st.At.IsZero() {
 		gauge(c.paused, boolValue(c.o.Engine.PausedAll() != nil))
 		gauge(c.unparsedFiles, float64(st.Unparsed))
+		refused := map[string]int{}
+		for _, f := range st.Refused {
+			refused[f.Repository]++
+		}
+		for _, r := range c.o.Git.Repositories() {
+			gauge(c.refusedFiles, float64(refused[r.Name]), r.Name)
+		}
 		gauge(c.skippedJobs, float64(st.Skipped))
 		gauge(c.orphanJobs, float64(st.Orphans))
 	}

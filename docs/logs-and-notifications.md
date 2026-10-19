@@ -9,7 +9,7 @@ Nops logs JSON lines through `log/slog`, with the keys `deployment_id`,
 |---|---|
 | State transition, canary promotion, pause, resume | INFO |
 | Unknown meta key, notification not delivered | WARN |
-| Deployment `failed`, invalid meta value, job that doesn't parse | ERROR |
+| Deployment `failed`, invalid meta value, job that doesn't parse or that its repository may not declare | ERROR |
 | Nomad or SQLite error | ERROR |
 
 ## Notifications

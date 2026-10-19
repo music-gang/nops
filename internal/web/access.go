@@ -204,6 +204,18 @@ func (s *server) observations(r *http.Request) []engine.Observation {
 	return out
 }
 
+// refused are the files of the last cycle whose job their repository may not
+// declare, in namespaces the subject can read.
+func (s *server) refused(r *http.Request) []engine.RefusedFile {
+	var out []engine.RefusedFile
+	for _, f := range s.engine.Status().Refused {
+		if allows(r, f.Namespace, acl.Read) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // orphans are the orphan jobs in namespaces the subject can read.
 func (s *server) orphans(r *http.Request) []engine.Orphan {
 	var out []engine.Orphan

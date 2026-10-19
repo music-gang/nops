@@ -1117,6 +1117,52 @@ func TestOverviewNeedsAttentionListsOrphansLast(t *testing.T) {
 	mustNotContain(t, page, `action="/jobs/default/old`)
 }
 
+func refusedStatus() engine.Status {
+	return engine.Status{At: testNow, Managed: 1, Refused: []engine.RefusedFile{
+		{Repository: "apps", Path: "deploy/crm.nomad.hcl", Namespace: "default", JobID: "crm"},
+		{Repository: "apps", Path: "deploy/db.nomad.hcl", Namespace: "labs", JobID: "db"},
+	}}
+}
+
+func TestOverviewListsTheRefusedFiles(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: refusedStatus()}, "")
+	page := ts.get("/")
+	mustContain(t, page,
+		"The repository apps may not declare the job", "default/crm", "deploy/crm.nomad.hcl", "labs/db", "deploy/db.nomad.hcl",
+		`<span class="pill state-pending">degraded</span>`)
+	if n := strings.Count(page, "may not declare the job"); n != 2 {
+		t.Errorf("%d refused files listed, want 2", n)
+	}
+	// A refused file is not one that does not parse.
+	mustNotContain(t, page, "could not be parsed", "not being looked for")
+}
+
+func TestRefusedFilesAreListedToWhoCanReadTheirNamespace(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{status: refusedStatus()}, `namespace "labs" { policy = "read" }`)
+	page := ts.get("/")
+	mustContain(t, page, "labs/db", "deploy/db.nomad.hcl")
+	mustNotContain(t, page, "default/crm", "deploy/crm.nomad.hcl")
+
+	// The pill counts every file, as the metric does.
+	ts = dashboardAs(t, &fakeStore{}, &fakeEngine{status: refusedStatus()}, `namespace "other" { policy = "read" }`)
+	page = ts.get("/")
+	mustContain(t, page, `<span class="pill state-pending">degraded</span>`)
+	mustNotContain(t, page, "may not declare the job")
+}
+
+func TestRepositoriesPageListsTheRefusedFilesUnderTheirRepository(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: refusedStatus()}, "")
+	ts.git.snap = gitwatch.Snapshot{Repository: "default", Commit: "0123456789abcdef"}
+	ts.git.more = []gitwatch.Repo{{Name: "apps", Snapshot: gitwatch.Snapshot{Repository: "apps", Commit: "fedcba9876543210"}}}
+
+	page := ts.get("/repositories")
+	mustContain(t, page, "deploy/crm.nomad.hcl", "deploy/db.nomad.hcl")
+	// They come after the row of apps, not of default.
+	if strings.Index(page, "deploy/crm.nomad.hcl") < strings.Index(page, "fedcba9") {
+		t.Error("the refused files of apps are listed before its row")
+	}
+}
+
 func TestOverviewSaysWhenTheOrphanCheckIsSuspended(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Unparsed: 1, OrphanCheckSkipped: true}}, "")
 	mustContain(t, ts.get("/"), "Jobs removed from git are not being looked for while a file does not parse", "What was found before stays listed")
