@@ -283,7 +283,7 @@ func (s *server) require(next http.Handler) http.Handler {
 				return
 			}
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
-				http.Redirect(w, r, s.basePath+loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, s.basePath+loginPath+"?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusFound)
 				return
 			}
 			http.Error(w, "login required", http.StatusUnauthorized)
