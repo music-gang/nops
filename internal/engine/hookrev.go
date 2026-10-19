@@ -152,6 +152,7 @@ func (e *Engine) registerRevision(ctx context.Context, log *slog.Logger, ns stri
 		return err
 	default:
 		index = derefUint64(live.JobModifyIndex)
+		nextVersion(job, live)
 	}
 	plan, err := e.nomad.Plan(ctx, job)
 	if err != nil {
@@ -160,8 +161,13 @@ func (e *Engine) registerRevision(ctx context.Context, log *slog.Logger, ns stri
 	if plan.Diff == nil || plan.Diff.Type == "None" {
 		return nil
 	}
-	if _, err := e.nomad.RegisterCAS(ctx, job, index, false); err != nil {
+	// No source: the file declares the hook's ID, not the revision's.
+	res, err := e.nomad.RegisterCAS(ctx, job, index, false, nil)
+	if err != nil {
 		return err
+	}
+	if res.Warnings != "" {
+		log.WarnContext(ctx, "nomad warnings on the register", "hook", h.HookID, "revision", h.Revision, "warnings", res.Warnings)
 	}
 	log.InfoContext(ctx, "hook revision registered", "hook", h.HookID, "revision", h.Revision)
 	return nil

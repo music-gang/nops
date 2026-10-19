@@ -341,6 +341,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 			log.ErrorContext(ctx, "copy live scaling counts", "error", err)
 			return
 		}
+		nextVersion(job, live)
 	}
 
 	var evalID string
@@ -353,7 +354,7 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		}
 		switch {
 		case plan.Diff != nil && plan.Diff.Type != "None":
-			res, err := e.nomad.RegisterCAS(ctx, job, d.CASIndex, false)
+			res, err := e.nomad.RegisterCAS(ctx, job, d.CASIndex, false, submissionOf(d))
 			if err != nil {
 				if errors.Is(err, nomadx.ErrCASConflict) {
 					if d.DiffHash != "" {
@@ -371,6 +372,9 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 				return
 			}
 			evalID = res.EvalID
+			if res.Warnings != "" {
+				log.WarnContext(ctx, "nomad warnings on the register", "warnings", res.Warnings)
+			}
 		case Rerun(d):
 			// Nothing to register, and nothing is: the plan is empty (invariant
 			// 1). The live job is the one this retry waits on, as when a register
@@ -421,6 +425,30 @@ func (e *Engine) stepRegister(ctx context.Context, log *slog.Logger, d *store.De
 		return
 	}
 	log.InfoContext(ctx, "apply registered", "applied_index", appliedIndex)
+}
+
+// nextVersion gives job the version after the live one. Nomad reads a register
+// without a source at a version that isn't above the live one as a revert, and
+// attaches the source of that version: a parsed job is at version 0. The version
+// is read with the CAS index and Nomad changes it only with the index, so a
+// register that passes the check has the right one.
+func nextVersion(job, live *api.Job) {
+	next := uint64(0)
+	if live.Version != nil {
+		next = *live.Version
+	}
+	next++
+	job.Version = &next
+}
+
+// submissionOf is the source Nomad keeps with the version d registers: the file
+// and var-file its spec was parsed from. A deployment created before they were
+// recorded has none, and registers without a source.
+func submissionOf(d *store.Deployment) *api.JobSubmission {
+	if d.JobSource == "" {
+		return nil
+	}
+	return &api.JobSubmission{Source: d.JobSource, Format: "hcl2", Variables: d.JobVars}
 }
 
 // registerRetry follows a Nomad error that stopped the register step before it

@@ -110,7 +110,12 @@ type Deployment struct {
 	CommitAuthor  string
 	SpecHash      string
 	JobSpec       string // JSON of the parsed job to register
-	PlanDiff      string // JSON of the redacted plan diff; may be empty
+	// JobSource and JobVars are the job file and the var-file (with nops_commit)
+	// JobSpec was parsed from, registered with it as the version's source. Empty
+	// for a deployment created before they were recorded.
+	JobSource string
+	JobVars   string
+	PlanDiff  string // JSON of the redacted plan diff; may be empty
 	// DiffHash is the hash of the full plan diff, before redaction, that
 	// detection saw; empty without drift and for a deployment created before it
 	// was recorded. A live index that moves while the diff keeps this hash is a
@@ -410,10 +415,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments
-		(id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec, plan_diff, diff_hash,
+		(id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec, job_source, job_vars, plan_diff, diff_hash,
 		 policy, state, error, cas_index, retry_of, window_lifted_by, created_at, updated_at)
-		VALUES (?, ?, ?, COALESCE(NULLIF(?, ''), 'default'), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-		id, d.JobID, d.Namespace, d.Repository, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.PlanDiff, d.DiffHash,
+		VALUES (?, ?, ?, COALESCE(NULLIF(?, ''), 'default'), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		id, d.JobID, d.Namespace, d.Repository, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.JobSource, d.JobVars, d.PlanDiff, d.DiffHash,
 		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, d.WindowLiftedBy, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -675,7 +680,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 }
 
 const deploymentCols = `id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
-	plan_diff, diff_hash, policy, state, cas_index, applied_index, applied_version, eval_id, error, decided_by, decided_at,
+	job_source, job_vars, plan_diff, diff_hash, policy, state, cas_index, applied_index, applied_version, eval_id, error, decided_by, decided_at,
 	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -684,6 +689,7 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	var (
 		d                                   Deployment
 		plan, diffHash, eval, errMsg, by    sql.NullString
+		source, vars                        sql.NullString
 		decidedAt                           sql.NullString
 		subject, author, retriedBy, retried sql.NullString
 		retryOf, liftedBy                   sql.NullString
@@ -692,11 +698,12 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		cas                                 int64
 		policy, state, createdAt, updatedAt string
 	)
-	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.Repository, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &plan, &diffHash,
+	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.Repository, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &source, &vars, &plan, &diffHash,
 		&policy, &state, &cas, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
 		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
+	d.JobSource, d.JobVars = source.String, vars.String
 	d.PlanDiff, d.DiffHash, d.EvalID, d.Error, d.DecidedBy = plan.String, diffHash.String, eval.String, errMsg.String, by.String
 	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
 	d.WindowLiftedBy = liftedBy.String

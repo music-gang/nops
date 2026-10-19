@@ -62,8 +62,9 @@ Each cycle, for every managed job, Nops:
 
 A job's drift, hooks and state live in memory and are rebuilt every cycle;
 only deployments go to SQLite. A deployment stores the full spec to register,
-so apply registers exactly what was planned and approved. The dashboard never
-shows that spec, only the redacted diff.
+with the file and var-file it was parsed from, so apply registers exactly what
+was planned and approved. The dashboard never shows that spec, only the
+redacted diff.
 
 ### Rules detection keeps
 

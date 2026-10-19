@@ -63,7 +63,9 @@ job "api-backup" {
 
 **Variables.** If a `<name>.vars.hcl` file sits next to `<name>.nomad.hcl`,
 Nops passes it as the job's variables, like `nomad job run -var-file`.
-Otherwise every variable but `nops_commit` needs a default.
+Otherwise every variable but `nops_commit` needs a default. Nomad keeps the
+var-file with each version Nops registers, so a token with `read-job` reads all
+of its values, also those the job doesn't use.
 
 **The commit.** Nops sets the variable `nops_commit` to the full SHA of the
 commit it read the file at. A job that declares it can use it, for

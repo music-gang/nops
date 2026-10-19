@@ -489,8 +489,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 15 {
-		t.Errorf("user_version = %d, %v; want 15", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 16 {
+		t.Errorf("user_version = %d, %v; want 16", v, err)
 	}
 }
 
@@ -635,6 +635,24 @@ func TestDiffHashRoundTrip(t *testing.T) {
 		got, err := s.GetDeployment(ctx, tc.id)
 		if err != nil || got.DiffHash != tc.want {
 			t.Errorf("diff hash of %s = %q (%v), want %q", tc.id, got.DiffHash, err, tc.want)
+		}
+	}
+}
+
+func TestJobSourceRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	with := newDep("web")
+	with.JobSource, with.JobVars = "job \"web\" {}", "count = 2"
+	mustCreate(t, s, with)
+	without := mustCreate(t, s, newDep("api"))
+
+	for _, tc := range []struct {
+		id, source, vars string
+	}{{with.ID, with.JobSource, with.JobVars}, {without.ID, "", ""}} {
+		got, err := s.GetDeployment(ctx, tc.id)
+		if err != nil || got.JobSource != tc.source || got.JobVars != tc.vars {
+			t.Errorf("source of %s = %q, %q (%v), want %q, %q", tc.id, got.JobSource, got.JobVars, err, tc.source, tc.vars)
 		}
 	}
 }

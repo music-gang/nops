@@ -94,6 +94,8 @@ type fakeNomad struct {
 	promoted   []string // Nomad deployment IDs PromoteDeployment was called for
 	promoteErr error    // what PromoteDeployment returns
 	onPromote  func()   // runs inside PromoteDeployment, before it answers
+
+	registerWarnings string // what RegisterCAS answers as Warnings
 }
 
 type registerCall struct {
@@ -101,6 +103,8 @@ type registerCall struct {
 	namespace string
 	index     uint64
 	preserve  bool
+	version   uint64             // the Version of the job registered
+	sub       *api.JobSubmission // nil when registered without a source
 }
 
 // nsKey is how the fake's tables are keyed: the job ID alone in the default
@@ -234,7 +238,7 @@ func (f *fakeNomad) Plan(_ context.Context, j *api.Job) (*api.JobPlanResponse, e
 	return &api.JobPlanResponse{Diff: fx.diff}, nil
 }
 
-func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, preserve bool) (*nomadx.RegisterResult, error) {
+func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, preserve bool, sub *api.JobSubmission) (*nomadx.RegisterResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := nsKey(nsOf(j), *j.ID)
@@ -244,7 +248,7 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	if live, ok := f.live[id]; ok && derefUint64(live.JobModifyIndex) != index {
 		return nil, fmt.Errorf("register job %s at index %d: %w: live index is %d", id, index, nomadx.ErrCASConflict, derefUint64(live.JobModifyIndex))
 	}
-	f.registerCalls = append(f.registerCalls, registerCall{id: *j.ID, namespace: nsOf(j), index: index, preserve: preserve})
+	f.registerCalls = append(f.registerCalls, registerCall{id: *j.ID, namespace: nsOf(j), index: index, preserve: preserve, version: derefUint64(j.Version), sub: sub})
 	cp, err := deepCopyJob(j)
 	if err != nil {
 		return nil, err
@@ -255,7 +259,7 @@ func (f *fakeNomad) RegisterCAS(_ context.Context, j *api.Job, index uint64, pre
 	version := f.versions[id]
 	cp.Version = &version
 	f.live[id] = cp
-	return &nomadx.RegisterResult{EvalID: "eval-" + id, JobModifyIndex: newIndex}, nil
+	return &nomadx.RegisterResult{EvalID: "eval-" + id, JobModifyIndex: newIndex, Warnings: f.registerWarnings}, nil
 }
 
 func (f *fakeNomad) ListJobs(_ context.Context, ns string) ([]nomadx.JobStub, error) {

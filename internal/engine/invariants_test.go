@@ -144,9 +144,9 @@ func (n *journalNomad) Plan(ctx context.Context, job *api.Job) (*api.JobPlanResp
 	return res, err
 }
 
-func (n *journalNomad) RegisterCAS(ctx context.Context, job *api.Job, index uint64, preserve bool) (*nomadx.RegisterResult, error) {
+func (n *journalNomad) RegisterCAS(ctx context.Context, job *api.Job, index uint64, preserve bool, sub *api.JobSubmission) (*nomadx.RegisterResult, error) {
 	n.j.add("nomad:register:%s", *job.ID)
-	res, err := n.Nomad.RegisterCAS(ctx, job, index, preserve)
+	res, err := n.Nomad.RegisterCAS(ctx, job, index, preserve, sub)
 	if err == nil && n.onRegister != nil {
 		n.onRegister(*job.ID)
 	}
