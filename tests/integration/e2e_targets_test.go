@@ -103,11 +103,14 @@ job %q {
 // first version and an update of it, which replaces the allocations already on
 // the node, must each reach completed.
 func TestApplyOfASystemOrSysbatchJobCompletes(t *testing.T) {
-	cases := map[string]string{
-		"system":   "sleep 600",
-		"sysbatch": "exit 0",
+	// The update block and kill_timeout keep Nomad's defaults (10s of minimum
+	// healthy time per version, 5s to stop the shell of v1) out of the test's
+	// time. A sysbatch job takes no update block.
+	cases := map[string]struct{ script, update string }{
+		"system":   {script: "sleep 600", update: `update { min_healthy_time = "1s" }`},
+		"sysbatch": {script: "exit 0"},
 	}
-	for name, script := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			_, raw := newClient(t)
@@ -122,16 +125,18 @@ job %q {
     nops_policy  = "auto"
     tag          = %q
   }
+  %s
   group "g" {
     task "t" {
-      driver = "raw_exec"
+      driver       = "raw_exec"
+      kill_timeout = "1s"
       config {
         command = "/bin/sh"
         args    = ["-c", %q]
       }
     }
   }
-}`, jobID, name, tag, script)
+}`, jobID, name, tag, c.update, c.script)
 
 				snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
 					Commit: tag, Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: hcl}},
