@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path"
 	"sort"
+	"strconv"
 
 	"github.com/hashicorp/nomad/api"
 
@@ -221,10 +222,11 @@ const (
 // count as a job, logged here. The RefusedFile is set for fileRefused only.
 func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, fileOutcome, RefusedFile) {
 	log := e.log.With("repo", ref.repo, "file", f.Path, "commit", ref.sha)
-	key := parseCacheKey(f.Content, f.Vars)
+	vars := commitVars(f.Vars, ref.sha)
+	key := parseCacheKey(f.Content, vars)
 	entry, ok := e.cachedParse(prev, key)
 	if !ok {
-		job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, f.Vars)
+		job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, vars)
 		if err == nil && job != nil {
 			defaultNamespace(job)
 		}
@@ -258,6 +260,17 @@ func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[s
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
 	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta)}, fileParsed, RefusedFile{}
+}
+
+// commitVariable is the HCL variable every job file may declare to get the
+// commit it was read at.
+const commitVariable = "nops_commit"
+
+// commitVars is the file's var-file with nops_commit appended: Nomad ignores
+// it for a job that doesn't declare it, and a var-file that sets it too
+// fails to parse on the duplicate.
+func commitVars(vars, commit string) string {
+	return vars + "\n" + commitVariable + " = " + strconv.Quote(commit) + "\n"
 }
 
 // jobAllowed reports whether one of the patterns ("<namespace>/<job ID>", already

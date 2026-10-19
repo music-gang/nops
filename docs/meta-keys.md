@@ -63,7 +63,14 @@ job "api-backup" {
 
 **Variables.** If a `<name>.vars.hcl` file sits next to `<name>.nomad.hcl`,
 Nops passes it as the job's variables, like `nomad job run -var-file`.
-Otherwise every variable needs a default.
+Otherwise every variable but `nops_commit` needs a default.
+
+**The commit.** Nops sets the variable `nops_commit` to the full SHA of the
+commit it read the file at. A job that declares it can use it, for
+example `image = "ghcr.io/example/shop-api:${var.nops_commit}"`, or
+`substr(var.nops_commit, 0, 7)` for the short form. Then each new commit of
+its repository changes the job and goes through its policy. A
+`<name>.vars.hcl` that sets `nops_commit` makes the file fail to parse.
 
 **Keys with dots.** HCL can't mix the block and object forms of `meta`. If a
 job also has keys like `diun.enable`, write the whole block as
