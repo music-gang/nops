@@ -6,7 +6,7 @@
 # the CA bundle (nops calls git, OIDC, Nomad and notification endpoints over
 # TLS), tzdata and a non-root user (nonroot, uid 65532). Pinned by digest;
 # Dependabot bumps it.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/nops /nops
