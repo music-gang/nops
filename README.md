@@ -16,7 +16,7 @@ that run before or after a deployment.
 
 > **Status:** ready to use, still at `v0`: a minor release may change the
 > configuration or the database, and its release notes say how to upgrade.
-> Built for a self-hosted cluster for personal use. Inspired by
+> Built for a self-hosted cluster, as a single instance. Inspired by
 > [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops).
 
 **Try it:** [getting started](docs/getting-started.md) takes about fifteen

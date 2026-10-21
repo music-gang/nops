@@ -3,8 +3,8 @@
 Nops is a semi-automatic GitOps controller for HashiCorp Nomad (Go, module
 `github.com/music-gang/nops`). It reads HCL jobs from a git repo and applies
 them according to a per-job policy (`auto` / `approval` / `none`), with state in
-SQLite, an approval dashboard and pre/post deployment hooks. Self-hosted
-cluster, personal use: **grow with the need**
+SQLite, an approval dashboard and pre/post deployment hooks. One instance,
+any size of cluster: **grow with the need**
 ([`docs/philosophy.md`](docs/philosophy.md)).
 
 This file holds **only what an agent needs on top of the docs**. How Nops
@@ -32,11 +32,11 @@ repeat them, and read the relevant page before extending a part.
   before a new library, English everywhere.
 - **The need picks the features, never the shortcuts.**
   [Grow with the need](docs/philosophy.md) decides what gets built, not how
-  well. The one limit a design may assume is that Nops runs on a single
-  node: personal use and today's size are no measure ("there are few
+  well. The one limit a design may assume is that Nops runs as a single
+  instance: personal use and today's size are no measure ("there are few
   namespaces", "the table stays short"). A request costs what it asks for,
   not what the store holds; a choice that can't, says so in the plan. The
-  right structure for one node, not a distributed one.
+  right structure for one instance, not a distributed one.
 - **Write short, by the standards** of
   [`docs/development.md#writing-docs`](docs/development.md#writing-docs)
   (Diátaxis, Google style, Vale clean). It applies to every doc change,
