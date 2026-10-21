@@ -32,10 +32,11 @@ repeat them, and read the relevant page before extending a part.
   before a new library, English everywhere.
 - **The need picks the features, never the shortcuts.**
   [Grow with the need](docs/philosophy.md) decides what gets built, not how
-  well: no design rests on today's size ("there are few namespaces", "the
-  table stays short"). A request costs what it asks for, not what the store
-  holds; a choice that can't, says so in the plan. The right structure for
-  one node, not a distributed one.
+  well. The one limit a design may assume is that Nops runs on a single
+  node: personal use and today's size are no measure ("there are few
+  namespaces", "the table stays short"). A request costs what it asks for,
+  not what the store holds; a choice that can't, says so in the plan. The
+  right structure for one node, not a distributed one.
 - **Write short, by the standards** of
   [`docs/development.md#writing-docs`](docs/development.md#writing-docs)
   (Diátaxis, Google style, Vale clean). It applies to every doc change,
