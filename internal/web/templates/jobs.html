@@ -4,9 +4,9 @@
   <h1 class="pagehead__title">Jobs</h1>
   <p class="pagehead__text">Every managed job, policy <span class="mono">none</span> included, against git: what Nops last observed, rebuilt every detection cycle.</p>
 </div>
+{{template "list_search" .List}}
 <div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 {{template "filters" .Filters}}
-{{template "list_form" .List}}
 {{if .Rows}}
 <div class="box">
   <table class="table">
@@ -33,9 +33,9 @@
   </table>
 </div>
 {{else}}
-<p class="empty box">{{if or .Any .List.Search .List.Namespace .List.Repository .List.Policy .List.Warnings .List.Error}}No job matches this filter.{{else}}No managed job observed yet.{{end}}</p>
+<p class="empty box">{{if or .Any .List.Keep .List.Search .List.Error}}No job matches this filter.{{else}}No managed job observed yet.{{end}}</p>
 {{end}}
-{{template "pager" (pager .List "Previous" "Next")}}
+{{template "list_foot" .List}}
 </div>
 {{template "chrome_foot" .}}
 {{end}}

@@ -519,7 +519,7 @@ func TestJobsPageFilter(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown filter: status %d, want 400", rec.Code)
 	}
-	mustContain(t, rec.Body.String(), "is not a sync state", `href="/jobs">Clear`)
+	mustContain(t, rec.Body.String(), "is not a sync state", `<a href="/jobs">Show everything</a>`)
 
 	// A known state with no job: an empty page that still says which filter it is.
 	page = newServer().get("/jobs?state=deploying")

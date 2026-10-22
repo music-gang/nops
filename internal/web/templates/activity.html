@@ -4,9 +4,9 @@
   <h1 class="pagehead__title">Activity</h1>
   <p class="pagehead__text">Every deployment, newest first.</p>
 </div>
+{{template "list_search" .List}}
 <div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 {{template "filters" .Filters}}
-{{template "list_form" .List}}
 {{if .Days}}
 {{range .Days}}
 <section class="box">
@@ -26,9 +26,9 @@
 </section>
 {{end}}
 {{else}}
-<p class="empty box">{{if or .Any .List.Search .List.Namespace .List.Job .List.Repository .List.Policy .List.DecidedBy .List.Since .List.Until .List.Error}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
+<p class="empty box">{{if or .Any .List.Keep .List.Search .List.Error}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
 {{end}}
-{{template "pager" (pager .List "Newer" "Older")}}
+{{template "list_foot" .List}}
 </div>
 {{template "chrome_foot" .}}
 {{end}}

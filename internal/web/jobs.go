@@ -304,8 +304,8 @@ func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
 	data := jobsData{baseData: s.base(r, "jobs")}
 	q, err := s.dashboardList(w, r, jobList)
 	if err != nil {
-		data.List = s.listView(r, q, page{})
-		data.List.Error, data.List.Fields = err.Error(), jobFields
+		data.List = s.listView(r, q, page{}, "live", jobSearch)
+		data.List.Error = err.Error()
 		w.WriteHeader(http.StatusBadRequest)
 		s.render(w, r, "jobs", data)
 		return
@@ -323,8 +323,10 @@ func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
 			data.Rows = append(data.Rows, s.orphanRow(*e.orphan, e.latest))
 		}
 	}
-	data.List = s.listView(r, q, p)
-	data.List.Fields = jobFields
+	data.List = s.listView(r, q, p, "live", jobSearch)
+	data.List.NewerLabel, data.List.OlderLabel = "Previous", "Next"
+	data.List.Menus = append(s.menu(r, "Policy", "policy", []string{string(meta.PolicyAuto), string(meta.PolicyApproval), string(meta.PolicyNone)}, q.Policy),
+		s.menu(r, "Repository", "repository", s.repositoryNames(), q.Repository)...)
 
 	total := 0
 	for _, n := range counts {
@@ -339,29 +341,11 @@ func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	count := func(set func(*listQuery, string)) func(string) string {
-		return func(v string) string {
-			c := q
-			set(&c, v)
-			n := 0
-			for _, e := range entries {
-				if e.matches(c, true) {
-					n++
-				}
-			}
-			return strconv.Itoa(n)
-		}
-	}
-	data.List.Policies = options("Any policy", []string{string(meta.PolicyAuto), string(meta.PolicyApproval), string(meta.PolicyNone)}, q.Policy,
-		count(func(c *listQuery, v string) { c.Policy = v }))
-	if names := s.repositoryNames(); names != nil {
-		data.List.Repositories = options("Any repository", names, q.Repository, count(func(c *listQuery, v string) { c.Repository = v }))
-	}
 	s.render(w, r, "jobs", data)
 }
 
-// jobFields are the filters of the Jobs page.
-var jobFields = listFields{Namespace: true, Warnings: true}
+// jobSearch says what the search of the Jobs page looks in.
+const jobSearch = "Search job, namespace or file"
 
 // -- GET /jobs/{namespace}/{job} --------------------------------------------
 
@@ -461,9 +445,12 @@ type jobData struct {
 	Issues                  []meta.Issue
 	Deployments             []deploymentCard
 	DeploymentFilters       []filterLink
-	List                    listView   // the search, filters and pages of Deployments
-	Nomad                   *nomadView // what Nomad says of the job; nil without a Nomad to ask
-	NomadURL                string     // the job in the Nomad UI; "" without a -nomad-ui-url
+	List                    listView // the search, filters and pages of Deployments
+	// ListTools says the search and the filters of Deployments show: with more
+	// deployments than a page holds, or one of them in use.
+	ListTools bool
+	Nomad     *nomadView // what Nomad says of the job; nil without a Nomad to ask
+	NomadURL  string     // the job in the Nomad UI; "" without a -nomad-ui-url
 }
 
 func (s *server) job(w http.ResponseWriter, r *http.Request) {
@@ -514,14 +501,17 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		for _, d := range deps {
 			data.Deployments = append(data.Deployments, s.withRetry(r, s.card(d), d, latest))
 		}
-		data.List = s.listView(r, q, p)
-		if data.DeploymentFilters, _, err = s.stateFilters(r, dq, q.State); err != nil {
+		data.List = s.listView(r, q, p, "live-deployments", "Search commit, author or ID")
+		var all int
+		if data.DeploymentFilters, all, err = s.stateFilters(r, dq, q.State); err != nil {
 			s.serverError(w, r, "count deployments", err)
 			return
 		}
+		data.ListTools = all > q.PerPage || q.Search != "" || q.State != "" || q.Cursor != nil
 	} else {
-		data.List = s.listView(r, q, page{})
+		data.List = s.listView(r, q, page{}, "live-deployments", "Search commit, author or ID")
 		data.List.Error = err.Error()
+		data.ListTools = true
 	}
 	data.Nomad = s.nomadPanel(r.Context(), ns, id, 0)
 	data.NomadURL = s.nomadJobURL(ns, id)

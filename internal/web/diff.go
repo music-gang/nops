@@ -22,7 +22,6 @@ var templateFuncs = template.FuncMap{
 	"short":          short,
 	"asset":          asset,
 	"nomadClass":     nomadClass,
-	"pager":          func(l listView, newer, older string) pagerView { return pagerView{List: l, Newer: newer, Older: older} },
 }
 
 // diffCell renders one Old/New diff cell. A redacted value becomes a pill so

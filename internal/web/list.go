@@ -346,33 +346,59 @@ func (s *server) listLink(r *http.Request, set map[string]string) string {
 	return link
 }
 
-// optionView is a choice of a select of the filter form.
-type optionView struct {
-	Value, Label string
-	Selected     bool
-}
-
-// listFields are the filters a list's form shows, besides the search, the
-// policy and the repository.
-type listFields struct {
-	Namespace, Job, DecidedBy, Time, Warnings bool
-}
-
-// listView is the filter form of a list and the links to the pages next to it.
+// listView is what a list shows around its rows: the search, the menus of its
+// filters, and, at the bottom, the links to the pages next to it and the sizes
+// of a page.
 type listView struct {
 	listQuery
-	Fields   listFields
-	PerPages []int
-	// Path is where the form goes; Clear is the list with no search and no filter.
-	Path, Clear  string
-	Policies     []optionView
-	Repositories []optionView // none with a single repository
-	Newer, Older string       // links, "" when there is no such page
-	Error        string       // what is wrong with the parameters
+	// Path is where the search goes; Live the region of the page it refreshes
+	// as the person types, while the search box, outside it, keeps the focus.
+	Path, Live  string
+	Placeholder string
+	// Keep are the parameters a new search keeps: the filters chosen.
+	Keep  []param
+	Menus []menuView
+	Sizes []sizeLink
+	// Newer and Older are links, "" when there is no such page, with their
+	// words: Newer and Older for deployments, Previous and Next for jobs.
+	Newer, Older           string
+	NewerLabel, OlderLabel string
+	Error                  string // what is wrong with the parameters
 }
 
-func (s *server) listView(r *http.Request, q listQuery, p page) listView {
-	v := listView{listQuery: q, PerPages: perPages, Path: s.basePath + r.URL.Path, Clear: s.basePath + r.URL.Path}
+type param struct{ Name, Value string }
+
+// menuView is a filter of a list as a menu of links: it works without
+// JavaScript, and a link shows what its sender saw.
+type menuView struct {
+	Label  string // "Policy"
+	Chosen string // "" for any
+	Items  []menuItem
+}
+
+type menuItem struct {
+	Label, Href string
+	Selected    bool
+}
+
+// sizeLink is one of the sizes of a page, as a link.
+type sizeLink struct {
+	N        int
+	Href     string
+	Selected bool
+}
+
+func (s *server) listView(r *http.Request, q listQuery, p page, live, placeholder string) listView {
+	v := listView{
+		listQuery: q, Path: s.basePath + r.URL.Path, Live: live, Placeholder: placeholder,
+		NewerLabel: "Newer", OlderLabel: "Older",
+	}
+	for name, vals := range r.URL.Query() {
+		if name != "q" && name != "next_token" && len(vals) > 0 && vals[0] != "" {
+			v.Keep = append(v.Keep, param{name, vals[0]})
+		}
+	}
+	slices.SortFunc(v.Keep, func(a, b param) int { return strings.Compare(a.Name, b.Name) })
 	if p.Older != nil {
 		v.Older = s.listLink(r, map[string]string{"next_token": p.Older.String()})
 	}
@@ -382,24 +408,27 @@ func (s *server) listView(r *http.Request, q listQuery, p page) listView {
 	case p.FirstNewer:
 		v.Newer = s.listLink(r, nil)
 	}
+	// The sizes show only where they change something: with more than one
+	// page, or a size that is not the default to go back from.
+	if v.Newer != "" || v.Older != "" || q.PerPage != defaultPerPage {
+		for _, n := range perPages {
+			v.Sizes = append(v.Sizes, sizeLink{N: n, Href: s.listLink(r, map[string]string{"per_page": strconv.Itoa(n)}), Selected: n == q.PerPage})
+		}
+	}
 	return v
 }
 
-// pagerView is the links of a list to the pages next to it, with their words:
-// Newer and Older for deployments, Previous and Next for jobs.
-type pagerView struct {
-	List         listView
-	Newer, Older string
-}
-
-// options builds a select of the form: "" for every value, then each value
-// with its count.
-func options(all string, values []string, chosen string, count func(string) string) []optionView {
-	out := []optionView{{Label: all, Selected: chosen == ""}}
-	for _, val := range values {
-		out = append(out, optionView{Value: val, Label: val + " (" + count(val) + ")", Selected: val == chosen})
+// menu is the filter of a parameter as a menu: "Any" then each value. With no
+// value to choose from, there is no menu.
+func (s *server) menu(r *http.Request, label, name string, values []string, chosen string) []menuView {
+	if len(values) == 0 {
+		return nil
 	}
-	return out
+	m := menuView{Label: label, Chosen: chosen, Items: []menuItem{{Label: "Any", Href: s.listLink(r, map[string]string{name: ""}), Selected: chosen == ""}}}
+	for _, v := range values {
+		m.Items = append(m.Items, menuItem{Label: v, Href: s.listLink(r, map[string]string{name: v}), Selected: v == chosen})
+	}
+	return []menuView{m}
 }
 
 // countLabel shows a count of maxCount+1 as "1000+".

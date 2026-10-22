@@ -106,21 +106,19 @@
     </div>
     {{end}}
 
-    <div id="live-deployments" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-deployments" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
     <section class="box">
       <header class="box__header"><h2 class="box__title">Deployments</h2></header>
-      <div class="box__body">
-      {{template "filters" .DeploymentFilters}}
-      {{template "list_form" .List}}
-      </div>
+      {{if .ListTools}}<div class="box__body box__body--list">{{template "list_search" .List}}</div>{{end}}
+      <div id="live-deployments" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live-deployments" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
+      {{if .ListTools}}<div class="box__body box__body--list">{{template "filters" .DeploymentFilters}}</div>{{end}}
       {{if .Deployments}}
       {{template "deployment_rows" .Deployments}}
       {{else}}
-      <p class="empty">{{if or .List.Search .List.State .List.Policy .List.Repository .List.Cursor .List.Error}}No deployment matches this filter.{{else}}This job never had a deployment.{{end}}</p>
+      <p class="empty">{{if or .List.Search .List.State .List.Cursor .List.Error}}No deployment matches this filter.{{else}}This job never had a deployment.{{end}}</p>
       {{end}}
+      {{if or .List.Newer .List.Older .List.Sizes}}<div class="box__body box__body--list">{{template "list_foot" .List}}</div>{{end}}
+      </div>
     </section>
-    {{template "pager" (pager .List "Newer" "Older")}}
-    </div>
   </div>
 
   {{if .InRepo}}

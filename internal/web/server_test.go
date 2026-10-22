@@ -85,10 +85,11 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		HookRuns: []hookRunView{{Phase: "pre", JobID: "hook", State: store.HookFailed, Error: "exit 1", StartedAt: tv, FinishedAt: tv}},
 	}
 	lv := listView{
-		listQuery: listQuery{PerPage: 50, Search: "web", State: "failed"}, Fields: deploymentFields, PerPages: perPages, Path: "/history", Clear: "/history",
-		Policies:     []optionView{{Label: "Any policy", Selected: true}, {Value: "auto", Label: "auto (3)"}},
-		Repositories: []optionView{{Label: "Any repository"}, {Value: "apps", Label: "apps (1000+)", Selected: true}},
-		Newer:        "/history?next_token=a", Older: "/history?next_token=b",
+		listQuery: listQuery{PerPage: 25, Search: "web", State: "failed"}, Path: "/history", Live: "live", Placeholder: "Search",
+		Keep:  []param{{"state", "failed"}},
+		Menus: []menuView{{Label: "Policy", Chosen: "auto", Items: []menuItem{{Label: "Any", Href: "/history"}, {Label: "auto", Href: "/history?policy=auto", Selected: true}}}},
+		Sizes: []sizeLink{{N: 25, Href: "/history?per_page=25", Selected: true}, {N: 50, Href: "/history?per_page=50"}},
+		Newer: "/history?next_token=a", Older: "/history?next_token=b", NewerLabel: "Newer", OlderLabel: "Older",
 	}
 	row := jobRow{
 		Namespace: "default", JobID: "web", Title: "default/web", Path: "/jobs/default/web", Policy: meta.PolicyApproval,
@@ -153,7 +154,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Filters: []filterLink{{Label: "All", Count: "1", Href: "/jobs", Active: true}, {Key: "blocked", Label: "Blocked", Count: "1", Href: "/jobs?state=blocked"}},
 			List:    lv,
 		},
-		"jobs (bad filter)": jobsData{baseData: baseData{Nav: "jobs"}, List: listView{PerPages: perPages, Error: "per_page is 25, 50 or 100"}},
+		"jobs (bad filter)": jobsData{baseData: baseData{Nav: "jobs"}, List: listView{Path: "/jobs", Live: "live", Error: "per_page is 25, 50 or 100"}},
 		"job": jobData{
 			baseData: baseData{Nav: "jobs"}, Namespace: "default", JobID: "web", Title: "default/web", InRepo: true, Policy: meta.PolicyApproval,
 			Sync: syncBlocked, SyncLabel: "Blocked", SyncClass: "state-failed", File: "web.nomad.hcl", Observed: tv,
@@ -164,6 +165,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			Deployments:       []deploymentCard{dc},
 			DeploymentFilters: []filterLink{{Label: "All", Count: "1000+", Href: "/jobs/default/web", Active: true}},
 			List:              lv,
+			ListTools:         true,
 			Nomad:             nv,
 			NomadURL:          "https://nomad.example.com/ui/jobs/web@default",
 		},

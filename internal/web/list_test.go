@@ -206,7 +206,7 @@ func TestActivityPages(t *testing.T) {
 
 	rec := ts.do("GET", "/history?per_page=25", nil, cookie)
 	page := rec.Body.String()
-	mustContain(t, page, `href="/deployments/d024"`, `rel="next"`, `aria-disabled="true">Newer`)
+	mustContain(t, page, `href="/deployments/d024"`, `rel="next"`, `class="is-disabled">&lsaquo; Newer`)
 	mustNotContain(t, page, `href="/deployments/d025"`)
 	var size *http.Cookie
 	for _, c := range rec.Result().Cookies() {
@@ -220,12 +220,12 @@ func TestActivityPages(t *testing.T) {
 
 	older := link(t, page, "next")
 	page = ts.do("GET", older, nil, cookie, size).Body.String()
-	mustContain(t, page, `href="/deployments/d025"`, `href="/deployments/d049"`, `rel="prev"`, `option value="25" selected`)
+	mustContain(t, page, `href="/deployments/d025"`, `href="/deployments/d049"`, `rel="prev"`, `<strong aria-current="true">25</strong>`)
 	mustNotContain(t, page, `href="/deployments/d024"`, `href="/deployments/d050"`)
 
 	newer := link(t, page, "prev")
 	page = ts.do("GET", newer, nil, cookie, size).Body.String()
-	mustContain(t, page, `href="/deployments/d000"`, `href="/deployments/d024"`, `aria-disabled="true">Newer`)
+	mustContain(t, page, `href="/deployments/d000"`, `href="/deployments/d024"`, `class="is-disabled">&lsaquo; Newer`)
 
 	// The size of the URL wins over the cookie's.
 	page = ts.do("GET", "/history?per_page=50", nil, cookie, size).Body.String()
@@ -253,9 +253,15 @@ func TestActivitySearchAndFilters(t *testing.T) {
 	ts := newTestServer(t, st, &fakeEngine{}, "")
 	ts.git.more = []gitwatch.Repo{{Name: "infra"}}
 
+	// A filter of the URL holds, a new search keeps it, and the menus keep it
+	// too. A single page shows no page links and no sizes.
 	page := ts.get("/history?namespace=prod&decided_by=alice")
-	mustContain(t, page, `href="/deployments/d2"`, `value="prod"`, `infra (1)`, `approval (1)`)
-	mustNotContain(t, page, `href="/deployments/d1"`)
+	mustContain(t, page, `href="/deployments/d2"`, `type="hidden" name="namespace" value="prod"`,
+		`href="/history?decided_by=alice&amp;namespace=prod&amp;repository=infra"`, `href="/history?decided_by=alice&amp;namespace=prod&amp;policy=approval"`)
+	mustNotContain(t, page, `href="/deployments/d1"`, "per page", "Older")
+
+	page = ts.get("/history?policy=approval")
+	mustContain(t, page, `Policy: <strong>approval</strong>`, `menu__item is-selected" href="/history?policy=approval"`)
 
 	page = ts.get("/history?q=zzz&state=failed")
 	mustContain(t, page, "No deployment matches this filter.", `is-active" href="/history?q=zzz&amp;state=failed"`)

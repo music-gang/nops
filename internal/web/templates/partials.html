@@ -80,31 +80,39 @@
 </nav>
 {{end}}
 
-{{/* -- the search and filters of a list, and the links to the pages next to
-     it. A plain GET form: it works without JavaScript. --------------------- */}}
-{{define "list_form"}}
-<form class="listform" method="get" action="{{.Path}}" role="search">
-  {{if .State}}<input type="hidden" name="state" value="{{.State}}">{{end}}
-  <input class="input listform__search" type="search" name="q" value="{{.Search}}" placeholder="Search" aria-label="Search">
-  {{if .Fields.Namespace}}<input class="input" type="text" name="namespace" value="{{.Namespace}}" placeholder="Namespace" aria-label="Namespace">{{end}}
-  {{if .Fields.Job}}<input class="input" type="text" name="job" value="{{.Job}}" placeholder="Job" aria-label="Job">{{end}}
-  {{if .Policies}}<select class="input" name="policy" aria-label="Policy">{{range .Policies}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{end}}
-  {{if .Repositories}}<select class="input" name="repository" aria-label="Repository">{{range .Repositories}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{end}}
-  {{if .Fields.DecidedBy}}<input class="input" type="text" name="decided_by" value="{{.DecidedBy}}" placeholder="Decided by" aria-label="Decided by">{{end}}
-  {{if .Fields.Time}}<input class="input" type="date" name="since" value="{{.Since}}" aria-label="Created from" title="Created from"><input class="input" type="date" name="until" value="{{.Until}}" aria-label="Created up to" title="Created up to">{{end}}
-  {{if .Fields.Warnings}}<label class="listform__check"><input type="checkbox" name="warnings" value="true"{{if .Warnings}} checked{{end}}> Meta warnings</label>{{end}}
-  <select class="input" name="per_page" aria-label="Rows per page">{{range .PerPages}}<option value="{{.}}"{{if eq . $.PerPage}} selected{{end}}>{{.}} per page</option>{{end}}</select>
-  <button class="btn" type="submit">Apply</button>
-  <a class="listform__clear" href="{{.Clear}}">Clear</a>
-</form>
-{{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
+{{/* -- the search of a list and the menus of its filters. A plain GET form:
+     Enter searches without JavaScript; with it, the list follows as the person
+     types. The box stays outside the region it refreshes, and the live poll of
+     that region, so it keeps the focus. --------------------------------------- */}}
+{{define "list_search"}}
+<div class="listbar">
+  <form class="listbar__search" method="get" action="{{.Path}}" role="search">
+    {{range .Keep}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    <input class="input" type="search" name="q" value="{{.Search}}" placeholder="{{.Placeholder}}" aria-label="{{.Placeholder}}"
+      hx-get="{{.Path}}" hx-trigger="input changed delay:300ms, search" hx-include="closest form" hx-target="#{{.Live}}" hx-select="#{{.Live}}" hx-select-oob="#listmenus" hx-swap="outerHTML" hx-push-url="true">
+  </form>
+  <div class="listbar__menus" id="listmenus">
+    {{range .Menus}}
+    <details class="menu">
+      <summary class="btn btn--sm">{{.Label}}{{if .Chosen}}: <strong>{{.Chosen}}</strong>{{end}}</summary>
+      <div class="menu__list">{{range .Items}}<a class="menu__item{{if .Selected}} is-selected{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}</div>
+    </details>
+    {{end}}
+  </div>
+</div>
+{{if .Error}}<p class="flash flash--error">{{.Error}} <a href="{{.Path}}">Show everything</a></p>{{end}}
 {{end}}
 
-{{define "pager"}}
-{{if or .List.Newer .List.Older}}
-<nav class="pager" aria-label="Pages">
-  {{if .List.Newer}}<a class="btn btn--sm" href="{{.List.Newer}}" rel="prev">{{.Newer}}</a>{{else}}<span class="btn btn--sm is-disabled" aria-disabled="true">{{.Newer}}</span>{{end}}
-  {{if .List.Older}}<a class="btn btn--sm" href="{{.List.Older}}" rel="next">{{.Older}}</a>{{else}}<span class="btn btn--sm is-disabled" aria-disabled="true">{{.Older}}</span>{{end}}
+{{/* -- the bottom of a list: the pages next to it and the sizes of a page,
+     small, and only when there is something to choose. ------------------------ */}}
+{{define "list_foot"}}
+{{if or .Newer .Older .Sizes}}
+<nav class="listfoot" aria-label="Pages">
+  <span class="listfoot__pages">
+    {{if .Newer}}<a href="{{.Newer}}" rel="prev">&lsaquo; {{.NewerLabel}}</a>{{else}}<span class="is-disabled">&lsaquo; {{.NewerLabel}}</span>{{end}}
+    {{if .Older}}<a href="{{.Older}}" rel="next">{{.OlderLabel}} &rsaquo;</a>{{else}}<span class="is-disabled">{{.OlderLabel}} &rsaquo;</span>{{end}}
+  </span>
+  {{if .Sizes}}<span class="listfoot__sizes">{{range .Sizes}}{{if .Selected}}<strong aria-current="true">{{.N}}</strong>{{else}}<a href="{{.Href}}">{{.N}}</a>{{end}} {{end}}per page</span>{{end}}
 </nav>
 {{end}}
 {{end}}
