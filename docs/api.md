@@ -38,9 +38,9 @@ and `/api/backup` answers the database file.
 
 | Request | What it does |
 |---|---|
-| `GET /api/jobs` | Every managed job with its [sync state](dashboard.md#sync-state-of-a-job), policy, and last deployment. |
-| `GET /api/jobs/{namespace}/{job}` | One job with its drift, hold, and deployments. |
-| `GET /api/deployments` | The active deployments and the latest finished ones, newest first. |
+| `GET /api/jobs` | A [page](#lists) of the managed jobs with their [sync state](dashboard.md#sync-state-of-a-job), policy, and last deployment. |
+| `GET /api/jobs/{namespace}/{job}` | One job with its drift, hold, and latest 50 deployments. |
+| `GET /api/deployments` | A [page](#lists) of the deployments, newest first. |
 | `GET /api/deployments/{id}` | One deployment with its redacted diff, hook runs, and events. |
 | `POST /api/deployments/{id}/approve` | Approve. Body: `{"spec_hash": "..."}`, the hash you read. |
 | `POST /api/deployments/{id}/reject` | Reject. |
@@ -72,6 +72,27 @@ and `/api/backup` answers the database file.
 | `DELETE /api/acl/token/self` | Revoke the token of the request. |
 | `GET /api/acl/changes` | The latest changes to ACL policies, binding rules, and tokens, and the backups taken. Management token only. |
 | `GET /api/openapi.json` | The [OpenAPI](https://spec.openapis.org/oas/v3.1.0) description of these endpoints. |
+
+## Lists
+
+`GET /api/jobs` and `GET /api/deployments` answer one page at a time. The
+answer carries `next_token` while more rows follow: pass it back for the next
+page. The list ends when `next_token` is absent, whatever the number of rows of
+the last page. The token is opaque.
+
+| Parameter | Meaning |
+|---|---|
+| `per_page` | Rows per page: `25`, `50` (default) or `100`. |
+| `next_token` | Where the page starts: the `next_token` of the previous answer. |
+| `q` | Search. Deployments: at least 3 characters, part of the job, the namespace, the commit subject or its author, or the start of a deployment ID or commit SHA. Jobs: part of the job, the namespace or the file. |
+| `state` | Deployments: a state, or `active` for every state that isn't terminal. Jobs: a [sync state](dashboard.md#sync-state-of-a-job), as `invalid`, `paused`, `blocked`, `orphan`, `pending`, `deploying`, `held`, `drift` or `sync`. |
+| `namespace` | The namespace. |
+| `job` | Deployments: the job. |
+| `repository` | The repository the job file comes from. |
+| `policy` | `auto`, `approval`, or, for jobs, `none`. |
+| `decided_by` | Deployments: who approved or rejected. |
+| `since`, `until` | Deployments: created from, or up to, a date (`2026-10-01`, UTC, `until` included) or an RFC 3339 time. |
+| `warnings` | Jobs: `true` lists only the jobs with meta warnings. |
 
 ## Errors
 
