@@ -73,7 +73,9 @@ jobs:
           args: check
       # Prose lint of the docs and the dashboard templates with the Google style
       # (docs/development.md#writing-docs).
-      # Pinned version and checksum: bump both by hand. Any alert fails the step.
+      # Pinned version and checksum: bump both by hand. Any alert fails the
+      # step, and so does Vale itself failing (exit status above 1: a style
+      # missing, a broken configuration), which prints no alert.
       - name: vale
         env:
           VALE_VERSION: "3.23.0"
@@ -84,8 +86,10 @@ jobs:
           echo "${VALE_SHA256}  ${tarball}" | sha256sum -c -
           tar -xzf "${tarball}" vale
           ./vale sync
-          ./vale --output=line docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates > vale.out || true
+          status=0
+          ./vale --output=line docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates > vale.out || status=$?
           cat vale.out
+          [ "$status" -le 1 ] || exit "$status"
           test ! -s vale.out
       # The docs site (docs/development.md#commands): a broken link or a page
       # left out of the menu fails here, not when a release publishes it.
