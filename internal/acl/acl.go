@@ -242,3 +242,82 @@ func specificity(label string) int {
 	}
 	return literal
 }
+
+// Scope is where an ACL grants a capability, in a form a query can test on
+// each row (docs/api.md#lists): the blocks of every ACL policy, grouped by
+// specificity, read the way Allow reads them. A list is never built first,
+// so a page costs the rows it walks, not the namespaces that exist.
+type Scope struct {
+	All    bool    // a management ACL: every namespace
+	Levels []Level // most specific first
+}
+
+// Level is the blocks of one specificity. The first level with a block that
+// matches a namespace decides for it: no if one of its matching blocks denies,
+// yes if one grants the capability.
+type Level struct {
+	Labels []string // every block of the level
+	Deny   []string // the blocks that deny
+	Grant  []string // the blocks that grant the capability
+}
+
+// Scope returns where the ACL grants c.
+func (a *ACL) Scope(c Capability) Scope {
+	if a.management {
+		return Scope{All: true}
+	}
+	byLevel := map[int]*Level{}
+	for _, p := range a.policies {
+		for _, r := range p.Rules {
+			s := specificity(r.Label)
+			l := byLevel[s]
+			if l == nil {
+				l = &Level{}
+				byLevel[s] = l
+			}
+			l.Labels = append(l.Labels, r.Label)
+			switch {
+			case r.Deny:
+				l.Deny = append(l.Deny, r.Label)
+			case slices.Contains(r.Caps, c):
+				l.Grant = append(l.Grant, r.Label)
+			}
+		}
+	}
+	keys := make([]int, 0, len(byLevel))
+	for s := range byLevel {
+		keys = append(keys, s)
+	}
+	slices.Sort(keys)
+	var sc Scope
+	for _, s := range slices.Backward(keys) {
+		l := byLevel[s]
+		for _, labels := range []*[]string{&l.Labels, &l.Deny, &l.Grant} {
+			slices.Sort(*labels)
+			*labels = slices.Compact(*labels)
+		}
+		sc.Levels = append(sc.Levels, *l)
+	}
+	return sc
+}
+
+// Match reports whether the scope holds the namespace. A query that tests the
+// scope gives the same answer: a block's name has no character a glob of
+// SQLite reads differently from path.Match.
+func (s Scope) Match(namespace string) bool {
+	if s.All {
+		return true
+	}
+	matches := func(labels []string) bool {
+		return slices.ContainsFunc(labels, func(l string) bool {
+			ok, _ := path.Match(l, namespace)
+			return ok
+		})
+	}
+	for _, l := range s.Levels {
+		if matches(l.Labels) {
+			return !matches(l.Deny) && matches(l.Grant)
+		}
+	}
+	return false
+}

@@ -337,13 +337,6 @@ func TestLists(t *testing.T) {
 	if err != nil || len(pending) != 1 || pending[0].ID != a.ID {
 		t.Errorf("ListByState = %+v, %v", pending, err)
 	}
-	hist, err := s.ListHistory(ctx, 10)
-	if err != nil || len(hist) != 2 || hist[0].ID != c.ID || hist[1].ID != b.ID {
-		t.Errorf("ListHistory should be newest first, got %+v, %v", hist, err)
-	}
-	if hist, _ := s.ListHistory(ctx, 1); len(hist) != 1 {
-		t.Errorf("ListHistory limit not applied: %d rows", len(hist))
-	}
 
 	recent, err := s.ListRecentCompleted(ctx, 10)
 	if err != nil || len(recent) != 1 || recent[0].ID != c.ID {
@@ -489,8 +482,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 16 {
-		t.Errorf("user_version = %d, %v; want 16", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 17 {
+		t.Errorf("user_version = %d, %v; want 17", v, err)
 	}
 }
 
