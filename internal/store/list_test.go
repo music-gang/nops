@@ -222,9 +222,9 @@ func TestCountDeploymentsStopsAtItsCap(t *testing.T) {
 	for i := range 4 {
 		mustCreate(t, s, newDep(fmt.Sprintf("job%d", i)))
 	}
-	for max, want := range map[int]int{10: 4, 4: 4, 2: 3} {
-		if n, err := s.CountDeployments(ctx, DeploymentQuery{Read: everything}, max); err != nil || n != want {
-			t.Errorf("count up to %d = %d, %v; want %d", max, n, err, want)
+	for upTo, want := range map[int]int{10: 4, 4: 4, 2: 3} {
+		if n, err := s.CountDeployments(ctx, DeploymentQuery{Read: everything}, upTo); err != nil || n != want {
+			t.Errorf("count up to %d = %d, %v; want %d", upTo, n, err, want)
 		}
 	}
 }

@@ -92,15 +92,15 @@ func (s *Store) ListDeployments(ctx context.Context, q DeploymentQuery) ([]*Depl
 }
 
 // CountDeployments counts the rows of q, its position and limit aside, up to
-// max: it returns max+1 when there are more. It walks at most max+1 of them.
-func (s *Store) CountDeployments(ctx context.Context, q DeploymentQuery, max int) (int, error) {
+// upTo: it returns upTo+1 when there are more. It walks at most upTo+1 of them.
+func (s *Store) CountDeployments(ctx context.Context, q DeploymentQuery, upTo int) (int, error) {
 	where, args, err := q.where()
 	if err != nil {
 		return 0, err
 	}
 	var n int
 	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM deployments WHERE `+strings.Join(where, " AND ")+` LIMIT ?)`,
-		append(args, max+1)...).Scan(&n)
+		append(args, upTo+1)...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count deployments: %w", err)
 	}

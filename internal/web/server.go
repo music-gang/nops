@@ -41,7 +41,7 @@ type Store interface {
 	GetDeployment(ctx context.Context, id string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	ListDeployments(ctx context.Context, q store.DeploymentQuery) ([]*store.Deployment, bool, error)
-	CountDeployments(ctx context.Context, q store.DeploymentQuery, max int) (int, error)
+	CountDeployments(ctx context.Context, q store.DeploymentQuery, upTo int) (int, error)
 	ListRecentCompleted(ctx context.Context, limit int) ([]*store.Deployment, error)
 	ListByJob(ctx context.Context, namespace, jobID string, limit int) ([]*store.Deployment, error)
 	LatestPerJob(ctx context.Context) ([]*store.Deployment, error)

@@ -118,11 +118,11 @@ func (f *fakeStore) ListDeployments(ctx context.Context, q store.DeploymentQuery
 	return list, false, nil
 }
 
-func (f *fakeStore) CountDeployments(ctx context.Context, q store.DeploymentQuery, max int) (int, error) {
+func (f *fakeStore) CountDeployments(ctx context.Context, q store.DeploymentQuery, upTo int) (int, error) {
 	if f.historyErr != nil {
 		return 0, f.historyErr
 	}
-	return min(len(f.matching(q)), max+1), nil
+	return min(len(f.matching(q)), upTo+1), nil
 }
 
 // matching are the deployments of q, its position aside, newest first.
