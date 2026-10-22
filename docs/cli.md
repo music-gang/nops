@@ -67,7 +67,7 @@ newer diff is refused as on the dashboard.
 ## Lists
 
 `nops jobs` and `nops deployments` take the parameters of the
-[API's lists](api.md#lists) as flags. After a page that isn't the last, the
+[lists of the API](api.md#lists) as flags. After a page that isn't the last, the
 client prints the command for the next one.
 
 | Flag | Parameter |

@@ -15,7 +15,7 @@ retry, pause, and resume deployments. Every page needs a
 - **Repositories** (`/repositories`): the head and last poll of each
   repository, and the files it may not declare. The Overview links it when Nops reads more than one.
 - **Jobs** (`/jobs`): every managed job with its [sync state](#sync-state-of-a-job),
-  policy and last deployment, a page at a time, with a search box and filters.
+  policy and last deployment, a page at a time. Search and filters narrow it.
 - **Job** (`/jobs/{namespace}/{job}`): the job's drift, hooks, sync window,
   [Nomad panel](#the-nomad-panel), meta issues, and deployments. Pause and
   resume the job, deploy it outside its sync window, and retry its failed
@@ -25,7 +25,7 @@ retry, pause, and resume deployments. Every page needs a
   *Approve* and *Reject* buttons. *Promote* appears when Nomad waits for you
   to promote canaries.
 - **Activity** (`/history`): every deployment, newest first, grouped by day, a
-  page at a time, with a search box and filters.
+  page at a time. Search and filters narrow it.
 - **Administration** (`/admin`): your [token](api.md#tokens) and, with a
   management token, a page each for tokens,
   [ACL policies](acl.md#acl-policies), [binding rules](acl.md#binding-rules)

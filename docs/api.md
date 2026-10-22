@@ -84,7 +84,7 @@ the last page. The token is opaque.
 |---|---|
 | `per_page` | Rows per page: `25`, `50` (default) or `100`. |
 | `next_token` | Where the page starts: the `next_token` of the previous answer. |
-| `q` | Search. Deployments: at least 3 characters, part of the job, the namespace, the commit subject or its author, or the start of a deployment ID or commit SHA. Jobs: part of the job, the namespace or the file. |
+| `q` | Search. Deployments: at least 3 characters, part of the job, the namespace, the commit subject or its author, or the start of a deployment ID or commit SHA. Jobs: part of the job, the namespace, or the file. |
 | `state` | Deployments: a state, or `active` for every state that isn't terminal. Jobs: a [sync state](dashboard.md#sync-state-of-a-job), as `invalid`, `paused`, `blocked`, `orphan`, `pending`, `deploying`, `held`, `drift` or `sync`. |
 | `namespace` | The namespace. |
 | `job` | Deployments: the job. |
