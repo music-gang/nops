@@ -14,9 +14,9 @@ import (
 // commands is every command of the client, in the order the usage lists them.
 // Each one is a call of the API of docs/api.md.
 var commands = []command{
-	{name: "jobs", help: "list the jobs with their sync state", run: runJobs},
+	{name: "jobs", flags: listFlags(true), help: "list a page of the jobs with their sync state", run: runJobs},
 	{name: "job", arg: "<job>", help: "show a job with its drift and deployments", run: runJob},
-	{name: "deployments", help: "list the active and the latest finished deployments", run: runDeployments},
+	{name: "deployments", flags: listFlags(false), help: "list a page of the deployments, newest first", run: runDeployments},
 	{name: "deployment", arg: "<id>", help: "show a deployment with its diff, hook runs and events", run: runDeployment},
 	{name: "approve", arg: "<id>", yes: true, help: "show the diff of a deployment and approve it", run: runApprove},
 	{name: "reject", arg: "<id>", help: "reject a deployment", run: action(http.MethodPost, deploymentAction("reject"), "rejected")},
@@ -112,9 +112,10 @@ func action(method string, path func(*call) string, did string) func(*call) erro
 
 func runJobs(k *call) error {
 	var r struct {
-		Jobs []job `json:"jobs"`
+		Jobs      []job  `json:"jobs"`
+		NextToken string `json:"next_token"`
 	}
-	raw, err := k.client.get(k.ctx, "/api/jobs", &r)
+	raw, err := k.client.get(k.ctx, k.list.path("/api/jobs"), &r)
 	if err != nil {
 		return err
 	}
@@ -123,6 +124,7 @@ func runJobs(k *call) error {
 		return nil
 	}
 	writeJobs(k.out, r.Jobs)
+	k.printNext("jobs", r.NextToken)
 	return nil
 }
 
@@ -142,8 +144,9 @@ func runJob(k *call) error {
 func runDeployments(k *call) error {
 	var r struct {
 		Deployments []deployment `json:"deployments"`
+		NextToken   string       `json:"next_token"`
 	}
-	raw, err := k.client.get(k.ctx, "/api/deployments", &r)
+	raw, err := k.client.get(k.ctx, k.list.path("/api/deployments"), &r)
 	if err != nil {
 		return err
 	}
@@ -152,6 +155,7 @@ func runDeployments(k *call) error {
 		return nil
 	}
 	writeDeployments(k.out, r.Deployments)
+	k.printNext("deployments", r.NextToken)
 	return nil
 }
 

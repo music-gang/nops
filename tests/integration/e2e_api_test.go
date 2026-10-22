@@ -121,6 +121,13 @@ func TestE2ECLIApprovesWhatItShowed(t *testing.T) {
 	if out, _, err := nops("", "jobs"); err != nil || !strings.Contains(out, jobID) {
 		t.Fatalf("nops jobs: %v, stdout %q, want the job", err, out)
 	}
+	// The search of the real store finds it, and the filters keep it out.
+	if out, errOut, err := nops("", "deployments", "-search", jobID, "-state", "pending_approval", "-per-page", "25"); err != nil || !strings.Contains(out, d.ID) {
+		t.Fatalf("nops deployments -search: %v, stdout %q, stderr %q, want the deployment", err, out, errOut)
+	}
+	if out, _, err := nops("", "deployments", "-search", jobID, "-state", "completed"); err != nil || strings.Contains(out, d.ID) {
+		t.Fatalf("nops deployments -state completed: %v, stdout %q, want no pending deployment", err, out)
+	}
 
 	if _, _, err := nops("n\n", "approve", d.ID); err == nil {
 		t.Fatal("approve answered no: want a non-zero exit")

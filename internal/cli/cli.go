@@ -54,6 +54,7 @@ type call struct {
 	reason      string
 	all         bool // -all: every job, no job argument
 	flags       aclFlags
+	list        listArgs // the flags of a list
 	in          *bufio.Reader
 	stdin       io.Reader
 	getenv      func(string) string
