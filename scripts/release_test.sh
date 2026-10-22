@@ -215,6 +215,14 @@ check section-exact-heading '' "$(printf '%s' "$changelog" | changelog_section v
 check section-no-final-newline '- x' "$(printf '## v1.0.0\n\n- x' | changelog_section v1.0.0)"
 check section-empty '' "$(printf '## v1.0.0\n\n## v0.9.0\n- x\n' | changelog_section v1.0.0)"
 
+# absolute_links
+base=https://github.com/o/r/blob/v1.0.0
+check links-relative "- [lists]($base/docs/api.md#lists), [up]($base/CHANGELOG.md)" \
+  "$(printf '%s\n' '- [lists](docs/api.md#lists), [up](CHANGELOG.md)' | absolute_links "$base")"
+check links-absolute '- [#2](https://github.com/o/r/pull/2)' \
+  "$(printf '%s\n' '- [#2](https://github.com/o/r/pull/2)' | absolute_links "$base")"
+check links-anchor '- [above](#v100)' "$(printf '%s\n' '- [above](#v100)' | absolute_links "$base")"
+
 # has_upgrade_notes
 ok upgrade-notes has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.3.0)"
 no upgrade-notes-none has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"

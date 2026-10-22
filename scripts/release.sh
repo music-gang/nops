@@ -240,6 +240,13 @@ changelog_section() {
   done
 }
 
+# absolute_links <url>: reads Markdown on stdin and puts <url>/ before each
+# relative link target, read from the root of the repository: a GitHub
+# Release would resolve it against its own page.
+absolute_links() {
+  sed -E "s|\]\(([^)/:#][^):]*)\)|](${1}/\1)|g"
+}
+
 # has_upgrade_notes: succeeds when the changelog section on stdin has an
 # `### Upgrade notes` heading.
 has_upgrade_notes() {
