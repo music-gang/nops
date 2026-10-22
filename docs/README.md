@@ -26,6 +26,7 @@ repository according to a per-job policy. New here? Start with the
 - [Logs and notifications](logs-and-notifications.md)
 - [Metrics](metrics.md)
 - [Glossary](glossary.md)
+- [Changelog](../CHANGELOG.md): what changes in each release.
 
 ## Explanation
 

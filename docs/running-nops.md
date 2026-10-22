@@ -169,8 +169,8 @@ backup works again: revoke it again.
 
 ## Upgrading
 
-- Read the [release notes](https://github.com/music-gang/nops/releases) of every
-  version between yours and the new one. A release that breaks something
+- Read the [changelog](../CHANGELOG.md) of every version between yours and
+  the new one. A release that breaks something
   says what to change in its *Upgrade notes*.
 - Pin a minor (`X.Y`) or an exact version, never `latest`: before `v1`, a new
   minor may break the configuration or the database.

@@ -15,7 +15,8 @@ It shows pending changes in a dashboard and can run **hooks**, Nomad jobs
 that run before or after a deployment.
 
 > **Status:** ready to use, still at `v0`: a minor release may change the
-> configuration or the database, and its release notes say how to upgrade.
+> configuration or the database, and the [changelog](CHANGELOG.md) says how
+> to upgrade.
 > Built for a self-hosted cluster, as a single instance. Inspired by
 > [gerrowadat/nomad-gitops](https://github.com/gerrowadat/nomad-gitops).
 
@@ -69,8 +70,7 @@ Nops is tested against **Nomad 2.0.7**. Other 2.0.x releases should work.
 ## Documentation
 
 See the [documentation index](docs/README.md). Changes are in the
-[release notes](https://github.com/music-gang/nops/releases). To contribute,
-see [CONTRIBUTING](CONTRIBUTING.md).
+[changelog](CHANGELOG.md). To contribute, see [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 

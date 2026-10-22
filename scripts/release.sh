@@ -214,6 +214,49 @@ EOF
   done
 }
 
+# changelog_section <tag>: reads CHANGELOG.md on stdin and prints the section
+# headed `## <tag>`, up to the next `## ` heading, without its heading and the
+# blank lines around it. Prints nothing when there is no such section.
+changelog_section() {
+  local want="## $1" line in=0 blanks=0 started=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ $in = 0 ]; then
+      [ "$line" = "$want" ] && in=1
+      continue
+    fi
+    case $line in '## '*) break ;; esac
+    if [ -z "${line//[[:space:]]/}" ]; then
+      blanks=$((blanks + 1))
+      continue
+    fi
+    if [ $started = 1 ]; then
+      while [ $blanks -gt 0 ]; do
+        echo
+        blanks=$((blanks - 1))
+      done
+    fi
+    blanks=0 started=1
+    printf '%s\n' "$line"
+  done
+}
+
+# absolute_links <url>: reads Markdown on stdin and puts <url>/ before each
+# relative link target, read from the root of the repository: a GitHub
+# Release would resolve it against its own page.
+absolute_links() {
+  sed -E "s|\]\(([^)/:#][^):]*)\)|](${1}/\1)|g"
+}
+
+# has_upgrade_notes: succeeds when the changelog section on stdin has an
+# `### Upgrade notes` heading.
+has_upgrade_notes() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = '### Upgrade notes' ] && return 0
+  done
+  return 1
+}
+
 # ---- flow --------------------------------------------------------------------
 
 die() {
@@ -316,6 +359,22 @@ check_image_tag() {
   fi
 }
 
+# check_changelog <tag> <sha> <upgrade-notes>: a final release needs its
+# section in CHANGELOG.md on <sha>, the release's notes, with *Upgrade notes*
+# when a commit breaks something. A release candidate's notes are generated.
+check_changelog() {
+  local tag=$1 sha=$2 notes=$3 section
+  case $tag in *-*) return 0 ;; esac
+  section=$(git show "$sha:CHANGELOG.md" 2>/dev/null | changelog_section "$tag" || true)
+  if [ -z "$section" ]; then
+    problem "CHANGELOG.md has no section for $tag: add it in a pull request first"
+    return 0
+  fi
+  if [ -n "$notes" ] && ! has_upgrade_notes <<<"$section"; then
+    problem "the CHANGELOG.md section for $tag has no '### Upgrade notes', and a commit breaks something"
+  fi
+}
+
 usage() {
   sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -372,14 +431,15 @@ main() {
   print_group "Features" feat "$commits"
   print_group "Fixes" fix "$commits"
   print_group "Changes" change "$commits"
-  print_group "Other (not in the changelog)" other "$commits"
+  print_group "Other (not in a release candidate's notes)" other "$commits"
   echo
 
-  # The workflow writes the same text on the release, above the changelog.
+  # A release candidate's notes start with the same text; a final release's
+  # section of CHANGELOG.md needs its own.
   local notes
   notes=$(git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes)
   if [ -n "$notes" ]; then
-    echo "The release will start with:"
+    echo "Upgrade notes from the BREAKING CHANGE footers:"
     echo
     echo "$notes"
     echo
@@ -414,6 +474,7 @@ main() {
     tag=$suggested
     echo "Suggested version: $tag ($kind)"
     check_image_tag "$last" "$tag" "$sha"
+    check_changelog "$tag" "$sha" "$notes"
     echo
     echo "Dry run: nothing was tagged. A release would run:"
     echo "  git tag -s $tag -m $tag $sha"
@@ -427,6 +488,7 @@ main() {
     die "$tag already exists (tags are never moved or recreated: pick another version)"
   fi
   check_image_tag "$last" "$tag" "$sha"
+  check_changelog "$tag" "$sha" "$notes"
 
   echo
   echo "Tag $tag on $sha"

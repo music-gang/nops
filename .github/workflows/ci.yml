@@ -87,7 +87,7 @@ jobs:
           tar -xzf "${tarball}" vale
           ./vale sync
           status=0
-          ./vale --output=line docs README.md CONTRIBUTING.md internal/web/templates > vale.out || status=$?
+          ./vale --output=line docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates > vale.out || status=$?
           cat vale.out
           [ "$status" -le 1 ] || exit "$status"
           test ! -s vale.out
