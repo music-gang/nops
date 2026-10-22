@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -270,24 +269,43 @@ func issuesOf(list []meta.Issue) []apiIssue {
 	return out
 }
 
-// apiListJobs is GET /api/jobs: every managed job, orphans included.
+// apiListJobs is GET /api/jobs: a page of the managed jobs, orphans included.
 func (s *server) apiListJobs(w http.ResponseWriter, r *http.Request) {
-	latest, err := s.latestByJob(r)
+	q, err := parseList(r.URL.Query(), jobList)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	entries, err := s.jobEntries(r)
 	if err != nil {
 		s.apiServerError(w, r, "list latest deployments", err)
 		return
 	}
+	rows, p, _ := pageJobs(entries, q)
 	jobs := []apiJob{}
-	for _, o := range s.observations(r) {
-		jobs = append(jobs, jobOf(o, latest[jobKey(o.Namespace, o.JobID)]))
+	for _, e := range rows {
+		if e.obs != nil {
+			jobs = append(jobs, jobOf(*e.obs, e.latest))
+		} else {
+			jobs = append(jobs, orphanJob(*e.orphan, e.latest))
+		}
 	}
-	for _, o := range s.orphans(r) {
-		jobs = append(jobs, orphanJob(o, latest[jobKey(o.Namespace, o.JobID)]))
+	replyJSON(w, http.StatusOK, apiList{Jobs: &jobs, NextToken: nextToken(p.Older)})
+}
+
+// apiList is the answer of a list: its rows, and the cursor of the next page
+// while there is one.
+type apiList struct {
+	Jobs        *[]apiJob        `json:"jobs,omitempty"`
+	Deployments *[]apiDeployment `json:"deployments,omitempty"`
+	NextToken   string           `json:"next_token,omitempty"`
+}
+
+func nextToken(c *cursor) string {
+	if c == nil {
+		return ""
 	}
-	sort.SliceStable(jobs, func(i, j int) bool {
-		return jobKey(jobs[i].Namespace, jobs[i].Job) < jobKey(jobs[j].Namespace, jobs[j].Job)
-	})
-	replyJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+	return c.String()
 }
 
 type apiJobDetail struct {
@@ -348,26 +366,21 @@ func (s *server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 	replyJSON(w, http.StatusOK, detail)
 }
 
-// apiListDeployments is GET /api/deployments: the history page's list.
+// apiListDeployments is GET /api/deployments: a page of the deployments,
+// newest first.
 func (s *server) apiListDeployments(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListHistory(r.Context(), historyLimit)
+	q, err := parseList(r.URL.Query(), deploymentList)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	list, p, err := s.pageDeployments(r.Context(), q.deployments(subjectOf(r.Context()).acl.Scope(acl.Read)), q)
 	if err != nil {
 		s.apiServerError(w, r, "list deployments", err)
 		return
 	}
-	active, err := s.store.ListActive(r.Context())
-	if err != nil {
-		s.apiServerError(w, r, "list active deployments", err)
-		return
-	}
-	all := readable(r, append(append([]*store.Deployment{}, active...), list...))
-	sort.Slice(all, func(i, j int) bool {
-		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
-			return all[i].CreatedAt.After(all[j].CreatedAt)
-		}
-		return all[i].ID > all[j].ID
-	})
-	replyJSON(w, http.StatusOK, map[string]any{"deployments": deploymentsOf(all)})
+	deps := deploymentsOf(list)
+	replyJSON(w, http.StatusOK, apiList{Deployments: &deps, NextToken: nextToken(p.Older)})
 }
 
 type apiEvent struct {

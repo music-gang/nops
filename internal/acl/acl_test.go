@@ -1,6 +1,8 @@
 package acl
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -226,5 +228,74 @@ func TestPauseOfEveryJobIsNotThePauseOfAJob(t *testing.T) {
 	}
 	if !Management().Global(Pause) {
 		t.Error("a management ACL refused the pause of every job")
+	}
+}
+
+// randomPolicies writes up to three ACL policies of random blocks, on names
+// and globs of a small alphabet so that blocks overlap often.
+func randomPolicies(t *testing.T, rnd *rand.Rand) []*Policy {
+	t.Helper()
+	label := func() string {
+		var b strings.Builder
+		for range 1 + rnd.IntN(3) {
+			b.WriteByte("ab*-"[rnd.IntN(4)])
+		}
+		return b.String()
+	}
+	bodies := []string{`policy = "read"`, `policy = "write"`, `policy = "deny"`, `capabilities = ["approve"]`}
+	var out []*Policy
+	for range 1 + rnd.IntN(3) {
+		var rules strings.Builder
+		seen := map[string]bool{}
+		for range rnd.IntN(5) {
+			l := label()
+			if seen[l] {
+				continue
+			}
+			seen[l] = true
+			fmt.Fprintf(&rules, "namespace %q { %s }\n", l, bodies[rnd.IntN(len(bodies))])
+		}
+		out = append(out, mustParse(t, rules.String()))
+	}
+	return out
+}
+
+// namespaces are every name of up to three characters of the alphabet of
+// randomPolicies.
+func namespaces() []string {
+	out := []string{""}
+	for range 3 {
+		for _, n := range out {
+			for _, c := range "ab-" {
+				if !slices.Contains(out, n+string(c)) {
+					out = append(out, n+string(c))
+				}
+			}
+		}
+	}
+	return out
+}
+
+func TestScopeAgreesWithAllow(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(1, 2))
+	for range 2000 {
+		a := New(randomPolicies(t, rnd)...)
+		for _, c := range []Capability{Read, Approve} {
+			sc := a.Scope(c)
+			for _, ns := range namespaces() {
+				if got, want := sc.Match(ns), a.Allow(ns, c); got != want {
+					t.Fatalf("%s on %q: Scope says %v, Allow %v; scope %+v", c, ns, got, want, sc)
+				}
+			}
+		}
+	}
+}
+
+func TestScopeOfManagementIsEverything(t *testing.T) {
+	if sc := Management().Scope(Read); !sc.All || !sc.Match("anything") {
+		t.Errorf("management scope = %+v, want every namespace", sc)
+	}
+	if sc := New().Scope(Read); sc.All || sc.Match("default") {
+		t.Errorf("empty scope = %+v, want no namespace", sc)
 	}
 }

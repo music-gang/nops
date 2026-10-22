@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/music-gang/nops/internal/acl"
 	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
@@ -575,19 +576,9 @@ func (e *e2eEnv) states(id string) []store.State {
 // deploymentsOf counts every deployment nops ever created for jobID.
 func (e *e2eEnv) deploymentsOf(jobID string) int {
 	e.t.Helper()
-	active, err := e.st.ListActive(context.Background())
+	n, err := e.st.CountDeployments(context.Background(), store.DeploymentQuery{Read: acl.Management().Scope(acl.Read), JobID: jobID}, 1000)
 	if err != nil {
 		e.t.Fatal(err)
-	}
-	history, err := e.st.ListHistory(context.Background(), 1000)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	n := 0
-	for _, d := range append(active, history...) {
-		if d.JobID == jobID {
-			n++
-		}
 	}
 	return n
 }

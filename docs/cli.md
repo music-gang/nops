@@ -27,9 +27,9 @@ A command that takes a `<job>` looks for it in the namespace you set.
 
 | Command | What it does |
 |---|---|
-| `nops jobs` | List the jobs with their [sync state](dashboard.md#sync-state-of-a-job). |
+| `nops jobs` | List a page of the jobs with their [sync state](dashboard.md#sync-state-of-a-job). The [list flags](#lists) pick it. |
 | `nops job <job>` | Show a job with its drift and deployments. |
-| `nops deployments` | List the active deployments and the latest finished ones. |
+| `nops deployments` | List a page of the deployments, newest first. The [list flags](#lists) pick it. |
 | `nops deployment <id>` | Show a deployment with its diff, hook runs, and events. |
 | `nops approve <id>` | Show the diff, ask for confirmation, and approve. `-yes` skips the question. |
 | `nops reject <id>` | Reject. |
@@ -63,6 +63,26 @@ A command that takes a `<job>` looks for it in the namespace you set.
 
 `approve` and `deploy-now` send the spec hash of the diff they showed, so a
 newer diff is refused as on the dashboard.
+
+## Lists
+
+`nops jobs` and `nops deployments` take the parameters of the
+[lists of the API](api.md#lists) as flags. After a page that isn't the last, the
+client prints the command for the next one.
+
+| Flag | Parameter |
+|---|---|
+| `-per-page` | `per_page` |
+| `-page-token` | `next_token` |
+| `-search` | `q` |
+| `-state` | `state` |
+| `-namespace` | `namespace`. It doesn't read `NOPS_NAMESPACE`: without it, the list covers every namespace. |
+| `-job` | `job`, on `nops deployments` |
+| `-repository` | `repository` |
+| `-policy` | `policy` |
+| `-decided-by` | `decided_by`, on `nops deployments` |
+| `-since`, `-until` | `since`, `until`, on `nops deployments` |
+| `-warnings` | `warnings`, on `nops jobs` |
 
 ## Output
 

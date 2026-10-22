@@ -1052,13 +1052,6 @@ func (s *Store) MarkPromotionRequested(ctx context.Context, id, actor string) er
 	return nil
 }
 
-// ListHistory returns terminal deployments, newest first.
-func (s *Store) ListHistory(ctx context.Context, limit int) ([]*Deployment, error) {
-	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
-		WHERE state IN ('completed','failed','rejected','superseded')
-		ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
-}
-
 // ListRecentCompleted returns the most recently completed deployments, by
 // when they completed (not when they were created: an approval can sit
 // pending for a while before that). What the Overview's "Recently completed"

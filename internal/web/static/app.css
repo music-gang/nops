@@ -405,6 +405,42 @@ p + .input-group { margin-top: 8px; }
 .filter.is-active { color: var(--fg); font-weight: 600; background: var(--neutral-subtle); border-color: var(--fg-subtle); }
 .filter__count { margin-left: 4px; font-weight: 400; color: var(--fg-muted); }
 
+/* The search of a list, with the menus of its filters beside it. */
+.listbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.listbar__search { flex: 1 1 16rem; margin: 0; }
+.listbar__search .input { margin: 0; }
+.listbar__menus { display: flex; gap: 8px; }
+.menu { position: relative; }
+.menu > summary { list-style: none; cursor: pointer; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu > summary::after { content: "\25BE"; margin-left: 4px; color: var(--fg-muted); }
+.menu__list {
+  position: absolute;
+  right: 0;
+  z-index: 10;
+  min-width: 10rem;
+  margin-top: 4px;
+  padding: 4px 0;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.12);
+}
+.menu__item { display: block; padding: 4px 12px; color: var(--fg); }
+.menu__item:hover { text-decoration: none; background: var(--canvas-subtle); }
+.menu__item.is-selected { font-weight: 600; }
+.menu__item.is-selected::before { content: "\2713  "; }
+
+/* The bottom of a list: the pages next to it and the sizes of a page, small. */
+.listfoot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 8px 0 16px; color: var(--fg-muted); font-size: 12px; }
+.listfoot__pages { display: flex; gap: 16px; }
+.listfoot__sizes { display: flex; gap: 6px; }
+.listfoot .is-disabled { color: var(--fg-subtle); }
+.listfoot strong { color: var(--fg); }
+.box__body--list { padding: 12px 16px; }
+.box__body--list + #live-deployments > .box__body--list:first-child { padding-top: 0; }
+.box__body--list > .listbar, .box__body--list > .filters, .box__body--list > .listfoot { margin: 0; }
+
 /* -- the Jobs table ----------------------------------------------------------------------- */
 
 .table { width: 100%; table-layout: fixed; border-collapse: collapse; }
@@ -718,6 +754,7 @@ legend.field__label + .field__caption { margin: -4px 0 8px; }
   .strip__row { flex-wrap: wrap; gap: 4px 12px; }
   .strip__label { flex-basis: 100%; }
   .strip__main { flex-basis: 100%; }
+  .listbar__menus { flex-basis: 100%; }
   .decision__actions .btn { width: 100%; }
   .decision__actions form { flex: 1; }
   .flash--action { flex-direction: column; align-items: flex-start; }

@@ -471,7 +471,7 @@ func jobsFixture() (*fakeStore, *fakeEngine) {
 	st := &fakeStore{latest: []*store.Deployment{pending, done}}
 	en := &fakeEngine{observations: []engine.Observation{
 		{JobID: "batch", Namespace: "default", Policy: meta.PolicyNone, Drift: true, FilePath: "batch.nomad.hcl", ObservedAt: testNow.Add(-time.Minute)},
-		{JobID: "bad", Namespace: "default", FilePath: "bad.nomad.hcl", Issues: []meta.Issue{{Severity: meta.SeverityError, Key: "nops_policy", Message: "m"}}},
+		{JobID: "bad", Namespace: "default", FilePath: "bad.nomad.hcl", Policy: meta.PolicyNone, Issues: []meta.Issue{{Severity: meta.SeverityError, Key: "nops_policy", Message: "m"}}},
 		{JobID: "db", Namespace: "default", Policy: meta.PolicyAuto, FilePath: "db.nomad.hcl"},
 		{JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, Drift: true, FilePath: "apps/web.nomad.hcl",
 			Issues: []meta.Issue{{Severity: meta.SeverityWarn, Key: "k", Message: "m"}}},
@@ -493,8 +493,8 @@ func TestJobsPage(t *testing.T) {
 		// what is under the state
 		"failed on the same live job; push a new commit or retry it", "1 meta warning",
 		// the filter, with counts
-		`href="?"`, `href="?state=drift"`, `href="?state=blocked"`)
-	mustNotContain(t, page, specMarker, `href="?state=deploying"`) // no deploying job: no chip
+		`href="/jobs"`, `href="/jobs?state=drift"`, `href="/jobs?state=blocked"`)
+	mustNotContain(t, page, specMarker, `href="/jobs?state=deploying"`) // no deploying job: no chip
 	if n := strings.Count(page, `class="row__title"`); n != 5 {
 		t.Errorf("%d rows, want 5", n)
 	}
@@ -507,22 +507,23 @@ func TestJobsPageFilter(t *testing.T) {
 	}
 
 	page := newServer().get("/jobs?state=drift")
-	mustContain(t, page, `href="/jobs/default/batch"`, `is-active" href="?state=drift"`)
+	mustContain(t, page, `href="/jobs/default/batch"`, `is-active" href="/jobs?state=drift"`)
 	mustNotContain(t, page, `href="/jobs/default/db"`, `href="/jobs/default/web"`)
 	if n := strings.Count(page, `class="row__title"`); n != 1 {
 		t.Errorf("%d rows for the drift filter, want 1", n)
 	}
 
-	// Not one of ours: shows everything, and marks All.
-	page = newServer().get("/jobs?state=who-knows")
-	if n := strings.Count(page, `class="row__title"`); n != 5 {
-		t.Errorf("%d rows for an unknown filter, want all 5", n)
+	// Not one of ours: a 400 that says why, with the way back.
+	ts := newServer()
+	rec := ts.do("GET", "/jobs?state=who-knows", nil, ts.session("alice"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown filter: status %d, want 400", rec.Code)
 	}
-	mustContain(t, page, `is-active" href="?"`)
+	mustContain(t, rec.Body.String(), "is not a sync state", `<a href="/jobs">Show everything</a>`)
 
 	// A known state with no job: an empty page that still says which filter it is.
 	page = newServer().get("/jobs?state=deploying")
-	mustContain(t, page, "No job matches this filter.", `is-active" href="?state=deploying"`)
+	mustContain(t, page, "No job matches this filter.", `is-active" href="/jobs?state=deploying"`)
 }
 
 func TestJobsPageLivePollsKeepItsFilter(t *testing.T) {
@@ -743,15 +744,18 @@ func TestActivityFilter(t *testing.T) {
 	ts := newTestServer(t, st, &fakeEngine{}, "")
 
 	page := ts.get("/history?state=failed")
-	mustContain(t, page, `href="/deployments/f1"`, `is-active" href="?state=failed"`)
+	mustContain(t, page, `href="/deployments/f1"`, `is-active" href="/history?state=failed"`)
 	mustNotContain(t, page, `href="/deployments/a1"`, `href="/deployments/c1"`)
 
 	page = ts.get("/history?state=active")
 	mustContain(t, page, `href="/deployments/a1"`)
 	mustNotContain(t, page, `href="/deployments/c1"`)
 
-	page = ts.get("/history?state=nonsense")
-	mustContain(t, page, `href="/deployments/a1"`, `href="/deployments/c1"`, `href="/deployments/f1"`, `is-active" href="?"`)
+	rec := ts.do("GET", "/history?state=nonsense", nil, ts.session("alice"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown filter: status %d, want 400", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "is not active or a state of a deployment")
 
 	page = ts.get("/history?state=rejected")
 	mustContain(t, page, "No deployment matches this filter.")
@@ -769,17 +773,9 @@ func TestActivityEmptyLimitedAndErrors(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "")
 	mustContain(t, ts.get("/history"), "No deployment yet.")
 
-	// The history is capped: when it is full, the page says there is more.
-	many := make([]*store.Deployment, historyLimit)
-	for i := range many {
-		many[i] = dep(fmt.Sprintf("h%03d", i), "web", store.StateCompleted, time.Duration(i+1)*time.Minute)
-	}
-	ts = newTestServer(t, &fakeStore{history: many}, &fakeEngine{}, "")
-	mustContain(t, ts.get("/history"), "Only the most recent finished deployments are listed.")
-
 	for name, st := range map[string]*fakeStore{
-		"active":  {activeErr: fmt.Errorf("database is locked")},
 		"history": {historyErr: fmt.Errorf("database is locked")},
+		"latest":  {history: []*store.Deployment{dep("h1", "web", store.StateCompleted, time.Minute)}, byJobErr: fmt.Errorf("database is locked")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ts := newTestServer(t, st, &fakeEngine{}, "")
@@ -1073,7 +1069,7 @@ func TestJobsPageListsOrphansAmongTheJobs(t *testing.T) {
 		`href="/jobs/default/old"`, "Not in git", "removed from git, still running in Nomad",
 		"not in the repository", // no file
 		">approval<",            // the policy of its last deployment
-		`href="/deployments/d9"`, "3d ago", `href="?state=orphan"`,
+		`href="/deployments/d9"`, "3d ago", `href="/jobs?state=orphan"`,
 		// the orphan comes among the others, sorted by name
 		`href="/jobs/default/web"`)
 	if strings.Index(page, `href="/jobs/default/old"`) > strings.Index(page, `href="/jobs/default/web"`) {
@@ -1085,7 +1081,7 @@ func TestJobsPageListsOrphansAmongTheJobs(t *testing.T) {
 
 	// The filter finds it, and only it.
 	filtered := ts.get("/jobs?state=orphan")
-	mustContain(t, filtered, `href="/jobs/default/old"`, `is-active" href="?state=orphan"`)
+	mustContain(t, filtered, `href="/jobs/default/old"`, `is-active" href="/jobs?state=orphan"`)
 	mustNotContain(t, filtered, `href="/jobs/default/web"`)
 }
 
@@ -1255,7 +1251,7 @@ func TestRetriedDeploymentsLinkBothWays(t *testing.T) {
 func TestActivityOffersARetryOnTheDeploymentsTheEngineWouldRetry(t *testing.T) {
 	failed := dep("f1", "web", store.StateFailed, time.Hour)
 	old := dep("f0", "web", store.StateFailed, 2*time.Hour)
-	st := &fakeStore{history: []*store.Deployment{failed, old}, latest: []*store.Deployment{failed}}
+	st := &fakeStore{history: []*store.Deployment{failed, old}, byJob: []*store.Deployment{failed}}
 	en := &fakeEngine{retryable: map[string]bool{"f1": true, "f0": true}}
 
 	page := newTestServer(t, st, en, "").get("/history")

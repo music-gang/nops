@@ -21,7 +21,7 @@ import (
 const token = "nops_secret-token"
 
 // call is one request the stub saw.
-type seen struct{ method, path, auth, body string }
+type seen struct{ method, path, auth, body, query string }
 
 // stub answers the API of docs/api.md with canned bodies, by "METHOD path".
 type stub struct {
@@ -40,7 +40,7 @@ func newStub(t *testing.T, answers map[string]answer) (*stub, string) {
 	s := &stub{t: t, answers: answers}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		s.seen = append(s.seen, seen{r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"), string(b)})
+		s.seen = append(s.seen, seen{r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"), string(b), r.URL.RawQuery})
 		a, ok := s.answers[r.Method+" "+r.URL.EscapedPath()]
 		if !ok {
 			a = answer{404, `{"error":"no such endpoint"}`}

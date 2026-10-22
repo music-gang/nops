@@ -4,6 +4,7 @@
   <h1 class="pagehead__title">Activity</h1>
   <p class="pagehead__text">Every deployment, newest first.</p>
 </div>
+{{template "list_search" .List}}
 <div id="live" hx-get="{{.Self}}" hx-trigger="every 5s" hx-select="#live" hx-swap="outerHTML" hx-disinherit="hx-select hx-swap">
 {{template "filters" .Filters}}
 {{if .Days}}
@@ -24,10 +25,10 @@
   </ul>
 </section>
 {{end}}
-{{if .Limited}}<p class="muted note">Only the most recent finished deployments are listed.</p>{{end}}
 {{else}}
-<p class="empty box">{{if .Total}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
+<p class="empty box">{{if or .Any .List.Keep .List.Search .List.Error}}No deployment matches this filter.{{else}}No deployment yet.{{end}}</p>
 {{end}}
+{{template "list_foot" .List}}
 </div>
 {{template "chrome_foot" .}}
 {{end}}

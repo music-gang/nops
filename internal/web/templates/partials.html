@@ -76,8 +76,45 @@
 {{/* A page's filter: links with their counts, the active one marked. */}}
 {{define "filters"}}
 <nav class="filters" aria-label="Filter">
-  {{range .}}<a class="filter{{if .Active}} is-active{{end}}" href="{{if .Key}}?state={{.Key}}{{else}}?{{end}}">{{.Label}} <span class="filter__count">{{.Count}}</span></a>{{end}}
+  {{range .}}<a class="filter{{if .Active}} is-active{{end}}" href="{{.Href}}">{{.Label}} <span class="filter__count">{{.Count}}</span></a>{{end}}
 </nav>
+{{end}}
+
+{{/* -- the search of a list and the menus of its filters. A plain GET form:
+     Enter searches without JavaScript; with it, the list follows as the person
+     types. The box stays outside the region it refreshes, and the live poll of
+     that region, so it keeps the focus. --------------------------------------- */}}
+{{define "list_search"}}
+<div class="listbar">
+  <form class="listbar__search" method="get" action="{{.Path}}" role="search">
+    {{range .Keep}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    <input class="input" type="search" name="q" value="{{.Search}}" placeholder="{{.Placeholder}}" aria-label="{{.Placeholder}}"
+      hx-get="{{.Path}}" hx-trigger="input changed delay:300ms, search" hx-include="closest form" hx-target="#{{.Live}}" hx-select="#{{.Live}}" hx-select-oob="#listmenus" hx-swap="outerHTML" hx-push-url="true">
+  </form>
+  <div class="listbar__menus" id="listmenus">
+    {{range .Menus}}
+    <details class="menu">
+      <summary class="btn btn--sm">{{.Label}}{{if .Chosen}}: <strong>{{.Chosen}}</strong>{{end}}</summary>
+      <div class="menu__list">{{range .Items}}<a class="menu__item{{if .Selected}} is-selected{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}</div>
+    </details>
+    {{end}}
+  </div>
+</div>
+{{if .Error}}<p class="flash flash--error">{{.Error}} <a href="{{.Path}}">Show everything</a></p>{{end}}
+{{end}}
+
+{{/* -- the bottom of a list: the pages next to it and the sizes of a page,
+     small, and only when there is something to choose. ------------------------ */}}
+{{define "list_foot"}}
+{{if or .Newer .Older .Sizes}}
+<nav class="listfoot" aria-label="Pages">
+  <span class="listfoot__pages">
+    {{if .Newer}}<a href="{{.Newer}}" rel="prev">&lsaquo; {{.NewerLabel}}</a>{{else}}<span class="is-disabled">&lsaquo; {{.NewerLabel}}</span>{{end}}
+    {{if .Older}}<a href="{{.Older}}" rel="next">{{.OlderLabel}} &rsaquo;</a>{{else}}<span class="is-disabled">{{.OlderLabel}} &rsaquo;</span>{{end}}
+  </span>
+  {{if .Sizes}}<span class="listfoot__sizes">{{range .Sizes}}{{if .Selected}}<strong aria-current="true">{{.N}}</strong>{{else}}<a href="{{.Href}}">{{.N}}</a>{{end}} {{end}}per page</span>{{end}}
+</nav>
+{{end}}
 {{end}}
 
 {{/* -- plan diff, recursively: Job -> TaskGroups -> Tasks -> Objects/Fields
