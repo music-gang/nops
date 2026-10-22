@@ -1,8 +1,8 @@
 """MkDocs hooks: build the docs site from the Markdown of the repository as it is.
 
 The pages keep their relative links, so GitHub and the tests in docs/ read them
-unchanged. Here the root README becomes the home page and every link is
-rewritten for the site: to another page of the site, or to GitHub when the
+unchanged. Here the root README becomes the home page, the root CHANGELOG a
+page, and every link is rewritten for the site: to another page of the site, or to GitHub when the
 target is not on it (examples/, LICENSE, docs/archive/...).
 """
 
@@ -19,13 +19,17 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 INLINE_CODE = re.compile(r"(`[^`]*`)")
 # [text](target) and src="target" / href="target" in the HTML of the README.
 TARGET = re.compile(r"(\]\()([^)\s]+)|((?:src|href)=\")([^\"]+)")
+# The pages of the site made from files at the root of the repository.
+ROOT_PAGES = {"README.md": "index.md", "CHANGELOG.md": "changelog.md"}
 
 
 def on_files(files, config):
-    """Add the root README as the home page: docs/README.md is the index of
-    the pages on GitHub and is left out of the site (exclude_docs)."""
+    """Add the root README as the home page, and the root CHANGELOG:
+    docs/README.md is the index of the pages on GitHub and is left out of the
+    site (exclude_docs)."""
     root = os.path.dirname(config.config_file_path)
-    files.append(File.generated(config, "index.md", abs_src_path=os.path.join(root, "README.md")))
+    for name, uri in ROOT_PAGES.items():
+        files.append(File.generated(config, uri, abs_src_path=os.path.join(root, name)))
     return files
 
 
@@ -56,9 +60,11 @@ def _target(target, base, page_uri, root, files):
     path, hash_, fragment = target.partition("#")
     repo_path = posixpath.normpath(posixpath.join(base, path))
 
-    # Both READMEs stand for the home page.
-    if repo_path in ("README.md", "docs/README.md"):
+    # Both READMEs stand for the home page, a root file for its page.
+    if repo_path == "docs/README.md":
         uri = "index.md"
+    elif repo_path in ROOT_PAGES:
+        uri = ROOT_PAGES[repo_path]
     else:
         uri = repo_path.removeprefix("docs/") if repo_path.startswith("docs/") else None
     target_file = files.get_file_from_path(uri) if uri else None

@@ -84,7 +84,7 @@ jobs:
           echo "${VALE_SHA256}  ${tarball}" | sha256sum -c -
           tar -xzf "${tarball}" vale
           ./vale sync
-          ./vale --output=line docs README.md CONTRIBUTING.md internal/web/templates > vale.out || true
+          ./vale --output=line docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates > vale.out || true
           cat vale.out
           test ! -s vale.out
       # The docs site (docs/development.md#commands): a broken link or a page

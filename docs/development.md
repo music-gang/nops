@@ -106,7 +106,7 @@ failing test first.
 ```sh
 go test -race -cover ./...
 go tool staticcheck -tags integration ./...
-vale sync && vale docs README.md CONTRIBUTING.md internal/web/templates
+vale sync && vale docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates
 
 # the docs site, previewed on http://127.0.0.1:8000
 pip install -r scripts/mkdocs/requirements.txt
@@ -156,9 +156,14 @@ A release is a signed `vX.Y.Z` tag on `main`. Before `v1`, a minor release
 may break things and a patch never does.
 
 1. Make sure `main` is green and the [doc audit](#doc-audit) is done.
-2. For a minor or major release, move the image tag in
-   [running-nops.md](running-nops.md) to the new `X.Y` in a pull request
-   first: the script refuses to tag without it.
+2. In a pull request, write the release's section of
+   [the changelog](../CHANGELOG.md) and, for a minor or major release, move
+   the image tag in [running-nops.md](running-nops.md) to the new `X.Y`. The
+   script refuses to tag a final release without them, or without
+   *Upgrade notes* in the section when a commit breaks something. The
+   section is headed `## vX.Y.Z`, with `### Upgrade notes`, `### Features`,
+   `### Fixes`, and `### Other changes` as needed: each item says what
+   changes for someone running Nops, with its pull request.
 3. Run `scripts/release.sh`. It lists the commits since the last tag,
    suggests a version, then signs and pushes the tag. `--dry-run` only shows
    the suggestion.
@@ -167,11 +172,12 @@ may break things and a patch never does.
    `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version`.
 6. Never move or delete a tag: fix forward with a patch release.
 
-The `release` workflow builds the binary and the image with goreleaser,
-publishes them to the GitHub release and `ghcr.io/music-gang/nops`, and
-writes the release notes from the commit subjects, with *Upgrade notes* on
-top, made from the `BREAKING CHANGE:` footers. A final release also
-publishes the docs site. Image tags for `vX.Y.Z`
+The `release` workflow builds the binary and the image with goreleaser and
+publishes them to the GitHub release and `ghcr.io/music-gang/nops`. A final
+release's notes are its section of the changelog, with a link to its
+commits, and it publishes the docs site. A release candidate's notes are the
+commit subjects, with *Upgrade notes* on top, made from the
+`BREAKING CHANGE:` footers. Image tags for `vX.Y.Z`
 are `X.Y.Z`, `X.Y` and `latest`. The image is distroless with the binary
 only. The version comes from the tag, set at build time with
 `-ldflags -X github.com/music-gang/nops/internal/version.version=<tag>`.
@@ -195,12 +201,12 @@ style:
 - **Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`,
   `build`, `ci`, `chore`, `revert`.
 - **Subject:** imperative, lowercase, no trailing period, 72 characters at
-  most. It becomes a line of the release notes, so write it for someone
-  running Nops.
+  most. The release notes start from it, so write it for someone running
+  Nops.
 - **Body:** wrapped at 72 characters, plain text. Say what changed and why.
 - **Breaking change:** `!` after the scope and a `BREAKING CHANGE:` footer
-  that says what changed and what to do. It becomes an item of the
-  release's *Upgrade notes*.
+  that says what changed and what to do. The release's *Upgrade notes*
+  start from it.
 
 ## The dashboard's code
 

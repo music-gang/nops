@@ -8,13 +8,15 @@ repo_name: music-gang/nops
 
 docs_dir: docs
 # docs/README.md is the index on GitHub, the menu replaces it; the root README
-# is the home page (the hook). The archive is history, not part of the site.
+# is the home page and the root CHANGELOG a page (the hook). The archive is
+# history, not part of the site.
 exclude_docs: |
   /README.md
   /archive/
   docs_test.go
 watch:
   - README.md
+  - CHANGELOG.md
 hooks:
   - scripts/mkdocs/hooks.py
 
@@ -76,6 +78,7 @@ nav:
       - logs-and-notifications.md
       - metrics.md
       - glossary.md
+      - changelog.md
   - Explanation:
       - policies.md
       - philosophy.md

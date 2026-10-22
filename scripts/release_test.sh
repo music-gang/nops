@@ -179,6 +179,47 @@ check notes-final-record-no-nul '## Upgrade notes
 check notes-warning 'warning: a feat!: a (#4) has no BREAKING CHANGE footer: its subject is the note, edit the release' \
   "$(printf 'a\tfeat!: a (#4)\n\0' | upgrade_notes 2>&1 >/dev/null)"
 
+# changelog_section
+changelog='# Changelog
+
+Intro.
+
+## v0.3.0
+
+### Upgrade notes
+
+- rename a flag
+
+### Features
+
+- add a page
+
+## v0.2.0
+
+### Fixes
+
+- stop a loop
+'
+check section-first '### Upgrade notes
+
+- rename a flag
+
+### Features
+
+- add a page' "$(printf '%s' "$changelog" | changelog_section v0.3.0)"
+check section-last '### Fixes
+
+- stop a loop' "$(printf '%s' "$changelog" | changelog_section v0.2.0)"
+check section-missing '' "$(printf '%s' "$changelog" | changelog_section v0.1.0)"
+check section-exact-heading '' "$(printf '%s' "$changelog" | changelog_section v0.3)"
+check section-no-final-newline '- x' "$(printf '## v1.0.0\n\n- x' | changelog_section v1.0.0)"
+check section-empty '' "$(printf '## v1.0.0\n\n## v0.9.0\n- x\n' | changelog_section v1.0.0)"
+
+# has_upgrade_notes
+ok upgrade-notes has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.3.0)"
+no upgrade-notes-none has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"
+no upgrade-notes-in-text has_upgrade_notes <<<'- see the ### Upgrade notes'
+
 if [ "$failed" = 0 ]; then
   echo "release_test: ok"
 fi

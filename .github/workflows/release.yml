@@ -1,7 +1,7 @@
 name: release
 
 # A vX.Y.Z tag pushed on a commit of main publishes the release: the image on
-# ghcr.io/music-gang/nops and the binary, checksums and changelog on the
+# ghcr.io/music-gang/nops and the binary, checksums and release notes on the
 # GitHub Release, and a final one (not an -rc) the docs site on GitHub Pages.
 # How to cut one: docs/development.md#releasing.
 on:
@@ -33,10 +33,11 @@ jobs:
             echo "$GITHUB_REF_NAME is not on main: releases are cut from main only"
             exit 1
           fi
-      # The BREAKING CHANGE footers since the last final tag, the same text
-      # scripts/release.sh shows before the tag. goreleaser puts it above the
-      # changelog, which starts from the same tag.
-      - name: Upgrade notes
+      # A final release's notes are its section of CHANGELOG.md, which
+      # scripts/release.sh checks before the tag, and a link to its commits.
+      # A release candidate's are goreleaser's changelog, from the same last
+      # final tag, under the BREAKING CHANGE footers scripts/release.sh shows.
+      - name: Release notes
         id: notes
         run: |
           . scripts/release.sh
@@ -47,12 +48,27 @@ jobs:
           else
             range="$GITHUB_SHA"
           fi
-          file="$RUNNER_TEMP/upgrade-notes.md"
-          git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes >"$file"
-          if [ -s "$file" ]; then
-            cat "$file"
-            echo "args=--release-header $file" >>"$GITHUB_OUTPUT"
-          fi
+          file="$RUNNER_TEMP/release-notes.md"
+          case $GITHUB_REF_NAME in
+            *-*)
+              git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes >"$file"
+              if [ -s "$file" ]; then
+                echo "args=--release-header $file" >>"$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              changelog_section "$GITHUB_REF_NAME" <CHANGELOG.md >"$file"
+              if [ ! -s "$file" ]; then
+                echo "CHANGELOG.md has no section for $GITHUB_REF_NAME"
+                exit 1
+              fi
+              if [ -n "$last" ]; then
+                printf '\n**Commits:** %s/%s/compare/%s...%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$last" "$GITHUB_REF_NAME" >>"$file"
+              fi
+              echo "args=--release-notes $file" >>"$GITHUB_OUTPUT"
+              ;;
+          esac
+          cat "$file"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

@@ -42,7 +42,8 @@ repeat them, and read the relevant page before extending a part.
   (Diátaxis, Google style, Vale clean). It applies to every doc change,
   issue, commit, PR description and comment a session writes: only what the
   reader needs, what changes and why. No implementation detail the code
-  answers, no history, no restating another page, no edge-case lists.
+  answers, no history (`CHANGELOG.md` aside), no restating another page, no
+  edge-case lists.
 - **`internal/meta` is the source of truth** for the HCL syntax: keep it
   aligned with `docs/meta-keys.md`.
 - **A new package** gets, in the same commit, a row in the components of
@@ -127,6 +128,35 @@ What an audit checks, its verdicts and its scope are in
 3. **Fix as agreed**, each behaviour change in its own branch, with a test
    shown failing before the fix. The doc-only fixes and the missing tests go in
    one PR.
+
+## Preparing a release
+
+Asked to prepare a release, open the pull request of
+[step 2 of releasing](docs/development.md#releasing); the maintainer reviews,
+merges and tags.
+
+1. `git fetch --tags origin`. The release holds the commits on `origin/main`
+   since the last final tag
+   (`git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main`).
+   After `. scripts/release.sh`, `suggest_bump` and `bump_version` give the
+   version; one the maintainer names wins.
+2. Read each commit's whole message, its pull request and what it changed in
+   `docs/`: the section says what changes for someone running Nops and why,
+   never how the code does it.
+3. Write `## vX.Y.Z` above the last section of `CHANGELOG.md`, in the shape
+   [releasing](docs/development.md#releasing) gives and in the style of the
+   sections below it: one item per change, `` `scope`: `` first when the
+   commit has one, the pull request as a link (the file and the site don't
+   link a bare `#N`), and a link to the page that explains it when there is
+   one. *Upgrade notes* come from the `BREAKING CHANGE:` footers: what
+   breaks and the steps to take. *Other changes* are what someone running
+   Nops sees outside a feature or a fix: the Go version, the base image, the
+   tested Nomad version, a security fix in a dependency. A `docs`, `ci`,
+   `test`, `chore` or `style` commit goes in only when they see it.
+4. A minor or major release moves the image tag in `docs/running-nops.md` in
+   the same pull request.
+5. Vale clean on `CHANGELOG.md`. Title: `docs: write the changelog of vX.Y.Z`.
+6. What lands on `main` before the tag goes in the same section.
 
 ## Invariants (non-negotiable)
 
