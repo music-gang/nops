@@ -6,7 +6,7 @@ What changes in each release of Nops, newest first. Before upgrading, read
 
 ## v0.13.0
 
-### Upgrade notes
+### Breaking changes
 
 - `GET /api/deployments` and `GET /api/jobs` answer a page of 50 rows, with a
   `next_token` while more follow. A client that reads every row follows
@@ -79,7 +79,7 @@ What changes in each release of Nops, newest first. Before upgrading, read
 
 ## v0.10.0
 
-### Upgrade notes
+### Breaking changes
 
 - `-metrics-token-file`, `NOPS_METRICS_TOKEN_FILE` and `NOPS_METRICS_TOKEN`
   are removed, and Nops refuses to start with them. With the ACL on, give
@@ -87,13 +87,10 @@ What changes in each release of Nops, newest first. Before upgrading, read
   off, `/metrics` is open
   ([#184](https://github.com/music-gang/nops/pull/184)).
 
-### Breaking changes
+### Features
 
 - `metrics`: protect `/metrics` with the ACL instead of its own token
   ([#184](https://github.com/music-gang/nops/pull/184))
-
-### Features
-
 - `cli`: complete commands and flags in `bash` and `zsh`
   ([#186](https://github.com/music-gang/nops/pull/186))
 - `metrics`: expose when each token expires
@@ -124,19 +121,16 @@ What changes in each release of Nops, newest first. Before upgrading, read
 
 ## v0.8.0
 
-### Upgrade notes
+### Breaking changes
 
 - The upgrade deletes the existing API tokens: create new ones on the
   Administration page or with `nops acl token create`. Nops refuses to start
   with `-oidc-allowed-users` or `-oidc-allowed-groups`: limit who can log in at
   the identity provider, or use binding rules with `-acl`.
 
-### Breaking changes
-
-- add access control with ACL policies, tokens, and binding rules
-
 ### Features
 
+- add access control with ACL policies, tokens, and binding rules
 - `cli`: generate a Nops secret from the command line
   ([#145](https://github.com/music-gang/nops/pull/145))
 
@@ -151,20 +145,17 @@ What changes in each release of Nops, newest first. Before upgrading, read
 
 ## v0.7.0
 
-### Upgrade notes
+### Breaking changes
 
 - The server runs as `nops serve`: put `serve` before its flags
   (`nops -git-url ...` becomes `nops serve -git-url ...`). The image runs it
   with no arguments; a Nomad job that passes flags in `args` must start them
   with `serve` ([#126](https://github.com/music-gang/nops/pull/126)).
 
-### Breaking changes
+### Features
 
 - `cli`: add a command-line client and run the server as `nops serve`
   ([#126](https://github.com/music-gang/nops/pull/126))
-
-### Features
-
 - `notify`: say who asked for a Deploy now in a notification
   ([#121](https://github.com/music-gang/nops/pull/121))
 - `web`: add a JSON API with per-user tokens

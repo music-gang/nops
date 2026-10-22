@@ -165,12 +165,12 @@ last_release() {
   git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "$1" 2>/dev/null || true
 }
 
-# upgrade_notes: reads `git log -z --format='%h%x09%s%n%b'` on stdin and prints
-# the *Upgrade notes* of the release: one item per breaking commit, made from
-# its BREAKING CHANGE footer (up to the first blank line) and the pull request
-# number of its subject. A breaking commit without a footer gets its subject
+# breaking_changes: reads `git log -z --format='%h%x09%s%n%b'` on stdin and
+# prints the *Breaking changes* of the release: one item per breaking commit,
+# made from its BREAKING CHANGE footer (up to the first blank line) and the
+# pull request number of its subject. A breaking commit without a footer gets its subject
 # and a warning on stderr. Prints nothing when no commit breaks.
-upgrade_notes() {
+breaking_changes() {
   local record header hash subject body line text found count=0
   local footer='^BREAKING[ -]CHANGE:[[:space:]]*(.*)$'
   local pr='\(#([0-9]+)\)$'
@@ -207,7 +207,7 @@ EOF
     fi
 
     if [ $count = 0 ]; then
-      printf '## Upgrade notes\n\n'
+      printf '## Breaking changes\n\n'
     fi
     printf -- '- %s\n' "$text"
     count=$((count + 1))
@@ -247,12 +247,12 @@ absolute_links() {
   sed -E "s|\]\(([^)/:#][^):]*)\)|](${1}/\1)|g"
 }
 
-# has_upgrade_notes: succeeds when the changelog section on stdin has an
-# `### Upgrade notes` heading.
-has_upgrade_notes() {
+# has_breaking_changes: succeeds when the changelog section on stdin has an
+# `### Breaking changes` heading.
+has_breaking_changes() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
-    [ "$line" = '### Upgrade notes' ] && return 0
+    [ "$line" = '### Breaking changes' ] && return 0
   done
   return 1
 }
@@ -359,9 +359,9 @@ check_image_tag() {
   fi
 }
 
-# check_changelog <tag> <sha> <upgrade-notes>: a final release needs its
-# section in CHANGELOG.md on <sha>, the release's notes, with *Upgrade notes*
-# when a commit breaks something. A release candidate's notes are generated.
+# check_changelog <tag> <sha> <breaking-changes>: a final release needs its
+# section in CHANGELOG.md on <sha>, the release's notes, with *Breaking
+# changes* when a commit breaks something. A release candidate's notes are generated.
 check_changelog() {
   local tag=$1 sha=$2 notes=$3 section
   case $tag in *-*) return 0 ;; esac
@@ -370,8 +370,8 @@ check_changelog() {
     problem "CHANGELOG.md has no section for $tag: add it in a pull request first"
     return 0
   fi
-  if [ -n "$notes" ] && ! has_upgrade_notes <<<"$section"; then
-    problem "the CHANGELOG.md section for $tag has no '### Upgrade notes', and a commit breaks something"
+  if [ -n "$notes" ] && ! has_breaking_changes <<<"$section"; then
+    problem "the CHANGELOG.md section for $tag has no '### Breaking changes', and a commit breaks something"
   fi
 }
 
@@ -437,9 +437,9 @@ main() {
   # A release candidate's notes start with the same text; a final release's
   # section of CHANGELOG.md needs its own.
   local notes
-  notes=$(git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes)
+  notes=$(git log -z --reverse --format='%h%x09%s%n%b' "$range" | breaking_changes)
   if [ -n "$notes" ]; then
-    echo "Upgrade notes from the BREAKING CHANGE footers:"
+    echo "Breaking changes, from the BREAKING CHANGE footers:"
     echo
     echo "$notes"
     echo

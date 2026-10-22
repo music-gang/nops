@@ -160,10 +160,13 @@ may break things and a patch never does.
    [the changelog](../CHANGELOG.md) and, for a minor or major release, move
    the image tag in [running-nops.md](running-nops.md) to the new `X.Y`. The
    script refuses to tag a final release without them, or without
-   *Upgrade notes* in the section when a commit breaks something. The
-   section is headed `## vX.Y.Z`, with `### Upgrade notes`, `### Features`,
-   `### Fixes`, and `### Other changes` as needed: each item says what
-   changes for someone running Nops, with its pull request.
+   *Breaking changes* in the section when a commit breaks something. The
+   section is headed `## vX.Y.Z`, with `### Breaking changes` first, then
+   `### Upgrade notes`, `### Features`, `### Fixes`, and `### Other changes`,
+   each only when it has an item. A breaking change says what breaks and
+   what to do; *Upgrade notes* hold the numbered steps of an upgrade that
+   takes several. Each item says what changes for someone running Nops,
+   with its pull request.
 3. Run `scripts/release.sh`. It lists the commits since the last tag,
    suggests a version, then signs and pushes the tag. `--dry-run` only shows
    the suggestion.
@@ -176,7 +179,7 @@ The `release` workflow builds the binary and the image with goreleaser and
 publishes them to the GitHub release and `ghcr.io/music-gang/nops`. A final
 release's notes are its section of the changelog, with a link to its
 commits, and it publishes the docs site. A release candidate's notes are the
-commit subjects, with *Upgrade notes* on top, made from the
+commit subjects, with *Breaking changes* on top, made from the
 `BREAKING CHANGE:` footers. Image tags for `vX.Y.Z`
 are `X.Y.Z`, `X.Y` and `latest`. The image is distroless with the binary
 only. The version comes from the tag, set at build time with
@@ -205,8 +208,8 @@ style:
   Nops.
 - **Body:** wrapped at 72 characters, plain text. Say what changed and why.
 - **Breaking change:** `!` after the scope and a `BREAKING CHANGE:` footer
-  that says what changed and what to do. The release's *Upgrade notes*
-  start from it.
+  that says what changed and what to do. The release's
+  *Breaking changes* start from it.
 
 ## The dashboard's code
 
