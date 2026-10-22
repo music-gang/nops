@@ -405,6 +405,18 @@ p + .input-group { margin-top: 8px; }
 .filter.is-active { color: var(--fg); font-weight: 600; background: var(--neutral-subtle); border-color: var(--fg-subtle); }
 .filter__count { margin-left: 4px; font-weight: 400; color: var(--fg-muted); }
 
+/* The search and filters of a list: one wrapping row of small fields. */
+.listform { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.listform .input { width: auto; min-width: 0; max-width: 12rem; margin: 0; }
+.listform .listform__search { flex: 1 1 14rem; max-width: none; }
+.listform__check { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); }
+.listform__clear { color: var(--fg-muted); }
+.box__body > .filters:last-child, .box__body > .listform:last-child { margin-bottom: 0; }
+
+/* The links to the pages next to a list. */
+.pager { display: flex; justify-content: center; gap: 8px; margin: 16px 0; }
+.btn.is-disabled { color: var(--fg-subtle); pointer-events: none; }
+
 /* -- the Jobs table ----------------------------------------------------------------------- */
 
 .table { width: 100%; table-layout: fixed; border-collapse: collapse; }
@@ -718,6 +730,7 @@ legend.field__label + .field__caption { margin: -4px 0 8px; }
   .strip__row { flex-wrap: wrap; gap: 4px 12px; }
   .strip__label { flex-basis: 100%; }
   .strip__main { flex-basis: 100%; }
+  .listform .input { flex: 1 1 8rem; max-width: none; }
   .decision__actions .btn { width: 100%; }
   .decision__actions form { flex: 1; }
   .flash--action { flex-direction: column; align-items: flex-start; }

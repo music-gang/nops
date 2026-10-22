@@ -166,7 +166,7 @@ func TestJobsPageShowsAPausedJob(t *testing.T) {
 	}}
 	ts := newTestServer(t, &fakeStore{}, en, "")
 
-	mustContain(t, ts.get("/jobs"), ">Paused<", "paused by alice: db incident", `href="?state=paused"`)
+	mustContain(t, ts.get("/jobs"), ">Paused<", "paused by alice: db incident", `href="/jobs?state=paused"`)
 
 	page := ts.get("/jobs?state=paused")
 	mustContain(t, page, `href="/jobs/default/web"`)
@@ -310,7 +310,7 @@ func TestJobsPageShowsAHeldJob(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, en, "")
 
 	page := ts.get("/jobs")
-	mustContain(t, page, ">Held<", "outside its sync window, next opens Fri 2026-09-25 09:00 UTC", `href="?state=held"`, "In sync")
+	mustContain(t, page, ">Held<", "outside its sync window, next opens Fri 2026-09-25 09:00 UTC", `href="/jobs?state=held"`, "In sync")
 	if n := strings.Count(page, ">Held<"); n != 1 {
 		t.Errorf("%d Held pills, want 1: the job with nothing to deploy is in sync", n)
 	}

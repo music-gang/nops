@@ -28,8 +28,8 @@ import (
 	"github.com/hashicorp/nomad/api"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/acl"
+	"github.com/music-gang/nops/internal/nomadx"
 	"github.com/music-gang/nops/internal/store"
 )
 

@@ -76,8 +76,37 @@
 {{/* A page's filter: links with their counts, the active one marked. */}}
 {{define "filters"}}
 <nav class="filters" aria-label="Filter">
-  {{range .}}<a class="filter{{if .Active}} is-active{{end}}" href="{{if .Key}}?state={{.Key}}{{else}}?{{end}}">{{.Label}} <span class="filter__count">{{.Count}}</span></a>{{end}}
+  {{range .}}<a class="filter{{if .Active}} is-active{{end}}" href="{{.Href}}">{{.Label}} <span class="filter__count">{{.Count}}</span></a>{{end}}
 </nav>
+{{end}}
+
+{{/* -- the search and filters of a list, and the links to the pages next to
+     it. A plain GET form: it works without JavaScript. --------------------- */}}
+{{define "list_form"}}
+<form class="listform" method="get" action="{{.Path}}" role="search">
+  {{if .State}}<input type="hidden" name="state" value="{{.State}}">{{end}}
+  <input class="input listform__search" type="search" name="q" value="{{.Search}}" placeholder="Search" aria-label="Search">
+  {{if .Fields.Namespace}}<input class="input" type="text" name="namespace" value="{{.Namespace}}" placeholder="Namespace" aria-label="Namespace">{{end}}
+  {{if .Fields.Job}}<input class="input" type="text" name="job" value="{{.Job}}" placeholder="Job" aria-label="Job">{{end}}
+  {{if .Policies}}<select class="input" name="policy" aria-label="Policy">{{range .Policies}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{end}}
+  {{if .Repositories}}<select class="input" name="repository" aria-label="Repository">{{range .Repositories}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{end}}
+  {{if .Fields.DecidedBy}}<input class="input" type="text" name="decided_by" value="{{.DecidedBy}}" placeholder="Decided by" aria-label="Decided by">{{end}}
+  {{if .Fields.Time}}<input class="input" type="date" name="since" value="{{.Since}}" aria-label="Created from" title="Created from"><input class="input" type="date" name="until" value="{{.Until}}" aria-label="Created up to" title="Created up to">{{end}}
+  {{if .Fields.Warnings}}<label class="listform__check"><input type="checkbox" name="warnings" value="true"{{if .Warnings}} checked{{end}}> Meta warnings</label>{{end}}
+  <select class="input" name="per_page" aria-label="Rows per page">{{range .PerPages}}<option value="{{.}}"{{if eq . $.PerPage}} selected{{end}}>{{.}} per page</option>{{end}}</select>
+  <button class="btn" type="submit">Apply</button>
+  <a class="listform__clear" href="{{.Clear}}">Clear</a>
+</form>
+{{if .Error}}<p class="flash flash--error">{{.Error}}</p>{{end}}
+{{end}}
+
+{{define "pager"}}
+{{if or .List.Newer .List.Older}}
+<nav class="pager" aria-label="Pages">
+  {{if .List.Newer}}<a class="btn btn--sm" href="{{.List.Newer}}" rel="prev">{{.Newer}}</a>{{else}}<span class="btn btn--sm is-disabled" aria-disabled="true">{{.Newer}}</span>{{end}}
+  {{if .List.Older}}<a class="btn btn--sm" href="{{.List.Older}}" rel="next">{{.Older}}</a>{{else}}<span class="btn btn--sm is-disabled" aria-disabled="true">{{.Older}}</span>{{end}}
+</nav>
+{{end}}
 {{end}}
 
 {{/* -- plan diff, recursively: Job -> TaskGroups -> Tasks -> Objects/Fields

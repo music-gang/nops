@@ -1,11 +1,12 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,9 +30,9 @@ type activityData struct {
 	baseData
 	Days    []activityDay
 	Filters []filterLink
-	Filter  string // "" for all
-	Total   int
-	Limited bool // older deployments exist that this page does not list
+	// Any says a deployment matches the search and the filters but the state.
+	Any  bool
+	List listView
 }
 
 // activityFilters are the choices of the Activity page: "active" is every
@@ -44,55 +45,39 @@ var activityFilters = []struct{ key, label string }{
 	{string(store.StateSuperseded), "Superseded"},
 }
 
-// activityKey is the filter a deployment belongs to.
-func activityKey(st store.State) string {
-	if st.IsActive() {
-		return "active"
-	}
-	return string(st)
-}
-
 func (s *server) history(w http.ResponseWriter, r *http.Request) {
-	active, err := s.store.ListActive(r.Context())
+	data := activityData{baseData: s.base(r, "history")}
+	q, err := s.dashboardList(w, r, deploymentList)
 	if err != nil {
-		s.serverError(w, r, "list active deployments", err)
+		data.List = s.listView(r, q, page{})
+		data.List.Error, data.List.Fields = err.Error(), deploymentFields
+		w.WriteHeader(http.StatusBadRequest)
+		s.render(w, r, "activity", data)
 		return
 	}
-	past, err := s.store.ListHistory(r.Context(), historyLimit)
+	dq := q.deployments(subjectOf(r.Context()).acl.Scope(acl.Read))
+	list, p, err := s.pageDeployments(r.Context(), dq, q)
 	if err != nil {
-		s.serverError(w, r, "list history", err)
+		s.serverError(w, r, "list deployments", err)
 		return
 	}
-	latest, err := s.latestByJob(r)
+	latest, err := s.latestOf(r.Context(), list)
 	if err != nil {
 		s.serverError(w, r, "list latest deployments", err)
 		return
 	}
-	all := readable(r, append(append([]*store.Deployment{}, active...), past...))
-	sort.Slice(all, func(i, j int) bool {
-		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
-			return all[i].CreatedAt.After(all[j].CreatedAt)
-		}
-		return all[i].ID > all[j].ID
-	})
-
-	filter := r.URL.Query().Get("state")
-	valid := false
-	for _, f := range activityFilters {
-		valid = valid || f.key == filter
+	data.List = s.listView(r, q, p)
+	data.List.Fields = deploymentFields
+	if data.Filters, data.Any, err = s.stateFilters(r, dq, q.State); err != nil {
+		s.serverError(w, r, "count deployments", err)
+		return
 	}
-	if !valid {
-		filter = ""
+	if data.List.Policies, data.List.Repositories, err = s.deploymentOptions(r.Context(), dq, q); err != nil {
+		s.serverError(w, r, "count deployments", err)
+		return
 	}
-
-	data := activityData{baseData: s.base(r, "history"), Filter: filter, Total: len(all), Limited: len(past) == historyLimit}
-	counts := map[string]int{}
 	today := s.now().UTC().Truncate(24 * time.Hour)
-	for _, d := range all {
-		counts[activityKey(d.State)]++
-		if filter != "" && activityKey(d.State) != filter {
-			continue
-		}
+	for _, d := range list {
 		label := dayLabel(today, d.CreatedAt)
 		if n := len(data.Days); n == 0 || data.Days[n-1].Label != label {
 			data.Days = append(data.Days, activityDay{Label: label})
@@ -100,13 +85,89 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 		day := &data.Days[len(data.Days)-1]
 		day.Rows = append(day.Rows, s.withRetry(r, s.card(d), d, latest[jobKey(d.Namespace, d.JobID)]))
 	}
-	data.Filters = append(data.Filters, filterLink{Label: "All", Count: len(all), Active: filter == ""})
-	for _, f := range activityFilters {
-		if counts[f.key] > 0 || f.key == filter {
-			data.Filters = append(data.Filters, filterLink{Key: f.key, Label: f.label, Count: counts[f.key], Active: f.key == filter})
+	s.render(w, r, "activity", data)
+}
+
+// deploymentFields are the filters of a list of every deployment.
+var deploymentFields = listFields{Namespace: true, Job: true, DecidedBy: true, Time: true}
+
+// latestOf finds the latest deployment of each job of a page, which decides
+// whether a row can be retried: one lookup a job.
+func (s *server) latestOf(ctx context.Context, list []*store.Deployment) (map[string]*store.Deployment, error) {
+	out := map[string]*store.Deployment{}
+	for _, d := range list {
+		k := jobKey(d.Namespace, d.JobID)
+		if _, ok := out[k]; ok {
+			continue
+		}
+		latest, err := s.store.ListByJob(ctx, d.Namespace, d.JobID, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(latest) > 0 {
+			out[k] = latest[0]
 		}
 	}
-	s.render(w, r, "activity", data)
+	return out, nil
+}
+
+// stateFilters are the state links of a list of deployments, each with the
+// count of the rows it would show, and whether any row matches without one.
+func (s *server) stateFilters(r *http.Request, dq store.DeploymentQuery, chosen string) ([]filterLink, bool, error) {
+	dq.Active, dq.States = false, nil
+	count := func(key string) (int, error) {
+		q := dq
+		switch key {
+		case "":
+		case "active":
+			q.Active = true
+		default:
+			q.States = []store.State{store.State(key)}
+		}
+		return s.store.CountDeployments(r.Context(), q, maxCount)
+	}
+	all, err := count("")
+	if err != nil {
+		return nil, false, err
+	}
+	links := []filterLink{{Label: "All", Count: countLabel(all), Href: s.listLink(r, map[string]string{"state": ""}), Active: chosen == ""}}
+	keys := activityFilters
+	if chosen != "" && !slices.ContainsFunc(keys, func(f struct{ key, label string }) bool { return f.key == chosen }) {
+		keys = append(slices.Clone(keys), struct{ key, label string }{chosen, stateLabel(store.State(chosen))})
+	}
+	for _, f := range keys {
+		n, err := count(f.key)
+		if err != nil {
+			return nil, false, err
+		}
+		if n > 0 || f.key == chosen {
+			links = append(links, filterLink{Key: f.key, Label: f.label, Count: countLabel(n), Href: s.listLink(r, map[string]string{"state": f.key}), Active: f.key == chosen})
+		}
+	}
+	return links, all > 0, nil
+}
+
+// deploymentOptions are the policy and repository selects of a list of
+// deployments, each choice with its count.
+func (s *server) deploymentOptions(ctx context.Context, dq store.DeploymentQuery, q listQuery) (policies, repos []optionView, err error) {
+	count := func(set func(*store.DeploymentQuery, string)) func(string) string {
+		return func(v string) string {
+			if err != nil {
+				return ""
+			}
+			c := dq
+			set(&c, v)
+			var n int
+			n, err = s.store.CountDeployments(ctx, c, maxCount)
+			return countLabel(n)
+		}
+	}
+	policies = options("Any policy", []string{string(store.PolicyAuto), string(store.PolicyApproval)}, q.Policy,
+		count(func(c *store.DeploymentQuery, v string) { c.Policy = store.Policy(v) }))
+	if names := s.repositoryNames(); names != nil {
+		repos = options("Any repository", names, q.Repository, count(func(c *store.DeploymentQuery, v string) { c.Repository = v }))
+	}
+	return policies, repos, err
 }
 
 // dayLabel names the UTC day of t as seen from today (UTC midnight).

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -83,8 +84,76 @@ func (f *fakeStore) ListActive(ctx context.Context) ([]*store.Deployment, error)
 	return f.active, f.activeErr
 }
 
-func (f *fakeStore) ListHistory(ctx context.Context, limit int) ([]*store.Deployment, error) {
-	return f.history, f.historyErr
+// ListDeployments filters the deployments the fake holds (active, history and
+// byJob) as the store does, by scope, search and filters, and pages them.
+func (f *fakeStore) ListDeployments(ctx context.Context, q store.DeploymentQuery) ([]*store.Deployment, bool, error) {
+	if f.historyErr != nil {
+		return nil, false, f.historyErr
+	}
+	list := f.matching(q)
+	if q.After != nil {
+		after := func(d *store.Deployment) bool {
+			if d.ID == q.After.ID {
+				return false
+			}
+			if !d.CreatedAt.Equal(q.After.CreatedAt) {
+				return d.CreatedAt.Before(q.After.CreatedAt) != q.Newer
+			}
+			return (d.ID < q.After.ID) != q.Newer
+		}
+		var kept []*store.Deployment
+		for _, d := range list {
+			if after(d) {
+				kept = append(kept, d)
+			}
+		}
+		list = kept
+	}
+	if q.Newer && len(list) > q.Limit {
+		return list[len(list)-q.Limit:], true, nil
+	}
+	if len(list) > q.Limit {
+		return list[:q.Limit], true, nil
+	}
+	return list, false, nil
+}
+
+func (f *fakeStore) CountDeployments(ctx context.Context, q store.DeploymentQuery, max int) (int, error) {
+	if f.historyErr != nil {
+		return 0, f.historyErr
+	}
+	return min(len(f.matching(q)), max+1), nil
+}
+
+// matching are the deployments of q, its position aside, newest first.
+func (f *fakeStore) matching(q store.DeploymentQuery) []*store.Deployment {
+	seen := map[string]bool{}
+	var out []*store.Deployment
+	for _, d := range slices.Concat(f.active, f.history, f.byJob) {
+		if seen[d.ID] || !q.Read.Match(d.Namespace) {
+			continue
+		}
+		seen[d.ID] = true
+		if q.Search != "" && !strings.Contains(strings.ToLower(d.JobID+" "+d.Namespace+" "+d.CommitSubject+" "+d.CommitAuthor), strings.ToLower(q.Search)) &&
+			!strings.HasPrefix(d.ID, strings.ToUpper(q.Search)) && !strings.HasPrefix(d.CommitSHA, strings.ToLower(q.Search)) {
+			continue
+		}
+		if (q.Active && !d.State.IsActive()) || (len(q.States) > 0 && !slices.Contains(q.States, d.State)) ||
+			(q.Namespace != "" && d.Namespace != q.Namespace) || (q.JobID != "" && d.JobID != q.JobID) ||
+			(q.Repository != "" && d.Repository != q.Repository) || (q.DecidedBy != "" && d.DecidedBy != q.DecidedBy) ||
+			(q.Policy != "" && d.Policy != q.Policy) || (!q.Since.IsZero() && d.CreatedAt.Before(q.Since)) ||
+			(!q.Until.IsZero() && !d.CreatedAt.Before(q.Until)) {
+			continue
+		}
+		out = append(out, d)
+	}
+	slices.SortFunc(out, func(a, b *store.Deployment) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	return out
 }
 
 func (f *fakeStore) ListRecentCompleted(ctx context.Context, limit int) ([]*store.Deployment, error) {

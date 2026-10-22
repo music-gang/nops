@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/nomad/api"
@@ -195,59 +197,171 @@ const orphanReason = "removed from git, still running in Nomad"
 // filterLink is one choice of a page's filter: a link with the number of
 // rows it would show.
 type filterLink struct {
-	Key, Label string
-	Count      int
-	Active     bool
+	Key, Label, Href string
+	Count            string
+	Active           bool
 }
 
 type jobsData struct {
 	baseData
 	Rows    []jobRow
 	Filters []filterLink
-	Filter  string // "" for all
-	Total   int
+	// Any says a job matches the search and the filters but the state.
+	Any  bool
+	List listView
+}
+
+// jobEntry is a managed job of a list, before it is shown: what the filters
+// read.
+type jobEntry struct {
+	key        string // jobKey: the order of the list
+	obs        *engine.Observation
+	orphan     *engine.Orphan
+	latest     *store.Deployment
+	sync       syncKey
+	namespace  string
+	jobID      string
+	repository string
+	file       string
+	policy     meta.Policy
+	warnings   int
+}
+
+// jobEntries are the jobs the subject can read, observed and orphans, in the
+// order of their key. Every list of jobs walks them all: they live in the
+// engine's memory, which plans each of them on every detection cycle anyway.
+func (s *server) jobEntries(r *http.Request) ([]jobEntry, error) {
+	latest, err := s.latestByJob(r)
+	if err != nil {
+		return nil, err
+	}
+	var out []jobEntry
+	for _, o := range s.observations(r) {
+		e := jobEntry{
+			key: jobKey(o.Namespace, o.JobID), obs: &o, latest: latest[jobKey(o.Namespace, o.JobID)],
+			namespace: o.Namespace, jobID: o.JobID, repository: o.Repository, file: o.FilePath, policy: o.Policy,
+		}
+		e.sync = jobSync(o, e.latest)
+		for _, iss := range o.Issues {
+			if iss.Severity != meta.SeverityError {
+				e.warnings++
+			}
+		}
+		out = append(out, e)
+	}
+	for _, o := range s.orphans(r) {
+		e := jobEntry{
+			key: jobKey(o.Namespace, o.JobID), orphan: &o, latest: latest[jobKey(o.Namespace, o.JobID)], sync: syncOrphan,
+			namespace: o.Namespace, jobID: o.JobID, policy: meta.Policy(o.Policy),
+		}
+		if e.latest != nil {
+			e.repository = e.latest.Repository
+		}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out, nil
+}
+
+// matches reports whether e passes q's search and filters, the state aside
+// when withState is false.
+func (e jobEntry) matches(q listQuery, withState bool) bool {
+	if q.Search != "" {
+		needle := strings.ToLower(q.Search)
+		if !strings.Contains(strings.ToLower(e.jobID), needle) && !strings.Contains(strings.ToLower(e.namespace), needle) &&
+			!strings.Contains(strings.ToLower(e.file), needle) {
+			return false
+		}
+	}
+	return (!withState || q.State == "" || q.State == string(e.sync)) &&
+		(q.Namespace == "" || q.Namespace == e.namespace) &&
+		(q.Repository == "" || q.Repository == e.repository) &&
+		(q.Policy == "" || q.Policy == string(e.policy)) &&
+		(!q.Warnings || e.warnings > 0)
+}
+
+// pageJobs is the page of q among entries, and the counts of each sync state
+// among the rows that pass the other filters.
+func pageJobs(entries []jobEntry, q listQuery) (rows []jobEntry, p page, counts map[syncKey]int) {
+	counts = map[syncKey]int{}
+	var matched []jobEntry
+	var keys []string
+	for _, e := range entries {
+		if !e.matches(q, false) {
+			continue
+		}
+		counts[e.sync]++
+		if q.State == "" || q.State == string(e.sync) {
+			matched = append(matched, e)
+			keys = append(keys, e.key)
+		}
+	}
+	from, to, p := pageKeys(keys, q)
+	return matched[from:to], p, counts
 }
 
 func (s *server) jobs(w http.ResponseWriter, r *http.Request) {
-	obs := s.observations(r)
-	latest, err := s.latestByJob(r)
+	data := jobsData{baseData: s.base(r, "jobs")}
+	q, err := s.dashboardList(w, r, jobList)
+	if err != nil {
+		data.List = s.listView(r, q, page{})
+		data.List.Error, data.List.Fields = err.Error(), jobFields
+		w.WriteHeader(http.StatusBadRequest)
+		s.render(w, r, "jobs", data)
+		return
+	}
+	entries, err := s.jobEntries(r)
 	if err != nil {
 		s.serverError(w, r, "list latest deployments", err)
 		return
 	}
-	// A state that is not one of ours (an old link) shows everything, as if
-	// there were no filter.
-	filter := syncKey(r.URL.Query().Get("state"))
-	if !filter.valid() {
-		filter = ""
+	rows, p, counts := pageJobs(entries, q)
+	for _, e := range rows {
+		if e.obs != nil {
+			data.Rows = append(data.Rows, s.jobRow(*e.obs, e.latest))
+		} else {
+			data.Rows = append(data.Rows, s.orphanRow(*e.orphan, e.latest))
+		}
 	}
+	data.List = s.listView(r, q, p)
+	data.List.Fields = jobFields
 
-	orphans := s.orphans(r)
-	data := jobsData{baseData: s.base(r, "jobs"), Total: len(obs) + len(orphans), Filter: string(filter)}
-	counts := map[syncKey]int{}
-	rows := make([]jobRow, 0, data.Total)
-	for _, o := range obs {
-		rows = append(rows, s.jobRow(o, latest[jobKey(o.Namespace, o.JobID)]))
+	total := 0
+	for _, n := range counts {
+		total += n
 	}
-	for _, o := range orphans {
-		rows = append(rows, s.orphanRow(o, latest[jobKey(o.Namespace, o.JobID)]))
-	}
-	// Observations are sorted by job ID and so are orphans: one list again.
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Title < rows[j].Title })
-	for _, row := range rows {
-		counts[row.Sync]++
-		if filter == "" || filter == row.Sync {
-			data.Rows = append(data.Rows, row)
-		}
-	}
-	data.Filters = append(data.Filters, filterLink{Label: "All", Count: data.Total, Active: filter == ""})
+	data.Any = total > 0
+	data.Filters = append(data.Filters, filterLink{Label: "All", Count: strconv.Itoa(total), Href: s.listLink(r, map[string]string{"state": ""}), Active: q.State == ""})
 	for _, k := range syncOrder {
-		if counts[k] > 0 || k == filter {
-			data.Filters = append(data.Filters, filterLink{Key: string(k), Label: k.label(), Count: counts[k], Active: k == filter})
+		if counts[k] > 0 || string(k) == q.State {
+			data.Filters = append(data.Filters, filterLink{
+				Key: string(k), Label: k.label(), Count: strconv.Itoa(counts[k]), Href: s.listLink(r, map[string]string{"state": string(k)}), Active: string(k) == q.State,
+			})
 		}
+	}
+	count := func(set func(*listQuery, string)) func(string) string {
+		return func(v string) string {
+			c := q
+			set(&c, v)
+			n := 0
+			for _, e := range entries {
+				if e.matches(c, true) {
+					n++
+				}
+			}
+			return strconv.Itoa(n)
+		}
+	}
+	data.List.Policies = options("Any policy", []string{string(meta.PolicyAuto), string(meta.PolicyApproval), string(meta.PolicyNone)}, q.Policy,
+		count(func(c *listQuery, v string) { c.Policy = v }))
+	if names := s.repositoryNames(); names != nil {
+		data.List.Repositories = options("Any repository", names, q.Repository, count(func(c *listQuery, v string) { c.Repository = v }))
 	}
 	s.render(w, r, "jobs", data)
 }
+
+// jobFields are the filters of the Jobs page.
+var jobFields = listFields{Namespace: true, Warnings: true}
 
 // -- GET /jobs/{namespace}/{job} --------------------------------------------
 
@@ -346,6 +460,8 @@ type jobData struct {
 	Summary                 nomadx.DiffSummary
 	Issues                  []meta.Issue
 	Deployments             []deploymentCard
+	DeploymentFilters       []filterLink
+	List                    listView   // the search, filters and pages of Deployments
 	Nomad                   *nomadView // what Nomad says of the job; nil without a Nomad to ask
 	NomadURL                string     // the job in the Nomad UI; "" without a -nomad-ui-url
 }
@@ -369,32 +485,52 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	deps, err := s.store.ListByJob(r.Context(), ns, id, jobHistoryLimit)
+	recent, err := s.store.ListByJob(r.Context(), ns, id, 1)
 	if err != nil {
 		s.serverError(w, r, "list deployments of a job", err)
 		return
 	}
-	if obs == nil && orphan == nil && len(deps) == 0 {
+	var latest *store.Deployment
+	if len(recent) > 0 {
+		latest = recent[0]
+	}
+	if obs == nil && orphan == nil && latest == nil {
 		s.notFoundMessage(w, r, "This job does not exist.")
 		return
 	}
 
 	data := jobData{baseData: s.base(r, "jobs"), Namespace: ns, JobID: id, Title: ns + "/" + id}
+	q, err := s.dashboardList(w, r, deploymentList)
+	if err == nil {
+		// The job is the page's: its namespace and name are not filters here.
+		q.Namespace, q.Job = ns, id
+		dq := q.deployments(subjectOf(r.Context()).acl.Scope(acl.Read))
+		var deps []*store.Deployment
+		var p page
+		if deps, p, err = s.pageDeployments(r.Context(), dq, q); err != nil {
+			s.serverError(w, r, "list deployments of a job", err)
+			return
+		}
+		for _, d := range deps {
+			data.Deployments = append(data.Deployments, s.withRetry(r, s.card(d), d, latest))
+		}
+		data.List = s.listView(r, q, p)
+		if data.DeploymentFilters, _, err = s.stateFilters(r, dq, q.State); err != nil {
+			s.serverError(w, r, "count deployments", err)
+			return
+		}
+	} else {
+		data.List = s.listView(r, q, page{})
+		data.List.Error = err.Error()
+	}
 	data.Nomad = s.nomadPanel(r.Context(), ns, id, 0)
 	data.NomadURL = s.nomadJobURL(ns, id)
-	for _, d := range deps {
-		data.Deployments = append(data.Deployments, s.withRetry(r, s.card(d), d, deps[0]))
-	}
 	if orphan != nil {
 		data.Orphan = &orphanView{NomadStatus: orphan.NomadStatus, StopCommand: "nomad job stop -namespace " + orphan.Namespace + " " + orphan.JobID}
 		data.Sync, data.SyncLabel, data.SyncClass = syncOrphan, syncOrphan.label(), syncOrphan.class()
 		data.Policy = meta.Policy(orphan.Policy)
 	}
 	if obs != nil {
-		var latest *store.Deployment
-		if len(deps) > 0 {
-			latest = deps[0]
-		}
 		diff, err := nomadx.ParseDiff(obs.PlanDiff)
 		if err != nil {
 			s.serverError(w, r, "parse drift diff", err)
@@ -438,6 +574,9 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		}
 		data.Window = windowOf(obs.Window)
 		data.Drift, data.Diff, data.Summary, data.Issues = obs.Drift, diff, nomadx.Summarize(diff), obs.Issues
+	}
+	if data.List.Error != "" {
+		w.WriteHeader(http.StatusBadRequest)
 	}
 	s.render(w, r, "job", data)
 }

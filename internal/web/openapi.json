@@ -24,21 +24,35 @@
     },
     "/api/jobs": {
       "get": {
-        "summary": "Every managed job, orphans included",
+        "summary": "A page of the managed jobs, orphans included",
         "operationId": "listJobs",
+        "parameters": [
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/NextToken" },
+          { "name": "q", "in": "query", "description": "Part of the job, the namespace or the file.", "schema": { "type": "string" } },
+          { "name": "state", "in": "query", "description": "A sync state.", "schema": { "type": "string", "enum": ["invalid", "paused", "blocked", "orphan", "pending", "deploying", "held", "drift", "sync"] } },
+          { "$ref": "#/components/parameters/NamespaceFilter" },
+          { "$ref": "#/components/parameters/RepositoryFilter" },
+          { "name": "policy", "in": "query", "schema": { "type": "string", "enum": ["auto", "approval", "none"] } },
+          { "name": "warnings", "in": "query", "description": "true lists only the jobs with meta warnings.", "schema": { "type": "boolean" } }
+        ],
         "responses": {
           "200": {
-            "description": "The jobs, by namespace and name.",
+            "description": "A page of the jobs, by namespace and name.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": ["jobs"],
-                  "properties": { "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } } }
+                  "properties": {
+                    "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } },
+                    "next_token": { "$ref": "#/components/schemas/NextToken" }
+                  }
                 }
               }
             }
           },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
@@ -46,7 +60,7 @@
     },
     "/api/jobs/{namespace}/{job}": {
       "get": {
-        "summary": "One job with its drift, hold, and deployments",
+        "summary": "One job with its drift, hold, and latest 50 deployments",
         "operationId": "getJob",
         "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
         "responses": {
@@ -63,23 +77,41 @@
     },
     "/api/deployments": {
       "get": {
-        "summary": "The active deployments and the latest finished ones, newest first",
+        "summary": "A page of the deployments, newest first",
         "operationId": "listDeployments",
+        "parameters": [
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/NextToken" },
+          { "name": "q", "in": "query", "description": "At least 3 characters: part of the job, the namespace, the commit subject or its author, or the start of a deployment ID or commit SHA.", "schema": { "type": "string", "minLength": 3 } },
+          {
+            "name": "state", "in": "query", "description": "A state, or active for every state that isn't terminal.",
+            "schema": { "type": "string", "enum": ["active", "detected", "pending_approval", "pre_hook", "applying", "post_hook", "completed", "failed", "rejected", "superseded"] }
+          },
+          { "$ref": "#/components/parameters/NamespaceFilter" },
+          { "name": "job", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/RepositoryFilter" },
+          { "name": "policy", "in": "query", "schema": { "type": "string", "enum": ["auto", "approval", "none"] } },
+          { "name": "decided_by", "in": "query", "description": "Who approved or rejected.", "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "description": "Created from a date (UTC) or an RFC 3339 time.", "schema": { "type": "string" } },
+          { "name": "until", "in": "query", "description": "Created up to a date (UTC, included) or an RFC 3339 time.", "schema": { "type": "string" } }
+        ],
         "responses": {
           "200": {
-            "description": "The deployments.",
+            "description": "A page of the deployments.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": ["deployments"],
                   "properties": {
-                    "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+                    "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } },
+                    "next_token": { "$ref": "#/components/schemas/NextToken" }
                   }
                 }
               }
             }
           },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "500": { "$ref": "#/components/responses/ServerError" }
         }
@@ -576,7 +608,11 @@
       "DeploymentID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
       "PolicyName": { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
       "AccessorID": { "name": "accessor_id", "in": "path", "required": true, "schema": { "type": "string" } },
-      "BindingRuleID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      "BindingRuleID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "PerPage": { "name": "per_page", "in": "query", "description": "Rows per page.", "schema": { "type": "integer", "enum": [25, 50, 100], "default": 50 } },
+      "NextToken": { "name": "next_token", "in": "query", "description": "Where the page starts: the next_token of the previous answer.", "schema": { "type": "string" } },
+      "NamespaceFilter": { "name": "namespace", "in": "query", "schema": { "type": "string" } },
+      "RepositoryFilter": { "name": "repository", "in": "query", "description": "The repository the job file comes from.", "schema": { "type": "string" } }
     },
     "responses": {
       "BadRequest": {
@@ -659,6 +695,10 @@
           "created_at": { "type": "string", "format": "date-time" },
           "updated_at": { "type": "string", "format": "date-time" }
         }
+      },
+      "NextToken": {
+        "type": "string",
+        "description": "The cursor of the next page, opaque. Absent on the last page: the list ends there, whatever its number of rows."
       },
       "Job": {
         "type": "object",
