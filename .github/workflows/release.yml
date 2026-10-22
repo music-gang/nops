@@ -52,7 +52,7 @@ jobs:
           file="$RUNNER_TEMP/release-notes.md"
           case $GITHUB_REF_NAME in
             *-*)
-              git log -z --reverse --format='%h%x09%s%n%b' "$range" | upgrade_notes >"$file"
+              git log -z --reverse --format='%h%x09%s%n%b' "$range" | breaking_changes >"$file"
               if [ -s "$file" ]; then
                 echo "args=--release-header $file" >>"$GITHUB_OUTPUT"
               fi

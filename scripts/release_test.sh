@@ -121,10 +121,10 @@ check stale-no-final-newline 'ghcr.io/music-gang/nops:0.5' \
   "$(printf 'ghcr.io/music-gang/nops:0.5' | stale_image_tags 0.6)"
 check stale-other-image '' "$(printf 'ghcr.io/other/app:0.1\n' | stale_image_tags 0.6)"
 
-# upgrade_notes <record>...: the notes of these `%h<TAB>%s<NL>%b` records.
+# breaking_changes <record>...: the notes of these `%h<TAB>%s<NL>%b` records.
 notes() {
   local r
-  for r in "$@"; do printf '%s\0' "$r"; done | upgrade_notes 2>/dev/null
+  for r in "$@"; do printf '%s\0' "$r"; done | breaking_changes 2>/dev/null
 }
 tab=$(printf '\t')
 serve="a068300${tab}feat(cli)!: run the server as nops serve (#126)
@@ -139,17 +139,17 @@ Closes #118
 check notes-none '' "$(notes "abc${tab}feat(web): add a page (#1)
 BREAKING CHANGE: not a breaking commit")"
 check notes-empty '' "$(notes)"
-check notes-footer '## Upgrade notes
+check notes-footer '## Breaking changes
 
 - the server runs as "nops serve": put "serve" before its flags. The image runs it with no arguments. (#126)' \
   "$(notes "$serve")"
-check notes-dash-spelling '## Upgrade notes
+check notes-dash-spelling '## Breaking changes
 
 - rename -x to -y (#2)' \
   "$(notes "b${tab}fix(config)!: rename a flag (#2)
 
 BREAKING-CHANGE: rename -x to -y")"
-check notes-order '## Upgrade notes
+check notes-order '## Breaking changes
 
 - first (#1)
 - second (#2)' \
@@ -158,26 +158,26 @@ check notes-order '## Upgrade notes
 BREAKING CHANGE: first" "b${tab}fix!: b (#2)
 
 BREAKING CHANGE: second")"
-check notes-no-number '## Upgrade notes
+check notes-no-number '## Breaking changes
 
 - drop a column' \
   "$(notes "a${tab}fix!: drop a column
 
 BREAKING CHANGE: drop a column")"
-check notes-no-footer '## Upgrade notes
+check notes-no-footer '## Breaking changes
 
 - feat(web)!: rename a page (#3)' \
   "$(notes "a${tab}feat(web)!: rename a page (#3)
 The body has no footer.")"
-check notes-no-body '## Upgrade notes
+check notes-no-body '## Breaking changes
 
 - feat!: a (#4)' "$(notes "a${tab}feat!: a (#4)")"
-check notes-final-record-no-nul '## Upgrade notes
+check notes-final-record-no-nul '## Breaking changes
 
 - x (#5)' \
-  "$(printf 'a\tfeat!: a (#5)\n\nBREAKING CHANGE: x' | upgrade_notes)"
+  "$(printf 'a\tfeat!: a (#5)\n\nBREAKING CHANGE: x' | breaking_changes)"
 check notes-warning 'warning: a feat!: a (#4) has no BREAKING CHANGE footer: its subject is the note, edit the release' \
-  "$(printf 'a\tfeat!: a (#4)\n\0' | upgrade_notes 2>&1 >/dev/null)"
+  "$(printf 'a\tfeat!: a (#4)\n\0' | breaking_changes 2>&1 >/dev/null)"
 
 # changelog_section
 changelog='# Changelog
@@ -186,7 +186,7 @@ Intro.
 
 ## v0.3.0
 
-### Upgrade notes
+### Breaking changes
 
 - rename a flag
 
@@ -200,7 +200,7 @@ Intro.
 
 - stop a loop
 '
-check section-first '### Upgrade notes
+check section-first '### Breaking changes
 
 - rename a flag
 
@@ -223,10 +223,10 @@ check links-absolute '- [#2](https://github.com/o/r/pull/2)' \
   "$(printf '%s\n' '- [#2](https://github.com/o/r/pull/2)' | absolute_links "$base")"
 check links-anchor '- [above](#v100)' "$(printf '%s\n' '- [above](#v100)' | absolute_links "$base")"
 
-# has_upgrade_notes
-ok upgrade-notes has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.3.0)"
-no upgrade-notes-none has_upgrade_notes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"
-no upgrade-notes-in-text has_upgrade_notes <<<'- see the ### Upgrade notes'
+# has_breaking_changes
+ok breaking-changes has_breaking_changes <<<"$(printf '%s' "$changelog" | changelog_section v0.3.0)"
+no breaking-changes-none has_breaking_changes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"
+no breaking-changes-in-text has_breaking_changes <<<'- see the ### Breaking changes'
 
 if [ "$failed" = 0 ]; then
   echo "release_test: ok"

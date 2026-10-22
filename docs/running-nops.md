@@ -170,8 +170,8 @@ backup works again: revoke it again.
 ## Upgrading
 
 - Read the [changelog](../CHANGELOG.md) of every version between yours and
-  the new one. A release that breaks something
-  says what to change in its *Upgrade notes*.
+  the new one. A release that breaks something lists it under
+  *Breaking changes*, with what to do.
 - Pin a minor (`X.Y`) or an exact version, never `latest`: before `v1`, a new
   minor may break the configuration or the database.
 - [Back up the database](#backups) before upgrading: an older Nops refuses to

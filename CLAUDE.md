@@ -148,8 +148,10 @@ merges and tags.
    sections below it: one item per change, `` `scope`: `` first when the
    commit has one, the pull request as a link (the file and the site don't
    link a bare `#N`), and a link to the page that explains it when there is
-   one. *Upgrade notes* come from the `BREAKING CHANGE:` footers: what
-   breaks and the steps to take. *Other changes* are what someone running
+   one. *Breaking changes* come from the `BREAKING CHANGE:` footers: what
+   breaks and what to do, in a sentence or two. *Upgrade notes* only when
+   the upgrade takes several steps in order: numbered, and the breaking
+   change links to them. *Other changes* are what someone running
    Nops sees outside a feature or a fix: the Go version, the base image, the
    tested Nomad version, a security fix in a dependency. A `docs`, `ci`,
    `test`, `chore` or `style` commit goes in only when they see it.
