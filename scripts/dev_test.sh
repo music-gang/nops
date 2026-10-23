@@ -48,6 +48,9 @@ check rerun-token nops_kept "$(cat "$dir/bootstrap.token")"
 check rerun-users admin:kept "$(cat "$dir/users")"
 check rerun-commits 1 "$(git -C "$dir/jobs" rev-list --count HEAD)"
 
+# paint: plain text off a terminal, so logs and pipes get no escape codes.
+check paint-pipe 'dev: x' "$(paint 1 31 'dev: x')"
+
 if [ "$failed" = 0 ]; then
   echo "dev_test: ok"
 fi

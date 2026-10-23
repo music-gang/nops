@@ -12,6 +12,7 @@
 # there reaches them.
 #
 # Needs go, nomad, git, curl and Docker running.
+# Colors errors and warnings on a terminal, unless NO_COLOR is set.
 # Written for bash 3.2 (macOS): no wait -n.
 
 nomad_addr=http://127.0.0.1:14646
@@ -43,15 +44,29 @@ setup_state() {
   fi
 }
 
+# paint <fd> <sgr> <text>: <text> in the SGR attributes <sgr> (31 red, 1 bold...)
+# when <fd> is a terminal and NO_COLOR is unset (https://no-color.org).
+paint() {
+  if [ -z "${NO_COLOR:-}" ] && [ -t "$1" ]; then
+    printf '\033[%sm%s\033[0m\n' "$2" "$3"
+  else
+    printf '%s\n' "$3"
+  fi
+}
+
 # ---- flow --------------------------------------------------------------------
 
 die() {
-  echo "dev: $*" >&2
+  paint 2 '1;31' "dev: $*" >&2
   exit 1
 }
 
+warn() {
+  paint 2 33 "dev: $*" >&2
+}
+
 usage() {
-  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # port_free <port>: nothing listens on it, so the agent we reach is ours.
@@ -77,13 +92,13 @@ default_interface() {
 stop_jobs() {
   local job i
   for job in $(nomad job status -address="$nomad_addr" 2>/dev/null | awk 'NR > 1 && $1 != "" { print $1 }'); do
-    nomad job stop -address="$nomad_addr" -detach "$job" >/dev/null || echo "dev: could not stop job $job" >&2
+    nomad job stop -address="$nomad_addr" -detach "$job" >/dev/null || warn "could not stop job $job"
   done
   for i in $(seq 30); do
     curl -s "$nomad_addr/v1/allocations" | grep -qE '"ClientStatus":"(running|pending)"' || return 0
     sleep 1
   done
-  echo "dev: allocations still running after 30s: see docker ps" >&2
+  warn "allocations still running after 30s: see docker ps"
 }
 
 cleanup() {
@@ -192,13 +207,11 @@ EOF
   nops_pid=$!
   set +m
 
-  cat <<EOF
-dev: dashboard  $nops_addr  (admin / admin)
+  paint 1 32 "dev: dashboard  $nops_addr  (admin / admin)
 dev: Nomad UI   $nomad_addr
 dev: jobs       ${NOPS_DEV_GIT_URL:-$dir/jobs}
 dev: CLI        export NOPS_ADDR=$nops_addr NOPS_TOKEN_FILE=$dir/bootstrap.token
-dev: Ctrl-C stops both
-EOF
+dev: Ctrl-C stops both"
 
   while kill -0 "$nomad_pid" 2>/dev/null && kill -0 "$nops_pid" 2>/dev/null; do
     sleep 1
