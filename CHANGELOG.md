@@ -4,6 +4,17 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.14.0
+
+### Features
+
+- `hooks`: a hook can be a `sysbatch` job, which runs once on every eligible
+  node. A pre-hook can then pull the new image on all of them, as in the
+  [pre-pull example](docs/hooks.md#pre-pull-on-every-node). A `sysbatch` hook
+  that matches no node fails the run with "ran on no node"
+  ([hook contract](docs/hooks.md#contract),
+  [#230](https://github.com/music-gang/nops/pull/230)).
+
 ## v0.13.0
 
 ### Breaking changes
