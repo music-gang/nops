@@ -16,7 +16,7 @@ a Nops restart, the deployment resumes at the first hook that hadn't finished.
 
 ## Contract
 
-A hook is a `batch`, `parameterized` job in git with
+A hook is a `batch` or `sysbatch`, `parameterized` job in git with
 `meta { nops_role = "hook" }`. Don't register it yourself: Nops registers it
 as a [revision](#hook-revisions) when a deployment needs it.
 
@@ -53,6 +53,9 @@ in another namespace counts as missing.
     }
     ```
 
+    A `sysbatch` hook takes only `restart`: Nomad refuses a `reschedule`
+    block on it.
+
 - **Be idempotent.** After a crash, Nops can dispatch a hook again for the
   same deployment, and two deployments can run the same hook at once.
 - **Set a timeout** with `nops_timeout` on the hook job (default `5m`). When
@@ -62,6 +65,10 @@ in another namespace counts as missing.
 
 Nops doesn't pick nodes. To run a hook on the target job's node, give it the
 same `constraint`, or mount the same host volume read-only.
+
+A `sysbatch` hook runs once on every eligible node and fails if one of them
+fails. Give it the target's `datacenters`, `node_pool` and constraints, or it
+runs where the target can't land and skips nodes where it can.
 
 ## Hook revisions
 
@@ -83,6 +90,7 @@ Each directory in [`examples/`](../examples/) holds a job and its hooks:
 | Database migration before deploying | [`examples/migrate/`](../examples/migrate/) |
 | Smoke test after deploying | [`examples/approval/`](../examples/approval/) |
 | Pull a heavy image before deploying | [`examples/prepull-hostvolume/`](../examples/prepull-hostvolume/) |
+| Pull an image on every node before deploying | [`examples/prepull-everywhere/`](../examples/prepull-everywhere/) |
 | Backup before a stateful deploy | [`examples/backup-stateful/`](../examples/backup-stateful/) |
 | Backup, then migrate | [`examples/backup-then-migrate/`](../examples/backup-then-migrate/) |
 
@@ -93,6 +101,14 @@ downtime while it pulls. A pre-hook that mounts the same volume read-only runs
 on the same node and pulls the new image with `entrypoint = ["true"]`. The
 apply then finds the image in the cache. The target job needs
 `force_pull = false`.
+
+### Pre-pull on every node
+
+When Nomad can place a job on any node, a `sysbatch` pre-hook pulls the new
+image on all of them, so the apply finds it wherever it lands. Each node
+starts its image garbage collection timer (`image_delay`, 3m by default) when
+its pull ends. If pulls are slow on a large cluster, raise `image_delay` on
+the clients, or the first images may be gone when the apply starts.
 
 ### Reaching the service from a hook
 

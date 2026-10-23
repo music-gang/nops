@@ -11,6 +11,13 @@ import (
 
 func childWithStatus(status string) *api.Job { return &api.Job{Status: &status} }
 
+func stoppedChild() *api.Job {
+	stop := true
+	j := childWithStatus("dead")
+	j.Stop = &stop
+	return j
+}
+
 func alloc(client, desired string) nomadx.Alloc {
 	return nomadx.Alloc{ID: "abcdef123456", ClientStatus: client, DesiredStatus: desired}
 }
@@ -47,7 +54,8 @@ func TestEvaluate(t *testing.T) {
 			[]nomadx.Alloc{alloc("complete", "run"), failed}, verdictFailed, "Exit Code: 1"},
 		{"stopped from outside", childWithStatus("dead"), []nomadx.Alloc{alloc("complete", "stop")}, verdictStopped, "stopped from outside"},
 		{"evicted", childWithStatus("dead"), []nomadx.Alloc{alloc("complete", "evict")}, verdictStopped, "evict"},
-		{"dead without any allocation", childWithStatus("dead"), nil, verdictFailed, "before any allocation"},
+		{"dead without any allocation", childWithStatus("dead"), nil, verdictFailed, "ran on no node"},
+		{"stopped before any allocation", stoppedChild(), nil, verdictFailed, "before any allocation"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

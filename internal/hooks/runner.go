@@ -217,8 +217,8 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 	if !meta.Parse(parent.Meta).IsHook {
 		return fail("job %q is not a hook: it must set meta nops_role = %q", run.HookJobID, "hook")
 	}
-	if parent.Type == nil || *parent.Type != api.JobTypeBatch {
-		return fail("hook job %q must be of type batch", run.HookJobID)
+	if parent.Type == nil || (*parent.Type != api.JobTypeBatch && *parent.Type != api.JobTypeSysbatch) {
+		return fail("hook job %q must be of type batch or sysbatch", run.HookJobID)
 	}
 	all, err := BuildMeta(run.DeploymentID, req.Commit, run.Phase, req.Target)
 	if err != nil {
