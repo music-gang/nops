@@ -297,6 +297,30 @@ func TestRunSucceeds(t *testing.T) {
 	}
 }
 
+func TestRunSysbatchHook(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("prepull", []string{"nops_deployment_id", "nops_image_api"}, nil)
+	h.nomad.jobs["prepull"].Type = ptr("sysbatch")
+	h.onPoll = func(n int) {
+		if n == 2 {
+			child := h.nomad.jobs["prepull/dispatch-1"]
+			child.Status = ptr("dead")
+			h.nomad.allocs["prepull/dispatch-1"] = []nomadx.Alloc{
+				{ID: "alloc-a", ClientStatus: "complete", DesiredStatus: "run"},
+				{ID: "alloc-b", ClientStatus: "complete", DesiredStatus: "run"},
+			}
+		}
+	}
+
+	res := mustRun(t, h.runner, h.request("prepull", time.Minute))
+	if res.State != store.HookSucceeded || res.Error != "" {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(h.nomad.dispatches) != 1 || h.nomad.dispatches[0].Meta["nops_image_api"] != "reg/api:2" {
+		t.Errorf("dispatches = %+v", h.nomad.dispatches)
+	}
+}
+
 func TestRunFailed(t *testing.T) {
 	for _, status := range []string{"failed", "lost"} {
 		t.Run(status, func(t *testing.T) {
@@ -624,11 +648,11 @@ func TestRunInvalidHook(t *testing.T) {
 		{"not batch", func(h *harness) {
 			h.addHook("hook", []string{"nops_deployment_id"}, nil)
 			h.nomad.jobs["hook"].Type = ptr("service")
-		}, "must be of type batch"},
+		}, "must be of type batch or sysbatch"},
 		{"type unset", func(h *harness) {
 			h.addHook("hook", []string{"nops_deployment_id"}, nil)
 			h.nomad.jobs["hook"].Type = nil
-		}, "must be of type batch"},
+		}, "must be of type batch or sysbatch"},
 		{"not parameterized", func(h *harness) {
 			h.addHook("hook", nil, nil)
 			h.nomad.jobs["hook"].ParameterizedJob = nil

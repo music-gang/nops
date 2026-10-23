@@ -69,7 +69,7 @@ See [hooks](hooks.md).
 | Term | Meaning |
 |---|---|
 | **hook** | A job Nops runs before (`pre`) or after (`post`) an apply. |
-| **hook job** | The parameterized batch job in git marked `nops_role = "hook"`. |
+| **hook job** | The parameterized `batch` or `sysbatch` job in git marked `nops_role = "hook"`. |
 | **hook revision** | A hook job at one exact spec, registered in Nomad under a name with its hash. |
 | **frozen hook** | A hook as the deployment saw it when created. |
 | **dispatched job** | The job Nomad creates for a run of a hook job. |

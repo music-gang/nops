@@ -62,6 +62,18 @@ job %q {
 }`, id, role, cmd)
 }
 
+// hookSysbatchHCL is hookCmdHCL as a sysbatch job: Nomad refuses a reschedule
+// block on it. constraint is a group-level constraint block, or empty.
+func hookSysbatchHCL(id, cmd, constraint string) string {
+	h := strings.Replace(hookCmdHCL(id, cmd, true), `type = "batch"`, `type = "sysbatch"`, 1)
+	h = strings.Replace(h, `    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+`, constraint, 1)
+	return h
+}
+
 type hookEnv struct {
 	nomad  *nomadx.Client
 	raw    *api.Client
@@ -75,11 +87,18 @@ type hookEnv struct {
 // store and a real deployment row.
 func newHookEnv(t *testing.T, cmd string, isHook bool) *hookEnv {
 	t.Helper()
+	return newHookEnvFor(t, func(id string) string { return hookCmdHCL(id, cmd, isHook) })
+}
+
+// newHookEnvFor is newHookEnv for a hook whose HCL the caller builds from the
+// job ID.
+func newHookEnvFor(t *testing.T, hcl func(id string) string) *hookEnv {
+	t.Helper()
 	c, raw := newClient(t)
 	ctx := context.Background()
 	hookID := uniqueID(t, raw, "hookrun")
 
-	job, err := c.ParseHCL(ctx, "default", hookCmdHCL(hookID, cmd, isHook), "")
+	job, err := c.ParseHCL(ctx, "default", hcl(hookID), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,5 +349,51 @@ func TestHookRunPassesDeclaredMeta(t *testing.T) {
 	res := e.run(t, time.Minute)
 	if res.State != store.HookSucceeded {
 		t.Fatalf("result = %+v (the hook checks its own meta)", res)
+	}
+}
+
+// A sysbatch hook runs once on every eligible node. The dev agent has one.
+func TestHookRunSysbatchSucceeds(t *testing.T) {
+	e := newHookEnvFor(t, func(id string) string { return hookSysbatchHCL(id, "true", "") })
+
+	res := e.run(t, time.Minute)
+	if res.State != store.HookSucceeded || res.Error != "" {
+		t.Fatalf("result = %+v", res)
+	}
+	allocs, err := e.nomad.Allocations(context.Background(), "default", res.DispatchedJobID)
+	if err != nil || len(allocs) != 1 {
+		t.Fatalf("allocations = %+v, %v", allocs, err)
+	}
+	if allocs[0].ClientStatus != "complete" || allocs[0].DesiredStatus != "run" {
+		t.Errorf("finished sysbatch allocation = %+v, want complete/run", allocs[0])
+	}
+}
+
+func TestHookRunSysbatchFails(t *testing.T) {
+	e := newHookEnvFor(t, func(id string) string { return hookSysbatchHCL(id, "echo pull failed >&2; exit 3", "") })
+
+	res := e.run(t, time.Minute)
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "Exit Code: 3") {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+// With no node matching the hook, Nomad finishes the dispatched job without an
+// allocation: the run fails at once, not at the timeout.
+func TestHookRunSysbatchOnNoNodeFails(t *testing.T) {
+	constraint := `    constraint {
+      attribute = "${node.unique.name}"
+      value     = "nops-it-no-such-node"
+    }
+`
+	e := newHookEnvFor(t, func(id string) string { return hookSysbatchHCL(id, "true", constraint) })
+
+	start := time.Now()
+	res := e.run(t, time.Minute)
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "ran on no node") {
+		t.Fatalf("result = %+v", res)
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("took %s for a hook that runs nowhere", elapsed)
 	}
 }

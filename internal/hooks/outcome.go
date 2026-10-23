@@ -28,7 +28,8 @@ const (
 //   - any failed or lost allocation → failed;
 //   - a completed allocation the server wanted stopped → stopped;
 //   - child dead with every allocation complete → succeeded;
-//   - child dead with no allocation at all → failed (it never ran);
+//   - child dead with no allocation at all → failed (it never ran: stopped
+//     before any allocation, or, if not stopped, no node matched a sysbatch hook);
 //   - anything else, including no allocation yet → running.
 //
 // Requiring the child to be dead (not just its allocations complete) keeps a
@@ -52,6 +53,9 @@ func evaluate(child *api.Job, allocs []nomadx.Alloc) (verdict, string) {
 		return verdictRunning, ""
 	}
 	if len(allocs) == 0 {
+		if child.Stop == nil || !*child.Stop {
+			return verdictFailed, "hook job ran on no node: no node matched its datacenters, node pool and constraints"
+		}
 		return verdictFailed, "hook job stopped before any allocation ran"
 	}
 	for _, a := range allocs {
