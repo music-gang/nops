@@ -37,6 +37,10 @@ suggest() {
   printf '%s\n' "$@" | suggest_bump "$v"
 }
 
+# paint: plain text off a terminal, so CI logs and pipes get no escape codes.
+check paint-pipe 'warning: x' "$(paint 1 33 'warning: x')"
+check paint-pipe-stderr 'warning: x' "$(paint 2 33 'warning: x' 2>&1)"
+
 # classify
 check classify-feat feat "$(classify 'feat(web): add a page')"
 check classify-feat-no-scope feat "$(classify 'feat: add a page')"

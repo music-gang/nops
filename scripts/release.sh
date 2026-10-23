@@ -7,9 +7,20 @@
 #   scripts/release.sh --dry-run   preview only: no prompt, no tag, no push
 #
 # Needs git and gh (logged in), and a GPG key in `user.signingkey`.
+# Colors errors and warnings on a terminal, unless NO_COLOR is set.
 # Written for bash 3.2 (macOS): no associative arrays, no mapfile.
 
 # ---- pure functions (tested by scripts/release_test.sh) ---------------------
+
+# paint <fd> <sgr> <text>: <text> in the SGR attributes <sgr> (31 red, 1 bold...)
+# when <fd> is a terminal and NO_COLOR is unset (https://no-color.org).
+paint() {
+  if [ -z "${NO_COLOR:-}" ] && [ -t "$1" ]; then
+    printf '\033[%sm%s\033[0m\n' "$2" "$3"
+  else
+    printf '%s\n' "$3"
+  fi
+}
 
 # classify <subject>: breaking | feat | fix | change | other
 # `change` is refactor, perf and revert; docs, ci, chore, build, test, style and
@@ -200,7 +211,7 @@ $body
 EOF
 
     if [ -z "$text" ]; then
-      echo "warning: $hash $subject has no BREAKING CHANGE footer: its subject is the note, edit the release" >&2
+      warn "$hash $subject has no BREAKING CHANGE footer: its subject is the note, edit the release"
       text=$subject
     elif [[ $subject =~ $pr ]]; then
       text="$text (#${BASH_REMATCH[1]})"
@@ -260,15 +271,24 @@ has_breaking_changes() {
 # ---- flow --------------------------------------------------------------------
 
 die() {
-  echo "release: $*" >&2
+  paint 2 '1;31' "release: $*" >&2
   exit 1
+}
+
+warn() {
+  paint 2 33 "warning: $*" >&2
+}
+
+# note <message>: a line to read, neither an error nor a warning.
+note() {
+  paint 2 36 "$*" >&2
 }
 
 # problem <message>: an error in a real run, a warning in a dry run (which is
 # only a look, not a release).
 problem() {
   if [ "$dry_run" = 1 ]; then
-    echo "warning: $*" >&2
+    warn "$*"
   else
     die "$*"
   fi
@@ -280,7 +300,8 @@ print_group() {
   while IFS="$(printf '\t')" read -r hash subject; do
     if [ "$(classify "$subject")" = "$class" ]; then
       if [ $printed = 0 ]; then
-        printf '\n%s\n' "$title"
+        echo
+        paint 1 1 "$title"
         printed=1
       fi
       printf '  %s  %s\n' "$hash" "$subject"
@@ -310,7 +331,7 @@ choose_version() {
 
   {
     echo
-    echo "Which version? (suggested: $suggested)"
+    paint 2 1 "Which version? (suggested: $suggested)"
     echo "  1) patch   $patch"
     echo "  2) minor   $minor"
     echo "  3) major   $major"
@@ -330,15 +351,15 @@ choose_version() {
         read -r -p "Version (vX.Y.Z or vX.Y.Z-rc.N): " custom
         case $custom in v*) ;; *) custom=v$custom ;; esac
         if ! is_semver "$custom"; then
-          echo "not a semver version: $custom" >&2
+          paint 2 31 "not a semver version: $custom" >&2
         elif [ "$last" != v0.0.0 ] && ! semver_gt "$custom" "$last"; then
-          echo "$custom is not higher than $last" >&2
+          paint 2 31 "$custom is not higher than $last" >&2
         else
           echo "$custom"
           return
         fi
         ;;
-      *) echo "type 1-5" >&2 ;;
+      *) paint 2 31 "type 1-5" >&2 ;;
     esac
   done
 }
@@ -376,7 +397,7 @@ check_changelog() {
 }
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -439,7 +460,7 @@ main() {
   local notes
   notes=$(git log -z --reverse --format='%h%x09%s%n%b' "$range" | breaking_changes)
   if [ -n "$notes" ]; then
-    echo "Breaking changes, from the BREAKING CHANGE footers:"
+    paint 1 1 "Breaking changes, from the BREAKING CHANGE footers:"
     echo
     echo "$notes"
     echo
@@ -455,11 +476,11 @@ main() {
   local open_prs
   open_prs=$(gh pr list --state open --json number --jq 'length') || die "gh pr list failed"
   if [ "$open_prs" != 0 ]; then
-    echo "warning: $open_prs open pull request(s): is nothing you want in this release still open?" >&2
+    warn "$open_prs open pull request(s): is nothing you want in this release still open?"
   fi
   # A prompt, not a gate: what the docs claim is only checked by an audit.
-  echo "reminder: audit the docs for what changed since $last (docs/development.md#doc-audit):" >&2
-  echo "  git diff --stat $range -- '*.md' cmd internal scripts examples .github" >&2
+  note "reminder: audit the docs for what changed since $last (docs/development.md#doc-audit):"
+  note "  git diff --stat $range -- '*.md' cmd internal scripts examples .github"
 
   local kind suggested
   kind=$(cut -f2 "$commits" | suggest_bump "$last")
@@ -472,7 +493,7 @@ main() {
   local tag
   if [ "$dry_run" = 1 ]; then
     tag=$suggested
-    echo "Suggested version: $tag ($kind)"
+    paint 1 '1;32' "Suggested version: $tag ($kind)"
     check_image_tag "$last" "$tag" "$sha"
     check_changelog "$tag" "$sha" "$notes"
     echo
@@ -499,14 +520,14 @@ main() {
 
   git tag -s "$tag" -m "$tag" "$sha"
   if ! git push origin "refs/tags/$tag"; then
-    echo "The tag exists locally but was not pushed. Remove it with: git tag -d $tag" >&2
+    paint 2 '1;31' "The tag exists locally but was not pushed. Remove it with: git tag -d $tag" >&2
     return 1
   fi
 
   local repo
   repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
   echo
-  echo "Pushed $tag. Release: https://github.com/$repo/releases/tag/$tag"
+  paint 1 '1;32' "Pushed $tag. Release: https://github.com/$repo/releases/tag/$tag"
   read -r -p "Follow the release run? [y/N] " answer
   case $answer in y | Y | yes) ;; *) return 0 ;; esac
 
