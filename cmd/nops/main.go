@@ -91,7 +91,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Info("deleted the expired tokens", "count", n)
 	}
 
-	nomadClient, err := nomadx.New(cfg.Nomad())
+	nomadClient, err := nomadx.New(cfg.Nomad(), cfg.NomadTimeout)
 	if err != nil {
 		return fmt.Errorf("nomad client: %w", err)
 	}
@@ -102,7 +102,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	for i, r := range cfg.Repositories {
 		watchers[i] = gitwatch.New(gitwatch.Options{
 			Name: r.Name, URL: r.URL, Branch: r.Branch, Path: r.Path,
-			Username: r.Username, Token: r.Token, PollInterval: cfg.GitPollInterval,
+			Username: r.Username, Token: r.Token, PollInterval: cfg.GitPollInterval, Timeout: r.Timeout,
 		}, log)
 	}
 	repos := gitwatch.NewGroup(watchers...)

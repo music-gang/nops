@@ -29,7 +29,7 @@ func aclClients(t *testing.T, addr, token string) (*nomadx.Client, *api.Client) 
 	cfg.Address, cfg.SecretID = addr, token
 	cfg.HttpClient = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	t.Cleanup(cfg.HttpClient.CloseIdleConnections)
-	c, err := nomadx.New(cfg)
+	c, err := nomadx.New(cfg, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

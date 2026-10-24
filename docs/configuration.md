@@ -53,6 +53,16 @@ inject secrets into the environment. These variables have no flag.
 | `-nomad-client-key` | `NOPS_NOMAD_CLIENT_KEY` | none | PEM client key for mTLS. |
 | `-nomad-tls-skip-verify` | `NOPS_NOMAD_TLS_SKIP_VERIFY` | `false` | Skip server certificate checks. Testing only. |
 
+The `nomad` block of the [configuration file](#configuration-file) sets how
+long a request to Nomad may take, the answer included. It has no flag or
+variable, and one block at most:
+
+```hcl
+nomad {
+  timeout = "30s"
+}
+```
+
 ## Git
 
 The `-git-*` options are the repository named `default`. Set without
@@ -65,6 +75,7 @@ The `-git-*` options are the repository named `default`. Set without
 | `-git-path` | `NOPS_GIT_PATH` | none | Subdirectory holding the job files. Unset: the root. |
 | `-git-username` | `NOPS_GIT_USERNAME` | `git` | Username sent with the token: `oauth2` for GitLab, the user name for Gitea. |
 | `-git-token-file` | `NOPS_GIT_TOKEN_FILE` | none | File holding the HTTPS token. Unset: public repository. |
+| `-git-timeout` | `NOPS_GIT_TIMEOUT` | `2m` | How long a poll of the repository may take, the clone included. |
 
 Nops reads private repositories over HTTPS with a token. It doesn't support
 SSH. The release image can't read `file://` URLs.
@@ -73,7 +84,7 @@ SSH. The release image can't read `file://` URLs.
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository` and `listen` blocks. |
+| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository`, `listen` and `nomad` blocks. |
 
 ### Repositories
 
@@ -97,6 +108,7 @@ repository "apps" {
 | `username` | `git` | Username sent with the token. |
 | `token_file` | none | File holding the HTTPS token. Unset: public repository. |
 | `jobs` | none | The jobs the repository may declare, as `<namespace>/<job ID>` patterns. Unset: any job. |
+| `timeout` | `2m` | How long a poll of the repository may take, the clone included. |
 
 - The name, made of letters, digits, `-` and `_`, labels the repository on
   the dashboard, in metrics, and in notifications.

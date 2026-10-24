@@ -8,12 +8,15 @@ package nomadx
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/nomad/api"
 )
 
@@ -51,12 +54,42 @@ type Client struct {
 
 // New creates a Client. nops passes config.Config.Nomad(), which ignores the
 // NOMAD_* environment variables and carries no namespace.
-func New(cfg *api.Config) (*Client, error) {
+//
+// timeout is how long a request may take, the answer included. The API client
+// sets none of its own, so a server that accepts the connection and never
+// answers would block the caller for good. Nops makes no blocking query, so no
+// call is meant to outlive it.
+func New(cfg *api.Config, timeout time.Duration) (*Client, error) {
+	if cfg.HttpClient == nil {
+		hc, err := httpClient(cfg, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("create nomad client: %w", err)
+		}
+		cfg.HttpClient = hc
+	}
 	c, err := api.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create nomad client: %w", err)
 	}
 	return &Client{jobs: c.Jobs(), deployments: c.Deployments(), raw: c.Raw()}, nil
+}
+
+// httpClient builds the client the Nomad API would build for cfg, with a
+// timeout on the whole request: its pooled transport, the TLS handshake limit
+// and the minimum TLS version it sets, and HTTP/1 only, as the API does for
+// exec and websockets. It has no unix socket case: the address of nops is
+// http or https.
+func httpClient(cfg *api.Config, timeout time.Duration) (*http.Client, error) {
+	hc := cleanhttp.DefaultPooledClient()
+	t := hc.Transport.(*http.Transport)
+	t.TLSHandshakeTimeout = 10 * time.Second
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	t.ForceAttemptHTTP2 = false
+	if err := api.ConfigureTLS(hc, cfg.TLSConfig); err != nil {
+		return nil, err
+	}
+	hc.Timeout = timeout
+	return hc, nil
 }
 
 // query and write build the options of a request in namespace ns. An empty ns
