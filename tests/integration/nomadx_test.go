@@ -61,7 +61,7 @@ func newClient(t *testing.T) (*nomadx.Client, *api.Client) {
 	// processes of the end-to-end tests alongside, a long run or -count=N gets
 	// there), so close them when the test is done.
 	t.Cleanup(cfg.HttpClient.CloseIdleConnections)
-	c, err := nomadx.New(cfg)
+	c, err := nomadx.New(cfg, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

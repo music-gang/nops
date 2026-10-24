@@ -17,8 +17,8 @@ func twoRepos(t *testing.T, poll time.Duration) (g *Group, def, apps *testRepo) 
 	apps.commit(map[string]string{"nomad/web.nomad.hcl": `job "web" {}`})
 	log, _ := testLogger()
 	g = NewGroup(
-		New(Options{Name: "default", URL: def.url, Branch: "main", PollInterval: poll}, log),
-		New(Options{Name: "apps", URL: apps.url, Branch: "main", Path: "nomad", PollInterval: poll}, log),
+		New(Options{Name: "default", URL: def.url, Branch: "main", PollInterval: poll, Timeout: time.Minute}, log),
+		New(Options{Name: "apps", URL: apps.url, Branch: "main", Path: "nomad", PollInterval: poll, Timeout: time.Minute}, log),
 	)
 	if err := g.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -46,8 +46,8 @@ func TestGroupStartFailsOnAnyRepository(t *testing.T) {
 	ok.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 	log, _ := testLogger()
 	g := NewGroup(
-		New(Options{Name: "default", URL: ok.url, Branch: "main", PollInterval: time.Hour}, log),
-		New(Options{Name: "apps", URL: ok.url, Branch: "no-such-branch", PollInterval: time.Hour}, log),
+		New(Options{Name: "default", URL: ok.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log),
+		New(Options{Name: "apps", URL: ok.url, Branch: "no-such-branch", PollInterval: time.Hour, Timeout: time.Minute}, log),
 	)
 	err := g.Start(context.Background())
 	if err == nil || !strings.Contains(err.Error(), `"apps"`) {

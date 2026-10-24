@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +146,7 @@ func TestStartInitialClone(t *testing.T) {
 	})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func TestStatusTracksPolls(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	clock := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	w.now = func() time.Time { return clock }
 	ctx := context.Background()
@@ -283,7 +285,7 @@ func TestPollNewCommit(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	ctx := context.Background()
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -324,7 +326,7 @@ func TestForcePush(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" { v = 1 }`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	ctx := context.Background()
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -349,7 +351,7 @@ func TestForcePush(t *testing.T) {
 
 func TestTriggerCoalesces(t *testing.T) {
 	log, _ := testLogger()
-	w := New(Options{PollInterval: time.Hour}, log)
+	w := New(Options{PollInterval: time.Hour, Timeout: time.Minute}, log)
 	w.Trigger()
 	w.Trigger()
 	w.Trigger()
@@ -371,7 +373,7 @@ func TestVarsPairing(t *testing.T) {
 	})
 
 	log, buf := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +407,7 @@ func TestGitPathScoping(t *testing.T) {
 	})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", Path: "jobs", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", Path: "jobs", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +422,7 @@ func TestFailedFetchKeepsSnapshot(t *testing.T) {
 	commit := r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, buf := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	ctx := context.Background()
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -446,7 +448,7 @@ func TestStartGitPathMissing(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", Path: "no-such-dir", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", Path: "no-such-dir", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	if err := w.Start(context.Background()); err == nil {
 		t.Fatal("expected an error for a missing git-path")
 	}
@@ -457,7 +459,7 @@ func TestPollGitPathRemovedKeepsSnapshot(t *testing.T) {
 	firstCommit := r.commit(map[string]string{"jobs/api.nomad.hcl": `job "api" {}`})
 
 	log, buf := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", Path: "jobs", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "main", Path: "jobs", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	ctx := context.Background()
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -483,7 +485,7 @@ func TestStartCloneFailure(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "does-not-exist", PollInterval: time.Hour}, log)
+	w := New(Options{URL: r.url, Branch: "does-not-exist", PollInterval: time.Hour, Timeout: time.Minute}, log)
 	if err := w.Start(context.Background()); err == nil {
 		t.Fatal("expected an error for a nonexistent branch")
 	}
@@ -494,7 +496,7 @@ func TestRemoteHeadBranchNotFound(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "no-such-branch"}, log)
+	w := New(Options{URL: r.url, Branch: "no-such-branch", Timeout: time.Minute}, log)
 	if _, err := w.remoteHead(context.Background()); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("err = %v, want a \"not found\" error", err)
 	}
@@ -520,7 +522,7 @@ func TestRun(t *testing.T) {
 	r.commit(map[string]string{"api.nomad.hcl": `job "api" {}`})
 
 	log, _ := testLogger()
-	w := New(Options{URL: r.url, Branch: "main", PollInterval: 20 * time.Millisecond}, log)
+	w := New(Options{URL: r.url, Branch: "main", PollInterval: 20 * time.Millisecond, Timeout: time.Minute}, log)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := w.Start(ctx); err != nil {
@@ -558,5 +560,48 @@ func TestRun(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after ctx was cancelled")
+	}
+}
+
+// hangingRemote is an HTTP server that accepts the connection and never
+// answers: the remote the timeout is for.
+func hangingRemote(t *testing.T) string {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv.URL + "/ops/jobs.git"
+}
+
+// within fails the test if f is still running after 5s, so a missing timeout
+// is a failure and not a hung test run.
+func within(t *testing.T, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { f(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("still blocked after 5s: the timeout does not apply")
+	}
+}
+
+func TestStartTimesOut(t *testing.T) {
+	log, _ := testLogger()
+	w := New(Options{URL: hangingRemote(t), Branch: "main", PollInterval: time.Hour, Timeout: 100 * time.Millisecond}, log)
+	within(t, func() {
+		if err := w.Start(context.Background()); err == nil {
+			t.Error("Start returned no error for a remote that never answers")
+		}
+	})
+}
+
+func TestPollTimesOut(t *testing.T) {
+	log, _ := testLogger()
+	w := New(Options{URL: hangingRemote(t), Branch: "main", PollInterval: time.Hour, Timeout: 100 * time.Millisecond}, log)
+	within(t, func() { w.poll(context.Background()) })
+	if st := w.Status(); st.Error == "" || !st.CheckedAt.IsZero() {
+		t.Errorf("Status = %+v, want the failure recorded and no successful check", st)
 	}
 }

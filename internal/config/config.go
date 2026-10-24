@@ -4,8 +4,8 @@
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
 // variable, the variable over the default. The file holds only what a flag
-// cannot: the repository and listen blocks. nops reads nothing else: the standard NOMAD_*
-// variables are ignored. The reference for users is docs/configuration.md:
+// cannot: the repository, listen and nomad blocks. nops reads nothing else:
+// the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
 
@@ -45,6 +45,13 @@ const (
 	defaultIdleTimeout       = 2 * time.Minute
 )
 
+// The default deadlines of the calls to Nomad (the nomad block) and of a poll
+// of a repository (the repository block, -git-timeout for the default one).
+const (
+	defaultNomadTimeout      = 30 * time.Second
+	defaultRepositoryTimeout = 2 * time.Minute
+)
+
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
 	NomadAddr string
@@ -59,6 +66,9 @@ type Config struct {
 	NomadClientCert    string
 	NomadClientKey     string
 	NomadTLSSkipVerify bool
+	// NomadTimeout is how long a request to Nomad may take, from the nomad
+	// block of the -config file.
+	NomadTimeout time.Duration
 
 	// The -git-* options: the repository named DefaultRepository, when GitURL
 	// is set.
@@ -68,6 +78,7 @@ type Config struct {
 	GitUsername  string
 	GitTokenFile string
 	GitToken     string // content of GitTokenFile, read by Load
+	GitTimeout   time.Duration
 
 	// ConfigFile is the HCL file of -config, "" without one.
 	ConfigFile string
@@ -168,6 +179,8 @@ type Repository struct {
 	Username  string
 	TokenFile string
 	Token     string // content of TokenFile, read by Load
+	// Timeout is how long a poll of the repository may take, the clone included.
+	Timeout time.Duration
 	// Jobs are the "<namespace>/<job ID>" patterns of the jobs the repository
 	// may declare, path.Match syntax; nil is any job.
 	Jobs []string
@@ -207,7 +220,7 @@ var options = []option{
 	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
 		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
 
-	{name: "config", usage: "HCL `file` of the repository and listen blocks",
+	{name: "config", usage: "HCL `file` of the repository, listen and nomad blocks",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
 	{name: "git-url", usage: "URL of the git repository named default (required without a repository block in -config)",
 		set: func(c *Config, v string) error { c.GitURL = v; return nil }},
@@ -223,6 +236,8 @@ var options = []option{
 			c.GitToken, err = secretFile(v)
 			return
 		}},
+	{name: "git-timeout", def: "2m", usage: "how long a poll of the default repository may take, the clone included",
+		set: func(c *Config, v string) (err error) { c.GitTimeout, err = positiveDuration(v); return }},
 
 	{name: "db-path", def: "nops.db", usage: "SQLite database `file`",
 		set: func(c *Config, v string) (err error) { c.DBPath, err = required(v); return }},
@@ -419,6 +434,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	c := &Config{
+		NomadTimeout:      defaultNomadTimeout,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
@@ -456,6 +472,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	fc, fileErr := readConfigFile(c.ConfigFile)
 	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
 	errs = append(errs, c.loadListen(fc)...)
+	errs = append(errs, c.loadNomad(fc)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -613,6 +630,11 @@ var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 type fileConfig struct {
 	Repositories []fileRepository `hcl:"repository,block"`
 	Listen       *fileListen      `hcl:"listen,block"`
+	Nomad        *fileNomad       `hcl:"nomad,block"`
+}
+
+type fileNomad struct {
+	Timeout *string `hcl:"timeout,optional"`
 }
 
 type fileListen struct {
@@ -630,6 +652,7 @@ type fileRepository struct {
 	Username  *string   `hcl:"username,optional"`
 	TokenFile string    `hcl:"token_file,optional"`
 	Jobs      *[]string `hcl:"jobs,optional"`
+	Timeout   *string   `hcl:"timeout,optional"`
 }
 
 // loadRepositories fills c.Repositories from the -git-* options and the
@@ -643,9 +666,10 @@ func (c *Config) loadRepositories(explicit map[string]bool, fc *fileConfig, file
 		c.Repositories = append(c.Repositories, Repository{
 			Name: DefaultRepository, URL: c.GitURL, Branch: c.GitBranch, Path: c.GitPath,
 			Username: c.GitUsername, TokenFile: c.GitTokenFile, Token: c.GitToken,
+			Timeout: c.GitTimeout,
 		})
 	} else {
-		for _, name := range []string{"git-branch", "git-path", "git-username", "git-token-file"} {
+		for _, name := range []string{"git-branch", "git-path", "git-username", "git-token-file", "git-timeout"} {
 			if explicit[name] {
 				errs = append(errs, fmt.Errorf("-%s is set without -git-url", name))
 			}
@@ -726,6 +750,20 @@ func (c *Config) loadListen(fc *fileConfig) []error {
 	return errs
 }
 
+// loadNomad sets the timeout of the nomad block of fc, when it has one. An
+// error names the file and the attribute.
+func (c *Config) loadNomad(fc *fileConfig) []error {
+	if fc == nil || fc.Nomad == nil || fc.Nomad.Timeout == nil {
+		return nil
+	}
+	d, err := positiveDuration(*fc.Nomad.Timeout)
+	if err != nil {
+		return []error{fmt.Errorf("-config %s: nomad: timeout: %w", c.ConfigFile, err)}
+	}
+	c.NomadTimeout = d
+	return nil
+}
+
 // repositoriesOf reads the repository blocks of fc, the decoded -config file
 // at file. Every error names the file, and the block it is about. namespaces
 // are the managed ones, which the namespace of a jobs pattern must match.
@@ -735,7 +773,7 @@ func repositoriesOf(fc *fileConfig, file string, namespaces []string) ([]Reposit
 		errs  []error
 	)
 	for _, b := range fc.Repositories {
-		r := Repository{Name: b.Name, Branch: "main", Username: "git", TokenFile: b.TokenFile}
+		r := Repository{Name: b.Name, Branch: "main", Username: "git", TokenFile: b.TokenFile, Timeout: defaultRepositoryTimeout}
 		var blockErrs []error
 		fail := func(attr string, err error) {
 			blockErrs = append(blockErrs, fmt.Errorf("-config %s: repository %q: %s: %w", file, b.Name, attr, err))
@@ -764,6 +802,11 @@ func repositoriesOf(fc *fileConfig, file string, namespaces []string) ([]Reposit
 		if b.Jobs != nil {
 			if r.Jobs, err = jobPatterns(*b.Jobs, namespaces); err != nil {
 				fail("jobs", err)
+			}
+		}
+		if b.Timeout != nil {
+			if r.Timeout, err = positiveDuration(*b.Timeout); err != nil {
+				fail("timeout", err)
 			}
 		}
 		if len(blockErrs) > 0 {

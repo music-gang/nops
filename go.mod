@@ -9,6 +9,7 @@ require (
 	github.com/gorilla/securecookie v1.1.2
 	github.com/hashicorp/cronexpr v1.1.3
 	github.com/hashicorp/go-bexpr v0.1.17
+	github.com/hashicorp/go-cleanhttp v0.5.2
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hashicorp/nomad/api v0.0.0-20261020180939-fd2b0dea13c7
 	github.com/oklog/ulid/v2 v2.1.2
@@ -41,7 +42,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect

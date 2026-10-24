@@ -67,7 +67,9 @@ func TestLoadDefaults(t *testing.T) {
 		GitURL:           repo,
 		GitBranch:        "main",
 		GitUsername:      "git",
-		Repositories:     []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git"}},
+		GitTimeout:       2 * time.Minute,
+		NomadTimeout:     30 * time.Second,
+		Repositories:     []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git", Timeout: 2 * time.Minute}},
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
 		AuthMode:         "oidc",
@@ -178,6 +180,7 @@ repository "apps" {
 		"git-path":                  "jobs/apps",
 		"git-username":              "oauth2",
 		"git-token-file":            gitTok,
+		"git-timeout":               "45s",
 		"config":                    configFile,
 		"db-path":                   "/var/lib/nops/nops.db",
 		"listen-addr":               "127.0.0.1:9000",
@@ -218,10 +221,12 @@ repository "apps" {
 		GitUsername:        "oauth2",
 		GitTokenFile:       gitTok,
 		GitToken:           "git-secret",
+		GitTimeout:         45 * time.Second,
+		NomadTimeout:       30 * time.Second, // the nomad block is the file's, not an option
 		ConfigFile:         configFile,
 		Repositories: []Repository{
-			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret"},
-			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret"},
+			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret", Timeout: 45 * time.Second},
+			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret", Timeout: 2 * time.Minute},
 		},
 		DBPath:     "/var/lib/nops/nops.db",
 		ListenAddr: "127.0.0.1:9000",
@@ -383,6 +388,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"git-path", "../jobs", "must be a relative path"},
 		{"git-token-file", missing, "no such file"},
 		{"git-token-file", empty, "is empty"},
+		{"git-timeout", "soon", "invalid duration"},
+		{"git-timeout", "0s", "must be positive"},
 		{"db-path", "", "required"},
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
@@ -1244,6 +1251,7 @@ repository "apps" {
   path       = "./nomad/"
   username   = "oauth2"
   token_file = "`+tok+`"
+  timeout    = "5m"
 }
 
 repository "default" {
@@ -1255,8 +1263,8 @@ repository "default" {
 		t.Fatal(err)
 	}
 	want := []Repository{
-		{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "prod", Path: "nomad", Username: "oauth2", TokenFile: tok, Token: "apps-secret"},
-		{Name: "default", URL: "https://git.example.com/ops/jobs.git", Branch: "main", Username: "git"},
+		{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "prod", Path: "nomad", Username: "oauth2", TokenFile: tok, Token: "apps-secret", Timeout: 5 * time.Minute},
+		{Name: "default", URL: "https://git.example.com/ops/jobs.git", Branch: "main", Username: "git", Timeout: 2 * time.Minute},
 	}
 	if !reflect.DeepEqual(c.Repositories, want) {
 		t.Errorf("repositories:\n got %+v\nwant %+v", c.Repositories, want)
@@ -1305,6 +1313,7 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		{"a -git-* variable without -git-url", apps, nil, map[string]string{"NOPS_GIT_PATH": "jobs"}, "-git-path is set without -git-url"},
 		{"a git token without -git-url", apps, nil, map[string]string{"NOPS_GIT_TOKEN": "secret"}, "NOPS_GIT_TOKEN is set without -git-url"},
 		{"a git token file without -git-url", apps, []string{"-git-token-file=" + tok}, nil, "-git-token-file is set without -git-url"},
+		{"a git timeout without -git-url", apps, []string{"-git-timeout=1m"}, nil, "-git-timeout is set without -git-url"},
 		{"default next to -git-url", block("default", `url = "https://git.example.com/x.git"`), []string{"-git-url=" + repo}, nil, `repository "default" is the one of -git-url`},
 		{"a name twice", apps + apps, nil, nil, `repository "apps" is declared twice`},
 		{"a bad name", block("my apps", `url = "https://git.example.com/x.git"`), nil, nil, "the name may hold only letters, digits, - and _"},
@@ -1322,7 +1331,9 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		{"a malformed jobs pattern", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["default/api-["]`), nil, nil, `jobs: "default/api-[": syntax error in pattern`},
 		{"a jobs namespace that is not managed", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = ["labs/api"]`), nil, nil, `jobs: "labs/api" matches no managed namespace (default)`},
 		{"an unknown attribute", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token = "secret"`), nil, nil, "Unsupported argument"},
-		{"an unknown block", apps + "nomad {\n}\n", nil, nil, "Unsupported block type"},
+		{"a timeout that is not a duration", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`timeout = "soon"`), nil, nil, `repository "apps": timeout:`},
+		{"a zero timeout", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`timeout = "0s"`), nil, nil, `repository "apps": timeout: duration "0s" must be positive`},
+		{"an unknown block", apps + "server {\n}\n", nil, nil, "Unsupported block type"},
 		{"not HCL", "repository {", nil, nil, "-config: "},
 	}
 	for _, tt := range tests {
@@ -1377,6 +1388,51 @@ func TestLoadListenInvalid(t *testing.T) {
 		{"a number", listen(`read_header_timeout = 10`), "read_header_timeout"},
 		{"the address belongs to a flag", listen(`addr = ":9090"`), "Unsupported argument"},
 		{"two blocks", listen("") + listen(""), "Duplicate listen block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadNomadFromTheFile(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+nomad {
+  timeout = "2m"
+}
+`)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NomadTimeout != 2*time.Minute {
+		t.Errorf("NomadTimeout = %v, want 2m", c.NomadTimeout)
+	}
+}
+
+func TestLoadNomadInvalid(t *testing.T) {
+	apps := `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`
+	nomad := func(body string) string { return apps + "nomad {\n" + body + "\n}\n" }
+	tests := []struct {
+		name, file, want string
+	}{
+		{"not a duration", nomad(`timeout = "soon"`), "nomad: timeout:"},
+		{"zero", nomad(`timeout = "0s"`), `nomad: timeout: duration "0s" must be positive`},
+		{"negative", nomad(`timeout = "-1m"`), `nomad: timeout: duration "-1m" must be positive`},
+		{"a number", nomad(`timeout = 30`), "timeout"},
+		{"the address belongs to a flag", nomad(`addr = "http://nomad:4646"`), "Unsupported argument"},
+		{"two blocks", nomad("") + nomad(""), "Duplicate nomad block"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -48,6 +48,10 @@ type Options struct {
 	Username, Token string
 	// PollInterval is how often Run checks the remote for a new commit.
 	PollInterval time.Duration
+	// Timeout is how long Start, and each poll, may take: the check of the
+	// remote and the clone together. A remote that never answers fails the
+	// poll instead of blocking Run.
+	Timeout time.Duration
 }
 
 // File is one job file found in the repository.
@@ -117,7 +121,9 @@ func New(o Options, log *slog.Logger) *Watcher {
 // Start does the initial clone. An error is fatal: there is nothing to work
 // on without a repository.
 func (w *Watcher) Start(ctx context.Context) error {
-	snap, err := w.fetch(ctx)
+	tctx, cancel := context.WithTimeout(ctx, w.opts.Timeout)
+	defer cancel()
+	snap, err := w.fetch(tctx)
 	if err != nil {
 		return fmt.Errorf("gitwatch: initial clone of repository %q: %w", w.opts.Name, err)
 	}
@@ -179,7 +185,9 @@ func (w *Watcher) Changed() <-chan struct{} {
 // poll checks the remote branch head and re-clones only if it moved. A
 // failure is logged at ERROR and keeps the last good snapshot: the caller
 // retries at the next tick.
-func (w *Watcher) poll(ctx context.Context) {
+func (w *Watcher) poll(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, w.opts.Timeout)
+	defer cancel()
 	head, err := w.remoteHead(ctx)
 	if err != nil {
 		w.log.ErrorContext(ctx, "gitwatch: list remote refs", "repo", w.opts.Name, "error", err)

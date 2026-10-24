@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/nomad/api"
 )
@@ -37,7 +38,7 @@ func newStub(t *testing.T, status int, response string) (*stub, *Client) {
 
 	cfg := api.DefaultConfig()
 	cfg.Address = s.srv.URL
-	c, err := New(cfg)
+	c, err := New(cfg, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestTokenHeader(t *testing.T) {
 				io.WriteString(w, `[]`)
 			}))
 			t.Cleanup(s.srv.Close)
-			c, err := New(&api.Config{Address: s.srv.URL, SecretID: tc.token})
+			c, err := New(&api.Config{Address: s.srv.URL, SecretID: tc.token}, time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -562,7 +563,7 @@ func TestFindDispatched(t *testing.T) {
 	t.Cleanup(srv.Close)
 	cfg := api.DefaultConfig()
 	cfg.Address = srv.URL
-	c, err := New(cfg)
+	c, err := New(cfg, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,5 +704,35 @@ func TestDeref(t *testing.T) {
 	s := "x"
 	if deref(&s) != "x" || deref(nil) != "<nil>" {
 		t.Error("deref")
+	}
+}
+
+// A server that accepts the connection and never answers fails the call at the
+// timeout, instead of blocking it for good.
+func TestCallsHaveATimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	cfg := api.DefaultConfig()
+	cfg.Address = srv.URL
+	c, err := New(cfg, 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Job(context.Background(), "default", "api")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || errors.Is(err, ErrJobNotFound) {
+			t.Errorf("err = %v, want a timeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Job still blocked after 5s: the timeout does not apply")
 	}
 }
