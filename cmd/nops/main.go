@@ -238,7 +238,10 @@ func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, 
 			Log:         log,
 		})
 	case "basic":
-		return web.NewBasicAuth(web.BasicAuthOptions{UsersFile: cfg.UsersFile, GroupsFile: cfg.GroupsFile, Log: log})
+		return web.NewBasicAuth(web.BasicAuthOptions{
+			UsersFile: cfg.UsersFile, GroupsFile: cfg.GroupsFile,
+			MaxFailures: cfg.LoginMaxFailures, FailureWindow: cfg.LoginFailureWindow, Log: log,
+		})
 	default:
 		// config.Load's check() already refuses any other value.
 		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)

@@ -84,7 +84,7 @@ SSH. The release image can't read `file://` URLs.
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository`, `listen` and `nomad` blocks. |
+| `-config` | `NOPS_CONFIG` | none | HCL file of the options a flag can't hold. |
 
 ### Repositories
 
@@ -175,6 +175,24 @@ Limit who can log in at the identity provider, or with
 |---|---|---|---|
 | `-users-file` | `NOPS_USERS_FILE` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users--auth-modebasic). |
 | `-groups-file` | `NOPS_GROUPS_FILE` | none | File of [`group: user1 user2` lines](dashboard.md#local-users--auth-modebasic). |
+
+The `auth "basic"` block of the [configuration file](#configuration-file)
+limits failed logins per username. It has no flag or variable, and one block
+at most:
+
+```hcl
+auth "basic" {
+  type           = "basic"
+  max_failures   = 10
+  failure_window = "15m"
+}
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `type` | none, **required** | `basic`. |
+| `max_failures` | `10` | Failed logins of a username before it's locked. `0`: no limit. |
+| `failure_window` | `15m` | How long a username stays locked, counted from its first failure. `0`: no limit. |
 
 ## Access control
 

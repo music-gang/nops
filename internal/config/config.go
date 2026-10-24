@@ -4,7 +4,7 @@
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
 // variable, the variable over the default. The file holds only what a flag
-// cannot: the repository, listen and nomad blocks. nops reads nothing else:
+// cannot: the repository, listen, nomad and auth blocks. nops reads nothing else:
 // the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -52,6 +52,13 @@ const (
 	defaultRepositoryTimeout = 2 * time.Minute
 )
 
+// The default limit on failed logins with a username and a password, set by
+// the auth block: this many failures lock the username for the window.
+const (
+	defaultLoginMaxFailures   = 10
+	defaultLoginFailureWindow = 15 * time.Minute
+)
+
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
 	NomadAddr string
@@ -96,6 +103,12 @@ type Config struct {
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
+
+	// The limit on failed logins with a username and a password, from the auth
+	// block of the -config file (docs/configuration.md#local-users--auth-modebasic).
+	// A zero in either turns it off.
+	LoginMaxFailures   int
+	LoginFailureWindow time.Duration
 
 	// AuthMode picks the dashboard's login backend, "oidc" or "basic"
 	// (docs/dashboard.md#authentication): mutually exclusive, so only the
@@ -220,7 +233,7 @@ var options = []option{
 	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
 		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
 
-	{name: "config", usage: "HCL `file` of the repository, listen and nomad blocks",
+	{name: "config", usage: "HCL `file` of the options a flag can't hold",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
 	{name: "git-url", usage: "URL of the git repository named default (required without a repository block in -config)",
 		set: func(c *Config, v string) error { c.GitURL = v; return nil }},
@@ -439,6 +452,9 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
 		IdleTimeout:       defaultIdleTimeout,
+
+		LoginMaxFailures:   defaultLoginMaxFailures,
+		LoginFailureWindow: defaultLoginFailureWindow,
 	}
 	var errs []error
 	explicit := make(map[string]bool) // the options given by flag or variable
@@ -473,6 +489,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
 	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.loadNomad(fc)...)
+	errs = append(errs, c.loadAuth(fc)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -631,6 +648,14 @@ type fileConfig struct {
 	Repositories []fileRepository `hcl:"repository,block"`
 	Listen       *fileListen      `hcl:"listen,block"`
 	Nomad        *fileNomad       `hcl:"nomad,block"`
+	Auth         []fileAuth       `hcl:"auth,block"`
+}
+
+type fileAuth struct {
+	Name          string  `hcl:"name,label"`
+	Type          string  `hcl:"type"`
+	MaxFailures   *int    `hcl:"max_failures,optional"`
+	FailureWindow *string `hcl:"failure_window,optional"`
 }
 
 type fileNomad struct {
@@ -762,6 +787,48 @@ func (c *Config) loadNomad(fc *fileConfig) []error {
 	}
 	c.NomadTimeout = d
 	return nil
+}
+
+// loadAuth sets the limit on failed logins from the auth block of fc, when it
+// has one. The method is named basic, as a binding rule names it, and its
+// backend too: another name, a second block or one with -auth-mode=oidc is an
+// error. Every error names the file and the attribute.
+func (c *Config) loadAuth(fc *fileConfig) []error {
+	if fc == nil || len(fc.Auth) == 0 {
+		return nil
+	}
+	fail := func(format string, a ...any) []error {
+		return []error{fmt.Errorf("-config %s: auth: %s", c.ConfigFile, fmt.Sprintf(format, a...))}
+	}
+	if len(fc.Auth) > 1 {
+		return fail("only one auth block is allowed")
+	}
+	b := fc.Auth[0]
+	switch {
+	case b.Name != "basic":
+		return fail(`the label is %q, only "basic" is known`, b.Name)
+	case b.Type != "basic":
+		return fail(`type: is %q, only "basic" is known`, b.Type)
+	case c.AuthMode != "basic":
+		return fail(`the "basic" block is only used with -auth-mode=basic`)
+	}
+	var errs []error
+	if b.MaxFailures != nil {
+		if *b.MaxFailures < 0 {
+			errs = append(errs, fmt.Errorf("-config %s: auth: max_failures: %d must not be negative", c.ConfigFile, *b.MaxFailures))
+		} else {
+			c.LoginMaxFailures = *b.MaxFailures
+		}
+	}
+	if b.FailureWindow != nil {
+		d, err := nonNegativeDuration(*b.FailureWindow)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("-config %s: auth: failure_window: %w", c.ConfigFile, err))
+		} else {
+			c.LoginFailureWindow = d
+		}
+	}
+	return errs
 }
 
 // repositoriesOf reads the repository blocks of fc, the decoded -config file
@@ -937,6 +1004,19 @@ func positiveDuration(v string) (time.Duration, error) {
 	}
 	if d <= 0 {
 		return 0, fmt.Errorf("duration %q must be positive", v)
+	}
+	return d, nil
+}
+
+// nonNegativeDuration is positiveDuration with zero allowed, for a limit that
+// zero turns off.
+func nonNegativeDuration(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("duration %q must not be negative", v)
 	}
 	return d, nil
 }

@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -34,7 +37,11 @@ type BasicAuthOptions struct {
 	// GroupsFile, optional, holds one "group: user1 user2" per line, in
 	// Apache's AuthGroupFile format. Every member must be in UsersFile.
 	GroupsFile string
-	Log        *slog.Logger
+	// MaxFailures failed logins of a username lock it for FailureWindow, from
+	// its first one. A zero in either turns the limit off.
+	MaxFailures   int
+	FailureWindow time.Duration
+	Log           *slog.Logger
 }
 
 // BasicAuth is the local-users auth method: no external identity provider, an
@@ -44,6 +51,8 @@ type BasicAuth struct {
 	users   map[string]string   // username -> bcrypt hash
 	groups  map[string][]string // username -> sorted groups
 	dummy   string              // see timingSafetyPassword
+	limit   *failureLimit       // nil: no limit on failed logins
+	slots   chan struct{}       // see loginSlots
 	xorigin *http.CrossOriginProtection
 	host    LoginHost
 	log     *slog.Logger
@@ -78,8 +87,17 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &BasicAuth{users: users, groups: groups, dummy: string(dummy), xorigin: http.NewCrossOriginProtection(), log: log}, nil
+	return &BasicAuth{
+		users: users, groups: groups, dummy: string(dummy),
+		limit: newFailureLimit(o.MaxFailures, o.FailureWindow), slots: make(chan struct{}, loginSlots()),
+		xorigin: http.NewCrossOriginProtection(), log: log,
+	}, nil
 }
+
+// loginSlots is how many password comparisons run at once: half of the cores,
+// at least one, so a flood of logins cannot take all of them from the engine's
+// loops. Every attempt costs one, the unknown usernames included.
+func loginSlots() int { return max(1, runtime.GOMAXPROCS(0)/2) }
 
 // parseUsersFile reads "username:bcrypt-hash" lines. A username may not
 // repeat: two lines for the same user is very likely a mistake (a leftover
@@ -169,22 +187,44 @@ func (b *BasicAuth) Register(mux *http.ServeMux, host LoginHost) {
 	mux.Handle("POST "+cliBasicPath, b.xorigin.Handler(http.HandlerFunc(b.cliLogin)))
 }
 
+// errInvalidCredentials is a login with a wrong username or password.
+var errInvalidCredentials = errors.New("invalid credentials")
+
 // check compares the credentials with the users file and, on success, returns
-// the person with the groups of the groups file as the claims.
-func (b *BasicAuth) check(ctx context.Context, username, password string) (Person, bool) {
+// the person with the groups of the groups file as the claims. It fails with
+// errInvalidCredentials, with a *lockedError when the username is locked, or
+// with the context's error when the request ends while it waits for a slot.
+func (b *BasicAuth) check(ctx context.Context, username, password string) (Person, error) {
+	if d, locked := b.limit.locked(username); locked {
+		return Person{}, &lockedError{d}
+	}
+	select {
+	case b.slots <- struct{}{}:
+		defer func() { <-b.slots }()
+	case <-ctx.Done():
+		return Person{}, ctx.Err()
+	}
+	// Others may have locked the username while this request waited.
+	if d, locked := b.limit.locked(username); locked {
+		return Person{}, &lockedError{d}
+	}
 	hash, known := b.users[username]
 	if !known {
 		hash = b.dummy // compare against something anyway: see timingSafetyPassword
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil || !known {
 		b.log.WarnContext(ctx, "login: invalid credentials", "user", username)
-		return Person{}, false
+		if d, locked := b.limit.fail(username); locked {
+			b.log.WarnContext(ctx, "login: username locked", "user", username, "for", d.Round(time.Second))
+		}
+		return Person{}, errInvalidCredentials
 	}
+	b.limit.clear(username)
 	return Person{
 		Identity: "basic:" + username,
 		Username: username,
 		Claims:   acl.Claims{Username: username, Groups: b.groups[username]},
-	}, true
+	}, nil
 }
 
 // login handles the form of the login page.
@@ -195,12 +235,19 @@ func (b *BasicAuth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next := safeNext(r.PostFormValue("next"))
-	p, ok := b.check(r.Context(), r.PostFormValue("username"), r.PostFormValue("password"))
-	if !ok {
+	p, err := b.check(r.Context(), r.PostFormValue("username"), r.PostFormValue("password"))
+	var locked *lockedError
+	switch {
+	case errors.As(err, &locked):
+		w.Header().Set("Retry-After", strconv.Itoa(locked.seconds()))
+		b.host.Fail(w, r, http.StatusTooManyRequests, "Too many failed logins. Try again in "+locked.wait()+".", next)
+	case errors.Is(err, errInvalidCredentials):
 		b.host.Fail(w, r, http.StatusUnauthorized, "Invalid username or password.", next)
-		return
+	case err != nil:
+		// The request ended while it waited for a slot: nobody is left to answer.
+	default:
+		b.host.Done(w, r, p, next)
 	}
-	b.host.Done(w, r, p, next)
 }
 
 // cliLogin is POST /auth/cli/basic: the same check for the command line, with a
@@ -214,10 +261,17 @@ func (b *BasicAuth) cliLogin(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &body) {
 		return
 	}
-	p, ok := b.check(r.Context(), body.Username, body.Password)
-	if !ok {
+	p, err := b.check(r.Context(), body.Username, body.Password)
+	var locked *lockedError
+	switch {
+	case errors.As(err, &locked):
+		w.Header().Set("Retry-After", strconv.Itoa(locked.seconds()))
+		apiError(w, http.StatusTooManyRequests, "too many failed logins: try again in "+locked.wait())
+	case errors.Is(err, errInvalidCredentials):
 		apiError(w, http.StatusUnauthorized, "invalid username or password")
-		return
+	case err != nil:
+		// The request ended while it waited for a slot: nobody is left to answer.
+	default:
+		b.host.CLIToken(w, r, p)
 	}
-	b.host.CLIToken(w, r, p)
 }
