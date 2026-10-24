@@ -102,7 +102,7 @@ func apiForbidden(w http.ResponseWriter, r *http.Request) {
 // behind the token like the rest.
 func (s *server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(openAPIFile)
+	_, _ = w.Write(openAPIFile) // the client is gone: nobody to tell
 }
 
 // requireToken lets a request through only with a valid bearer token, and puts
@@ -134,7 +134,7 @@ func (s *server) requireToken(next http.Handler) http.Handler {
 func replyJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // the client is gone: nobody to tell
 }
 
 func apiError(w http.ResponseWriter, status int, msg string) {

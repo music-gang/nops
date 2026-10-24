@@ -69,7 +69,7 @@ func newClient(s settings, getenv func(string) string) (*client, error) {
 	var token string
 	fromSession := false
 	if file := first(s.tokenFile, getenv("NOPS_TOKEN_FILE")); file != "" {
-		b, err := os.ReadFile(file)
+		b, err := os.ReadFile(file) // #nosec G304 -- the path is the user's own -token-file setting
 		if err != nil {
 			return nil, fmt.Errorf("read the token file: %w", err)
 		}

@@ -57,6 +57,21 @@ jobs:
       # A tool in go.mod: Dependabot bumps it with the other modules.
       - name: staticcheck
         run: go tool staticcheck -tags integration ./...
+      # Production code only, without G101 (its hits are names; GitHub secret
+      # scanning covers real secrets). Pinned version, run with `go run` like
+      # govulncheck: as a tool in go.mod it would add 42 requirements for code
+      # Nops never runs. Bump it by hand (Dependabot does not track `go run`
+      # targets). A #nosec names its rule and why, on the line it excuses,
+      # never on a line of its own, where it would cover a whole declaration;
+      # //gosec:disable is not used. The grep checks both. The command is the
+      # one of docs/development.md#commands.
+      - name: gosec
+        run: |
+          go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet -conf .github/gosec.json -exclude=G101 -nosec-require-rules -nosec-require-justification ./...
+          if grep -rnE --include='*.go' '^[[:space:]]*//[[:space:]]*#nosec|gosec:disable' cmd internal; then
+            echo "A #nosec goes at the end of the line it excuses, and //gosec:disable is not used"
+            exit 1
+          fi
       # scripts/release.sh cuts the releases and scripts/dev.sh runs a local
       # Nomad and Nops; shellcheck is preinstalled on the runner.
       - name: scripts

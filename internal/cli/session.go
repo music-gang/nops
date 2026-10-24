@@ -38,7 +38,7 @@ func loadSession() (*savedSession, error) {
 	if err != nil {
 		return nil, nil // nowhere to keep one, so none was saved
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- sessionFile is a fixed place in the user's config directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -62,7 +62,7 @@ func (s savedSession) save() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("save the session: %w", err)
 	}
-	b, err := json.Marshal(s)
+	b, err := json.Marshal(s) // #nosec G117 -- the file is this command line's own session, kept at mode 0600
 	if err != nil {
 		return err
 	}

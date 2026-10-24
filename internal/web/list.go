@@ -317,10 +317,7 @@ func (s *server) dashboardList(w http.ResponseWriter, r *http.Request, kind list
 		if path == "" {
 			path = "/"
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name: perPageCookie, Value: strconv.Itoa(q.PerPage), Path: path, MaxAge: int((365 * 24 * time.Hour).Seconds()),
-			HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-		})
+		http.SetCookie(w, newCookie(s.secure, perPageCookie, strconv.Itoa(q.PerPage), path, int((365*24*time.Hour).Seconds())))
 	} else if n, err := strconv.Atoi(cookieValue(r, perPageCookie)); err == nil && slices.Contains(perPages, n) {
 		q.PerPage = n
 	}

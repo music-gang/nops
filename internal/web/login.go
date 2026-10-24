@@ -227,17 +227,11 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 // setLoginCookie keeps a token secret in a cookie. A zero ttl makes a cookie
 // the browser forgets when it closes.
 func (s *server) setLoginCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: value, Path: s.basePath + "/", MaxAge: int(ttl.Seconds()),
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, newCookie(s.secure, name, value, s.basePath+"/", int(ttl.Seconds())))
 }
 
 func (s *server) clearLoginCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: "", Path: s.basePath + "/", MaxAge: -1,
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, newCookie(s.secure, name, "", s.basePath+"/", -1))
 }
 
 // cookieSubject finds who a dashboard request acts as: the token in one of the

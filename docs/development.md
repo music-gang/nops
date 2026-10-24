@@ -75,7 +75,7 @@ failing test first.
 
 ## When a piece of work is "done"
 
-1. `go build`, `go vet`, `staticcheck`, `go test -race` and Vale pass.
+1. `go build`, `go vet`, `staticcheck`, gosec, `go test -race` and Vale pass.
 2. Changes to `engine`, `hooks` or `nomadx` pass the integration tests.
 3. Every behaviour change has a test.
 4. The docs and `examples/` match the change.
@@ -106,6 +106,7 @@ failing test first.
 ```sh
 go test -race -cover ./...
 go tool staticcheck -tags integration ./...
+go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -conf .github/gosec.json -exclude=G101 -nosec-require-rules -nosec-require-justification ./...
 vale sync && vale docs README.md CONTRIBUTING.md CHANGELOG.md internal/web/templates
 
 # the docs site, previewed on http://127.0.0.1:8000
@@ -140,7 +141,7 @@ go test -tags integration -race -count=1 ./tests/integration/...
 | Check | Runs |
 |---|---|
 | `test` | `gofmt`, `go mod tidy`, build, `go vet`, `go test -race` |
-| `lint` | `staticcheck`, `shellcheck`, the script tests, `goreleaser check`, Vale, the docs site build |
+| `lint` | `staticcheck`, gosec, `shellcheck`, the script tests, `goreleaser check`, Vale, the docs site build |
 | `integration` | The integration tests against a Nomad dev agent |
 | `pr-title` | The pull request title is a Conventional Commit |
 
@@ -242,7 +243,8 @@ The words of [the glossary](glossary.md), plus:
 ## Go conventions
 
 - English everywhere: code, comments, docs, commits.
-- `gofmt`, `go vet` and `staticcheck`.
+- `gofmt`, `go vet`, `staticcheck` and gosec. A `#nosec` names its rule and
+  why, at the end of the line it excuses.
 - Short, singular package names. No `util` or `common`.
 - `context.Context` first in every function that does I/O.
 - Every state change goes through `Store.Transition`.

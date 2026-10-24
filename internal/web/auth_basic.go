@@ -104,7 +104,7 @@ func loginSlots() int { return max(1, runtime.GOMAXPROCS(0)/2) }
 // old line after rotating a password), not intentional, so it is rejected
 // rather than silently keeping the last one.
 func parseUsersFile(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is the operator's own -config setting
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func parseUsersFile(path string) (map[string]string, error) {
 // A member that is not in users is an error: a stale line would otherwise
 // give a new user with an old name the group's access without a word.
 func parseGroupsFile(path string, users map[string]string) (map[string][]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is the operator's own -config setting
 	if err != nil {
 		return nil, err
 	}

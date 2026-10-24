@@ -1115,7 +1115,7 @@ func readableFile(path string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is an operator's flag or environment variable
 	if err != nil {
 		return "", err
 	}
@@ -1137,7 +1137,7 @@ func secretFile(path string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- the path is an operator's flag or environment variable
 	if err != nil {
 		return "", err
 	}

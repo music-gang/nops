@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -699,6 +700,17 @@ func TestMoveAppliedIndex(t *testing.T) {
 	}
 	if err := s.MoveAppliedIndex(ctx, "missing", 1, 2); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// A Nomad index is stored as SQLite's signed 64 bits: one past that fails
+// instead of wrapping to a negative number.
+func TestCreateRefusesIndexOutOfRange(t *testing.T) {
+	s := newTestStore(t)
+	d := newDep("web")
+	d.CASIndex = math.MaxUint64
+	if err := s.CreateDeployment(context.Background(), d); err == nil {
+		t.Fatal("CreateDeployment with an index past MaxInt64: no error")
 	}
 }
 
