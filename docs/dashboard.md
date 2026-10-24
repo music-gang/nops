@@ -107,7 +107,7 @@ Apache's `AuthGroupFile` format, for [binding rules](acl.md#binding-rules) on
 
 Nops reads both files at startup: restart it after you change a user or a
 group. After 10 failed logins in 15 minutes, a username is locked until the 15
-minutes are up, whether it exists or not. The
+minutes are up, even if it doesn't exist. The
 [`auth "basic"` block](configuration.md#local-users--auth-modebasic) changes
 both values.
 
