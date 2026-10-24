@@ -30,16 +30,14 @@ var loginTimeout = 10 * time.Minute
 
 // openBrowser opens a URL in the browser of the user. A test replaces it.
 var openBrowser = func(u string) error {
-	var cmd *exec.Cmd
+	name, args := "xdg-open", []string{u}
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", u)
+		name = "open"
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	default:
-		cmd = exec.Command("xdg-open", u)
+		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", u}
 	}
-	return cmd.Start()
+	return exec.Command(name, args...).Start() // #nosec G204 -- the opener is fixed per OS and u is the login URL of the server the user chose
 }
 
 // loginAnswer is what Nops gives for a login: the secret, once, and when it ends.
@@ -161,7 +159,9 @@ func readPassword(ctx context.Context, fd int) (string, error) {
 		return string(r.b), nil
 	case <-ctx.Done():
 		if old != nil {
-			term.Restore(fd, old)
+			if err := term.Restore(fd, old); err != nil {
+				return "", errors.Join(ctx.Err(), fmt.Errorf("restore the terminal: %w", err))
+			}
 		}
 		return "", ctx.Err()
 	}
@@ -219,7 +219,7 @@ func loginOIDC(k *call, c *client) (loginAnswer, error) {
 		select {
 		case next := <-reply:
 			http.Redirect(w, r, next, http.StatusSeeOther)
-			http.NewResponseController(w).Flush()
+			_ = http.NewResponseController(w).Flush() // the browser is gone: nobody to tell
 			select {
 			case handled <- struct{}{}:
 			default:

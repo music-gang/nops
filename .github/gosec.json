@@ -1,0 +1,9 @@
+{
+  "G104": {
+    "database/sql.DB": ["Close"],
+    "database/sql.Rows": ["Close"],
+    "database/sql.Tx": ["Rollback"],
+    "os.File": ["Close"],
+    "text/tabwriter.Writer": ["Flush"]
+  }
+}

@@ -9,6 +9,7 @@ dev
 distroless
 Gitea
 goreleaser
+gosec
 Gotify
 htmx
 idempotency

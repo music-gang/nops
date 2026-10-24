@@ -27,20 +27,19 @@ const webhookMaxBody = 1 << 20 // 1 MiB
 // expects.
 func (s *server) webhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, webhookMaxBody)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.log.WarnContext(r.Context(), "webhook: reading the body failed", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
 	if tok := r.Header.Get("X-Gitlab-Token"); tok != "" {
 		if !equal(tok, string(s.secret)) {
 			s.webhookRejected(w, r, "gitlab")
 			return
 		}
-		io.Copy(io.Discard, r.Body)
 		s.webhookAccepted(w, r)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.log.WarnContext(r.Context(), "webhook: reading the body failed", "error", err)
-		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 

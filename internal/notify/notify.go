@@ -268,7 +268,7 @@ func (n *Notifier) send(ctx context.Context, s sender, e Event) error {
 		return fmt.Errorf("send: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10)) // only so the connection can be reused
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("answered %s", resp.Status)
 	}

@@ -288,7 +288,7 @@ func Open(path string, opts ...Option) (*Store, error) {
 // needed and fixing the mode of one that already exists (a pre-existing file
 // may predate this rule, or have been created with a looser umask).
 func ensureFileMode(path string, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode) // #nosec G304 -- the path is the operator's own -db-path setting
 	if err != nil {
 		return err
 	}
@@ -419,7 +419,7 @@ func (s *Store) CreateDeployment(ctx context.Context, d *Deployment) error {
 		 policy, state, error, cas_index, retry_of, window_lifted_by, created_at, updated_at)
 		VALUES (?, ?, ?, COALESCE(NULLIF(?, ''), 'default'), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
 		id, d.JobID, d.Namespace, d.Repository, d.CommitSHA, d.CommitSubject, d.CommitAuthor, d.SpecHash, d.JobSpec, d.JobSource, d.JobVars, d.PlanDiff, d.DiffHash,
-		string(d.Policy), string(born), d.Error, int64(d.CASIndex), d.RetryOf, d.WindowLiftedBy, now, now)
+		string(d.Policy), string(born), d.Error, d.CASIndex, d.RetryOf, d.WindowLiftedBy, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrActiveDeployment, d.Namespace, d.JobID)
@@ -509,7 +509,7 @@ func (s *Store) Transition(ctx context.Context, id string, to State, t Transitio
 			decided_by = COALESCE(NULLIF(?, ''), decided_by),
 			decided_at = CASE WHEN ? <> '' THEN ? ELSE decided_at END
 		WHERE id = ? AND state = ?`,
-		string(to), now, t.Error, int64(t.AppliedIndex), t.EvalID, t.DecidedBy, t.DecidedBy, now,
+		string(to), now, t.Error, t.AppliedIndex, t.EvalID, t.DecidedBy, t.DecidedBy, now,
 		id, string(t.From))
 	if err != nil {
 		return fmt.Errorf("transition %s: %w", id, err)
@@ -556,7 +556,7 @@ func (s *Store) SetApplied(ctx context.Context, id string, appliedIndex, applied
 			eval_id = COALESCE(NULLIF(?, ''), eval_id),
 			updated_at = ?
 		WHERE id = ? AND state = ?`,
-		int64(appliedIndex), int64(appliedVersion), evalID, s.ts(), id, string(StateApplying))
+		appliedIndex, appliedVersion, evalID, s.ts(), id, string(StateApplying))
 	if err != nil {
 		return fmt.Errorf("set applied %s: %w", id, err)
 	}
@@ -591,7 +591,7 @@ func (s *Store) MoveCASIndex(ctx context.Context, id string, in State, from, to 
 
 	res, err := tx.ExecContext(ctx, `UPDATE deployments SET cas_index = ?, updated_at = ?
 		WHERE id = ? AND state = ? AND cas_index = ? AND applied_index IS NULL`,
-		int64(to), now, id, string(in), int64(from))
+		to, now, id, string(in), from)
 	if err != nil {
 		return fmt.Errorf("move cas index %s: %w", id, err)
 	}
@@ -634,7 +634,7 @@ func (s *Store) MoveAppliedIndex(ctx context.Context, id string, from, to uint64
 
 	res, err := tx.ExecContext(ctx, `UPDATE deployments SET applied_index = ?, updated_at = ?
 		WHERE id = ? AND state = ? AND applied_index = ?`,
-		int64(to), now, id, string(StateApplying), int64(from))
+		to, now, id, string(StateApplying), from)
 	if err != nil {
 		return fmt.Errorf("move applied index %s: %w", id, err)
 	}
@@ -694,12 +694,11 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		subject, author, retriedBy, retried sql.NullString
 		retryOf, liftedBy                   sql.NullString
 		waitSince, promoted                 sql.NullString
-		applied, appliedVersion             sql.NullInt64
-		cas                                 int64
+		applied, appliedVersion             sql.Null[uint64]
 		policy, state, createdAt, updatedAt string
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.Repository, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &source, &vars, &plan, &diffHash,
-		&policy, &state, &cas, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
+		&policy, &state, &d.CASIndex, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
 		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
@@ -707,9 +706,9 @@ func scanDeployment(r scanner) (*Deployment, error) {
 	d.PlanDiff, d.DiffHash, d.EvalID, d.Error, d.DecidedBy = plan.String, diffHash.String, eval.String, errMsg.String, by.String
 	d.CommitSubject, d.CommitAuthor, d.RetriedBy, d.RetryOf = subject.String, author.String, retriedBy.String, retryOf.String
 	d.WindowLiftedBy = liftedBy.String
-	d.Policy, d.State, d.CASIndex, d.AppliedIndex = Policy(policy), State(state), uint64(cas), uint64(applied.Int64)
+	d.Policy, d.State, d.AppliedIndex = Policy(policy), State(state), applied.V
 	if appliedVersion.Valid {
-		v := uint64(appliedVersion.Int64)
+		v := appliedVersion.V
 		d.AppliedVersion = &v
 	}
 	var err error
@@ -957,7 +956,7 @@ func (s *Store) MarkRetried(ctx context.Context, id, actor string) error {
 // the deployment is not applying. The state does not change: the wait is an
 // event of applying, persisted before anything is done about it (invariant 7).
 func (s *Store) MarkAwaitingPromotion(ctx context.Context, id string) (bool, error) {
-	return s.markPromotion(ctx, id, "promotion_wait_since", "promotion_wait_since IS NULL",
+	return s.markPromotion(ctx, id, "promotion_wait_since", markAwaitingPromotionSQL,
 		"waiting for canary promotion in Nomad")
 }
 
@@ -966,14 +965,23 @@ func (s *Store) MarkAwaitingPromotion(ctx context.Context, id string) (bool, err
 // counts again, from now. It reports whether it wrote, and returns
 // ErrStateConflict if the deployment is not applying.
 func (s *Store) MarkPromoted(ctx context.Context, id string) (bool, error) {
-	return s.markPromotion(ctx, id, "promoted_at", "promotion_wait_since IS NOT NULL AND promoted_at IS NULL",
+	return s.markPromotion(ctx, id, "promoted_at", markPromotedSQL,
 		"canaries promoted in Nomad: the apply timeout counts again")
 }
 
-// markPromotion sets column (one of the two above, never caller input) and
-// logs message as an applying -> applying event, in one transaction, when the
-// deployment is applying and guard holds.
-func (s *Store) markPromotion(ctx context.Context, id, column, guard, message string) (bool, error) {
+// The statements of the two marks above: each takes the time twice, the id and
+// the applying state, and writes only when its guard holds.
+const (
+	markAwaitingPromotionSQL = `UPDATE deployments SET promotion_wait_since = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND promotion_wait_since IS NULL`
+	markPromotedSQL = `UPDATE deployments SET promoted_at = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND promotion_wait_since IS NOT NULL AND promoted_at IS NULL`
+)
+
+// markPromotion runs update (one of the two statements above) and logs message
+// as an applying -> applying event, in one transaction, when the deployment is
+// applying and the statement's guard holds. column names the mark in errors.
+func (s *Store) markPromotion(ctx context.Context, id, column, update, message string) (bool, error) {
 	now := s.ts()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -981,8 +989,7 @@ func (s *Store) markPromotion(ctx context.Context, id, column, guard, message st
 	}
 	defer tx.Rollback()
 
-	res, err := tx.ExecContext(ctx, `UPDATE deployments SET `+column+` = ?, updated_at = ?
-		WHERE id = ? AND state = ? AND `+guard, now, now, id, string(StateApplying))
+	res, err := tx.ExecContext(ctx, update, now, now, id, string(StateApplying))
 	if err != nil {
 		return false, fmt.Errorf("%s %s: %w", column, id, err)
 	}

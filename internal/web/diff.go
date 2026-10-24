@@ -30,14 +30,16 @@ var templateFuncs = template.FuncMap{
 // with html/template's own escaper because the function returns
 // template.HTML, which html/template otherwise trusts verbatim.
 func diffCell(v string) template.HTML {
+	var cell string
 	switch v {
 	case redact.Marker:
-		return template.HTML(`<span class="chip-redacted">` + template.HTMLEscapeString(v) + `</span>`)
+		cell = `<span class="chip-redacted">` + template.HTMLEscapeString(v) + `</span>`
 	case "":
-		return template.HTML(`<span class="diff-empty">&mdash;</span>`)
+		cell = `<span class="diff-empty">&mdash;</span>`
 	default:
-		return template.HTML(template.HTMLEscapeString(v))
+		cell = template.HTMLEscapeString(v)
 	}
+	return template.HTML(cell) // #nosec G203 -- every branch escapes v by hand
 }
 
 // short shortens an identifier (a spec hash, an evaluation ID) to n

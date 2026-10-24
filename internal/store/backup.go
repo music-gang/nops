@@ -41,7 +41,7 @@ func (s *Store) Backup(ctx context.Context, by Audit) (*os.File, error) {
 	if _, err := s.db.ExecContext(ctx, "VACUUM INTO ?", name); err != nil {
 		return nil, fmt.Errorf("backup: copy the database: %w", err)
 	}
-	f, err := os.Open(name)
+	f, err := os.Open(name) // #nosec G304 -- name is the temporary file made above
 	if err != nil {
 		return nil, fmt.Errorf("backup: %w", err)
 	}

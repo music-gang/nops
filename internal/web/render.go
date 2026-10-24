@@ -249,7 +249,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(buf.String()))
+	_, _ = w.Write([]byte(buf.String())) // the client is gone: nobody to tell
 }
 
 type errorData struct {

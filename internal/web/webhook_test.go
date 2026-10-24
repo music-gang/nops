@@ -113,6 +113,23 @@ func TestWebhookGitLab(t *testing.T) {
 	}
 }
 
+// A GitLab body is read like the others, so one past the limit is a bad
+// request and asks for no poll.
+func TestWebhookGitLabBodyTooLarge(t *testing.T) {
+	const secret = "shared-secret"
+	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, secret)
+	req := httptest.NewRequest("POST", "/webhook/git", strings.NewReader(strings.Repeat("x", webhookMaxBody+1)))
+	req.Header.Set("X-Gitlab-Token", secret)
+	rec := httptest.NewRecorder()
+	ts.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+	if ts.trig != 0 {
+		t.Error("Trigger must not be called")
+	}
+}
+
 func TestWebhookNoRecognizedHeader(t *testing.T) {
 	ts := newTestServer(t, &fakeStore{}, &fakeEngine{}, "shared-secret")
 	rec := ts.do("POST", "/webhook/git", strings.NewReader(`{}`))

@@ -50,18 +50,21 @@ func (s *session) setCookie(w http.ResponseWriter, name, path string, v any, ttl
 		s.log.Error("encode cookie", "cookie", name, "error", err)
 		return false
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: enc, Path: path, MaxAge: int(ttl.Seconds()),
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, newCookie(s.secure, name, enc, path, int(ttl.Seconds())))
 	return true
 }
 
 func (s *session) clearCookie(w http.ResponseWriter, name, path string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: "", Path: path, MaxAge: -1,
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, newCookie(s.secure, name, "", path, -1))
+}
+
+// newCookie makes every cookie of the dashboard: out of reach of scripts, not
+// sent across sites, and Secure when the public URL is https.
+func newCookie(secure bool, name, value, path string, maxAge int) *http.Cookie {
+	return &http.Cookie{ // #nosec G124 -- Secure follows -public-url: a dashboard on a private network may use http
+		Name: name, Value: value, Path: path, MaxAge: maxAge,
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	}
 }
 
 func cookieValue(r *http.Request, name string) string {
