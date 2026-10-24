@@ -188,8 +188,11 @@ func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 // write timeout and still finishes, one the client stops reading is cut.
 func TestBackupDownloadOutlivesTheWriteTimeoutOnlyWhileItMoves(t *testing.T) {
 	const (
-		size    = 16 << 20 // more than the socket buffers hold
-		timeout = 200 * time.Millisecond
+		size    = 32 << 20 // more than the socket buffers hold
+		timeout = 500 * time.Millisecond
+		// pause is far below timeout: a loaded runner can oversleep, and a
+		// pause that reaches the timeout cuts a download that does move.
+		pause = 20 * time.Millisecond
 	)
 	// read takes the body in chunks, waiting pause after each; stallAfter, if
 	// positive, is a chunk after which it waits stall instead.
@@ -227,12 +230,12 @@ func TestBackupDownloadOutlivesTheWriteTimeoutOnlyWhileItMoves(t *testing.T) {
 	}
 
 	t.Run("the server's own timeout cuts a slow download", func(t *testing.T) {
-		if got := read(t, plain, 40*time.Millisecond, 0, 0); got >= size {
+		if got := read(t, plain, pause, 0, 0); got >= size {
 			t.Fatalf("got all %d bytes: the download is not longer than the timeout, the test proves nothing", got)
 		}
 	})
 	t.Run("a download that moves finishes", func(t *testing.T) {
-		if got := read(t, moving, 40*time.Millisecond, 0, 0); got != size {
+		if got := read(t, moving, pause, 0, 0); got != size {
 			t.Errorf("got %d bytes, want %d", got, size)
 		}
 	})
