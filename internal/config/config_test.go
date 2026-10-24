@@ -81,6 +81,11 @@ func TestLoadDefaults(t *testing.T) {
 		EngineInterval:   5 * time.Second,
 		HookPollInterval: 5 * time.Second,
 		ApplyTimeout:     10 * time.Minute,
+		// The server's timeouts, with no listen block.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
+		WriteTimeout:      time.Minute,
+		IdleTimeout:       2 * time.Minute,
 		// A sync window is read in UTC unless the operator says otherwise.
 		SyncWindowLocation: time.UTC,
 		LogLevel:           slog.LevelInfo,
@@ -218,8 +223,13 @@ repository "apps" {
 			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret"},
 			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret"},
 		},
-		DBPath:                 "/var/lib/nops/nops.db",
-		ListenAddr:             "127.0.0.1:9000",
+		DBPath:     "/var/lib/nops/nops.db",
+		ListenAddr: "127.0.0.1:9000",
+		// The listen block is the file's, not an option: the defaults stand.
+		ReadHeaderTimeout:      10 * time.Second,
+		ReadTimeout:            time.Minute,
+		WriteTimeout:           time.Minute,
+		IdleTimeout:            2 * time.Minute,
 		WebhookSecretFile:      webhookSecret,
 		WebhookSecret:          "webhook-shared-secret",
 		ACL:                    true,
@@ -1322,6 +1332,55 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 				args = append([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, args...)
 			}
 			_, err := Load(args, envOf(tt.env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadListenFromTheFile(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+listen {
+  read_header_timeout = "2s"
+  write_timeout       = "5m"
+}
+`)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The attributes the block leaves out keep their defaults.
+	got := [4]time.Duration{c.ReadHeaderTimeout, c.ReadTimeout, c.WriteTimeout, c.IdleTimeout}
+	want := [4]time.Duration{2 * time.Second, time.Minute, 5 * time.Minute, 2 * time.Minute}
+	if got != want {
+		t.Errorf("timeouts = %v, want %v", got, want)
+	}
+}
+
+func TestLoadListenInvalid(t *testing.T) {
+	apps := `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`
+	listen := func(body string) string { return apps + "listen {\n" + body + "\n}\n" }
+	tests := []struct {
+		name, file, want string
+	}{
+		{"not a duration", listen(`read_timeout = "soon"`), "listen: read_timeout:"},
+		{"zero", listen(`idle_timeout = "0s"`), `listen: idle_timeout: duration "0s" must be positive`},
+		{"negative", listen(`write_timeout = "-1m"`), `listen: write_timeout: duration "-1m" must be positive`},
+		{"a number", listen(`read_header_timeout = 10`), "read_header_timeout"},
+		{"the address belongs to a flag", listen(`addr = ":9090"`), "Unsupported argument"},
+		{"two blocks", listen("") + listen(""), "Duplicate listen block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}

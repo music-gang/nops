@@ -6,7 +6,8 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
 
 ## Rules
 
-- Every option but the [`repository` blocks](#repositories) has a flag and
+- Every option but the blocks of the
+  [configuration file](#configuration-file) has a flag and
   an environment variable: `NOPS_` plus the flag name in upper case, dashes
   as underscores (`-apply-timeout` → `NOPS_APPLY_TIMEOUT`).
 - Precedence: flag, then variable, then the
@@ -72,7 +73,7 @@ SSH. The release image can't read `file://` URLs.
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository` blocks. |
+| `-config` | `NOPS_CONFIG` | none | HCL file of the `repository` and `listen` blocks. |
 
 ### Repositories
 
@@ -107,6 +108,30 @@ repository "apps" {
 - A name used twice, a `repository "default"` block next to `-git-url`, an
   empty `jobs`, or a pattern that is malformed or matches no managed
   namespace stops Nops.
+
+### Listen
+
+The `listen` block sets the timeouts of the dashboard's server. It has no
+flag or variable, and one block at most:
+
+```hcl
+listen {
+  read_header_timeout = "10s"
+  read_timeout        = "1m"
+  write_timeout       = "1m"
+  idle_timeout        = "2m"
+}
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `read_header_timeout` | `10s` | How long a client has to send the request headers. |
+| `read_timeout` | `1m` | How long a client has to send the whole request. |
+| `write_timeout` | `1m` | How long Nops has to write the response. |
+| `idle_timeout` | `2m` | How long an idle connection stays open. |
+
+A [backup](running-nops.md#backups) download isn't cut while it moves: `write_timeout`
+limits each block it writes, not the whole file.
 
 ## Dashboard
 

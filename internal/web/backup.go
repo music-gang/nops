@@ -26,10 +26,29 @@ func (s *server) sendBackup(w http.ResponseWriter, r *http.Request) error {
 	h.Set("Content-Type", "application/vnd.sqlite3")
 	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "nops-"+time.Now().UTC().Format("20060102T150405Z")+".db"))
 	h.Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
-	if _, err := io.Copy(w, f); err != nil {
+	if _, err := io.Copy(deadlineWriter{w: w, rc: http.NewResponseController(w), timeout: s.writeWait}, f); err != nil {
 		s.log.ErrorContext(r.Context(), "send a backup", "error", err)
 	}
 	return nil
+}
+
+// deadlineWriter moves the write deadline of the connection forward by timeout
+// before each write: the server's write timeout then cuts a client that
+// stalls, not a download that keeps moving. A zero timeout leaves the deadline
+// to the server.
+type deadlineWriter struct {
+	w       io.Writer
+	rc      *http.ResponseController
+	timeout time.Duration
+}
+
+func (d deadlineWriter) Write(p []byte) (int, error) {
+	if d.timeout > 0 {
+		if err := d.rc.SetWriteDeadline(time.Now().Add(d.timeout)); err != nil {
+			return 0, err
+		}
+	}
+	return d.w.Write(p)
 }
 
 // apiBackup is GET /api/backup.
