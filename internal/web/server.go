@@ -172,6 +172,11 @@ type Options struct {
 	// path. See docs/running-nops.md#under-a-sub-path.
 	BasePath string
 
+	// WriteTimeout is the server's write timeout (the listen block of
+	// -config). A backup download moves its write deadline forward by it at
+	// each block it writes. Zero leaves the deadline alone.
+	WriteTimeout time.Duration
+
 	Log *slog.Logger
 }
 
@@ -197,6 +202,7 @@ type server struct {
 	version   string
 	metrics   http.Handler // nil: no /metrics
 	basePath  string
+	writeWait time.Duration // the server's write timeout; 0: a backup leaves the deadline alone
 	log       *slog.Logger
 	tmpl      *template.Template
 	static    fs.FS
@@ -255,6 +261,7 @@ func newServer(o Options) (*server, error) {
 		version:   o.Version,
 		metrics:   o.Metrics,
 		basePath:  o.BasePath,
+		writeWait: o.WriteTimeout,
 		log:       o.Log,
 		tmpl:      tmpl,
 		static:    staticDir,

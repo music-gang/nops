@@ -2,10 +2,12 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/music-gang/nops/internal/store"
 )
@@ -130,6 +132,116 @@ func TestDashboardBackup(t *testing.T) {
 		ts.h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("status %d, want 403", rec.Code)
+		}
+	})
+}
+
+// deadlineRecorder is a response writer that records the write deadlines set
+// on it, as net/http's own writer takes them.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.deadlines = append(d.deadlines, t)
+	return nil
+}
+
+func TestDeadlineWriterMovesTheDeadlineAtEachWrite(t *testing.T) {
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := deadlineWriter{w: rec, rc: http.NewResponseController(rec), timeout: time.Minute}
+	for range 3 {
+		before := time.Now()
+		if _, err := w.Write([]byte("block")); err != nil {
+			t.Fatal(err)
+		}
+		last := rec.deadlines[len(rec.deadlines)-1]
+		if last.Before(before.Add(time.Minute)) || last.After(time.Now().Add(time.Minute)) {
+			t.Errorf("deadline %v, want a minute from the write", last)
+		}
+	}
+	if len(rec.deadlines) != 3 {
+		t.Errorf("%d deadlines for 3 writes", len(rec.deadlines))
+	}
+	if got := rec.Body.String(); got != "blockblockblock" {
+		t.Errorf("body = %q", got)
+	}
+}
+
+func TestDeadlineWriterWithoutTimeoutLeavesTheDeadlineAlone(t *testing.T) {
+	// A recorder has no deadlines: a zero timeout must not ask for one.
+	rec := httptest.NewRecorder()
+	w := deadlineWriter{w: rec, rc: http.NewResponseController(rec)}
+	if _, err := w.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// zeros is an endless reader of zero bytes.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// TestBackupDownloadOutlivesTheWriteTimeoutOnlyWhileItMoves runs a real
+// server: a download the client reads slowly but steadily is longer than the
+// write timeout and still finishes, one the client stops reading is cut.
+func TestBackupDownloadOutlivesTheWriteTimeoutOnlyWhileItMoves(t *testing.T) {
+	const (
+		size    = 32 << 20 // more than the socket buffers hold
+		timeout = 500 * time.Millisecond
+		// pause is far below timeout: a loaded runner can oversleep, and a
+		// pause that reaches the timeout cuts a download that does move.
+		pause = 20 * time.Millisecond
+	)
+	// read takes the body in chunks, waiting pause after each; stallAfter, if
+	// positive, is a chunk after which it waits stall instead.
+	read := func(t *testing.T, handler http.HandlerFunc, pause time.Duration, stallAfter int, stall time.Duration) int {
+		t.Helper()
+		ts := httptest.NewUnstartedServer(handler)
+		ts.Config.WriteTimeout = timeout
+		ts.Start()
+		defer ts.Close()
+		resp, err := http.Get(ts.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		buf := make([]byte, 256<<10)
+		total := 0
+		for i := 1; ; i++ {
+			n, err := io.ReadFull(resp.Body, buf)
+			total += n
+			if err != nil {
+				return total
+			}
+			if i == stallAfter {
+				time.Sleep(stall)
+			} else {
+				time.Sleep(pause)
+			}
+		}
+	}
+	plain := func(w http.ResponseWriter, r *http.Request) {
+		io.CopyN(w, zeros{}, size)
+	}
+	moving := func(w http.ResponseWriter, r *http.Request) {
+		io.CopyN(deadlineWriter{w: w, rc: http.NewResponseController(w), timeout: timeout}, zeros{}, size)
+	}
+
+	t.Run("the server's own timeout cuts a slow download", func(t *testing.T) {
+		if got := read(t, plain, pause, 0, 0); got >= size {
+			t.Fatalf("got all %d bytes: the download is not longer than the timeout, the test proves nothing", got)
+		}
+	})
+	t.Run("a download that moves finishes", func(t *testing.T) {
+		if got := read(t, moving, pause, 0, 0); got != size {
+			t.Errorf("got %d bytes, want %d", got, size)
+		}
+	})
+	t.Run("a client that stalls is cut", func(t *testing.T) {
+		if got := read(t, moving, 0, 4, 4*timeout); got >= size {
+			t.Errorf("got all %d bytes from a client that stopped reading", got)
 		}
 	})
 }

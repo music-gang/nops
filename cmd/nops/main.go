@@ -145,7 +145,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	handler, err := web.New(web.Options{
 		Auth: auth, Store: st, Engine: eng, Git: repos, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: repos.Trigger,
 		CommitURL:     repos.CommitURL,
-		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, Metrics: metricsHandler, Log: log,
+		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, WriteTimeout: cfg.WriteTimeout, Metrics: metricsHandler, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
@@ -165,7 +165,11 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		}(loop)
 	}
 
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: handler}
+	srv := &http.Server{
+		Addr: cfg.ListenAddr, Handler: handler,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout, ReadTimeout: cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleTimeout,
+	}
 	srvErr := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

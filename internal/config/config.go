@@ -4,7 +4,7 @@
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
 // variable, the variable over the default. The file holds only what a flag
-// cannot: the repository blocks. nops reads nothing else: the standard NOMAD_*
+// cannot: the repository and listen blocks. nops reads nothing else: the standard NOMAD_*
 // variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -36,6 +36,14 @@ import (
 
 // DefaultRepository is the name of the repository the -git-* options describe.
 const DefaultRepository = "default"
+
+// The default timeouts of the dashboard's server, set by the listen block.
+const (
+	defaultReadHeaderTimeout = 10 * time.Second
+	defaultReadTimeout       = time.Minute
+	defaultWriteTimeout      = time.Minute
+	defaultIdleTimeout       = 2 * time.Minute
+)
 
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
@@ -70,6 +78,13 @@ type Config struct {
 
 	DBPath     string
 	ListenAddr string
+
+	// The timeouts of the dashboard's server, from the listen block of the
+	// -config file. WriteTimeout also bounds each block of a backup download.
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
 
 	// AuthMode picks the dashboard's login backend, "oidc" or "basic"
 	// (docs/dashboard.md#authentication): mutually exclusive, so only the
@@ -192,7 +207,7 @@ var options = []option{
 	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
 		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
 
-	{name: "config", usage: "HCL `file` of the repository blocks",
+	{name: "config", usage: "HCL `file` of the repository and listen blocks",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
 	{name: "git-url", usage: "URL of the git repository named default (required without a repository block in -config)",
 		set: func(c *Config, v string) error { c.GitURL = v; return nil }},
@@ -403,7 +418,12 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	set := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	c := &Config{}
+	c := &Config{
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		ReadTimeout:       defaultReadTimeout,
+		WriteTimeout:      defaultWriteTimeout,
+		IdleTimeout:       defaultIdleTimeout,
+	}
 	var errs []error
 	explicit := make(map[string]bool) // the options given by flag or variable
 	for i, o := range options {
@@ -433,7 +453,9 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		errs = append(errs, errors.New("NOPS_NOMAD_NAMESPACE was replaced by NOPS_NOMAD_NAMESPACES (a comma-separated list)"))
 	}
 	errs = append(errs, resolveSecretValues(c, getenv)...)
-	errs = append(errs, c.loadRepositories(explicit)...)
+	fc, fileErr := readConfigFile(c.ConfigFile)
+	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
+	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -590,6 +612,14 @@ var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // fileConfig is the schema of the -config file.
 type fileConfig struct {
 	Repositories []fileRepository `hcl:"repository,block"`
+	Listen       *fileListen      `hcl:"listen,block"`
+}
+
+type fileListen struct {
+	ReadHeaderTimeout *string `hcl:"read_header_timeout,optional"`
+	ReadTimeout       *string `hcl:"read_timeout,optional"`
+	WriteTimeout      *string `hcl:"write_timeout,optional"`
+	IdleTimeout       *string `hcl:"idle_timeout,optional"`
 }
 
 type fileRepository struct {
@@ -605,8 +635,9 @@ type fileRepository struct {
 // loadRepositories fills c.Repositories from the -git-* options and the
 // repository blocks of c.ConfigFile. explicit tells the -git-* options given
 // by flag or variable from their defaults: without -git-url they describe no
-// repository, so one given is an error rather than ignored.
-func (c *Config) loadRepositories(explicit map[string]bool) []error {
+// repository, so one given is an error rather than ignored. fc is the decoded
+// -config file, nil without one, and fileErr why it could not be read.
+func (c *Config) loadRepositories(explicit map[string]bool, fc *fileConfig, fileErr error) []error {
 	var errs []error
 	if c.GitURL != "" {
 		c.Repositories = append(c.Repositories, Repository{
@@ -623,10 +654,13 @@ func (c *Config) loadRepositories(explicit map[string]bool) []error {
 			errs = append(errs, errors.New("NOPS_GIT_TOKEN is set without -git-url"))
 		}
 	}
-	if c.ConfigFile != "" {
-		repos, fileErrs := readConfigFile(c.ConfigFile, c.NomadNamespaces)
+	if fileErr != nil {
+		errs = append(errs, fileErr)
+	}
+	if fc != nil {
+		repos, repoErrs := repositoriesOf(fc, c.ConfigFile, c.NomadNamespaces)
 		c.Repositories = append(c.Repositories, repos...)
-		errs = append(errs, fileErrs...)
+		errs = append(errs, repoErrs...)
 	}
 
 	seen := make(map[string]bool, len(c.Repositories))
@@ -645,18 +679,57 @@ func (c *Config) loadRepositories(explicit map[string]bool) []error {
 	return errs
 }
 
-// readConfigFile reads the repository blocks of the -config file at file.
-// Every error names the file, and the block it is about. namespaces are the
-// managed ones, which the namespace of a jobs pattern must match.
-func readConfigFile(file string, namespaces []string) ([]Repository, []error) {
+// readConfigFile parses and decodes the -config file at file; "" is no file,
+// and gives nil.
+func readConfigFile(file string) (*fileConfig, error) {
+	if file == "" {
+		return nil, nil
+	}
 	f, diags := hclparse.NewParser().ParseHCLFile(file)
 	if diags.HasErrors() {
-		return nil, []error{fmt.Errorf("-config: %w", diags)}
+		return nil, fmt.Errorf("-config: %w", diags)
 	}
 	var fc fileConfig
 	if diags := gohcl.DecodeBody(f.Body, nil, &fc); diags.HasErrors() {
-		return nil, []error{fmt.Errorf("-config: %w", diags)}
+		return nil, fmt.Errorf("-config: %w", diags)
 	}
+	return &fc, nil
+}
+
+// loadListen sets the timeouts of the listen block of fc, when it has one.
+// Every error names the file and the attribute.
+func (c *Config) loadListen(fc *fileConfig) []error {
+	if fc == nil || fc.Listen == nil {
+		return nil
+	}
+	var errs []error
+	for _, a := range []struct {
+		name string
+		in   *string
+		out  *time.Duration
+	}{
+		{"read_header_timeout", fc.Listen.ReadHeaderTimeout, &c.ReadHeaderTimeout},
+		{"read_timeout", fc.Listen.ReadTimeout, &c.ReadTimeout},
+		{"write_timeout", fc.Listen.WriteTimeout, &c.WriteTimeout},
+		{"idle_timeout", fc.Listen.IdleTimeout, &c.IdleTimeout},
+	} {
+		if a.in == nil {
+			continue
+		}
+		d, err := positiveDuration(*a.in)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("-config %s: listen: %s: %w", c.ConfigFile, a.name, err))
+			continue
+		}
+		*a.out = d
+	}
+	return errs
+}
+
+// repositoriesOf reads the repository blocks of fc, the decoded -config file
+// at file. Every error names the file, and the block it is about. namespaces
+// are the managed ones, which the namespace of a jobs pattern must match.
+func repositoriesOf(fc *fileConfig, file string, namespaces []string) ([]Repository, []error) {
 	var (
 		repos []Repository
 		errs  []error
