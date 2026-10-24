@@ -88,6 +88,9 @@ func TestLoadDefaults(t *testing.T) {
 		ReadTimeout:       time.Minute,
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
+		// The limit on failed logins, with no auth block.
+		LoginMaxFailures:   10,
+		LoginFailureWindow: 15 * time.Minute,
 		// A sync window is read in UTC unless the operator says otherwise.
 		SyncWindowLocation: time.UTC,
 		LogLevel:           slog.LevelInfo,
@@ -231,10 +234,13 @@ repository "apps" {
 		DBPath:     "/var/lib/nops/nops.db",
 		ListenAddr: "127.0.0.1:9000",
 		// The listen block is the file's, not an option: the defaults stand.
-		ReadHeaderTimeout:      10 * time.Second,
-		ReadTimeout:            time.Minute,
-		WriteTimeout:           time.Minute,
-		IdleTimeout:            2 * time.Minute,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
+		WriteTimeout:      time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		// The auth block is the file's too.
+		LoginMaxFailures:       10,
+		LoginFailureWindow:     15 * time.Minute,
 		WebhookSecretFile:      webhookSecret,
 		WebhookSecret:          "webhook-shared-secret",
 		ACL:                    true,
@@ -1441,5 +1447,107 @@ func TestLoadNomadInvalid(t *testing.T) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// basicAuthArgs is the command line of a basic login, besides the -config file.
+func basicAuthArgs(t *testing.T, file string) []string {
+	t.Helper()
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	return []string{"-config", file, "-auth-mode", "basic", "-users-file", usersFile}
+}
+
+func TestLoginLimitDefaults(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`)
+	c, err := Load(basicAuthArgs(t, file), rawEnvOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LoginMaxFailures != 10 || c.LoginFailureWindow != 15*time.Minute {
+		t.Errorf("limit = %d in %v, want 10 in 15m", c.LoginMaxFailures, c.LoginFailureWindow)
+	}
+}
+
+func TestLoadAuthFromTheFile(t *testing.T) {
+	apps := `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`
+	tests := []struct {
+		name, block string
+		wantMax     int
+		wantWindow  time.Duration
+	}{
+		{"both", `max_failures = 3
+  failure_window = "1h"`, 3, time.Hour},
+		{"only the window", `failure_window = "5m"`, 10, 5 * time.Minute},
+		{"only the count", `max_failures = 20`, 20, 15 * time.Minute},
+		{"neither", ``, 10, 15 * time.Minute},
+		{"a zero count turns the limit off", `max_failures = 0`, 0, 15 * time.Minute},
+		{"a zero window turns the limit off", `failure_window = "0s"`, 10, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := writeFile(t, "nops.hcl", apps+"auth \"basic\" {\n  type = \"basic\"\n  "+tt.block+"\n}\n")
+			c, err := Load(basicAuthArgs(t, file), rawEnvOf(nil), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.LoginMaxFailures != tt.wantMax || c.LoginFailureWindow != tt.wantWindow {
+				t.Errorf("limit = %d in %v, want %d in %v", c.LoginMaxFailures, c.LoginFailureWindow, tt.wantMax, tt.wantWindow)
+			}
+		})
+	}
+}
+
+func TestLoadAuthInvalid(t *testing.T) {
+	apps := `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`
+	auth := func(label, body string) string { return apps + "auth \"" + label + "\" {\n" + body + "\n}\n" }
+	basic := func(body string) string { return auth("basic", "type = \"basic\"\n"+body) }
+	tests := []struct {
+		name, file, want string
+	}{
+		{"no type", auth("basic", ""), "type"},
+		{"another type", auth("basic", `type = "oidc"`), `auth: type: is "oidc"`},
+		{"another label", auth("oidc", `type = "basic"`), `auth: the label is "oidc"`},
+		{"two blocks", basic("") + basic(""), "only one auth block is allowed"},
+		{"negative count", basic(`max_failures = -1`), "auth: max_failures: -1 must not be negative"},
+		{"a count that is not a number", basic(`max_failures = "many"`), "a number is required"},
+		{"not a duration", basic(`failure_window = "soon"`), "auth: failure_window:"},
+		{"negative window", basic(`failure_window = "-1m"`), `auth: failure_window: duration "-1m" must not be negative`},
+		{"the users file is a flag", basic(`users_file = "/secrets/users"`), "Unsupported argument"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(basicAuthArgs(t, writeFile(t, "nops.hcl", tt.file)), rawEnvOf(nil), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The block belongs to the basic login: with OIDC it stops Nops, rather than
+// sitting in the file with no effect.
+func TestLoadAuthBlockWithOIDC(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+auth "basic" {
+  type = "basic"
+}
+`)
+	_, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), `the "basic" block is only used with -auth-mode=basic`) {
+		t.Errorf("err = %v, want the block refused with -auth-mode=oidc", err)
 	}
 }

@@ -106,8 +106,10 @@ Apache's `AuthGroupFile` format, for [binding rules](acl.md#binding-rules) on
 `list.groups`. Each member must be in the users file.
 
 Nops reads both files at startup: restart it after you change a user or a
-group. There is no rate limit on failed logins, so put a rate-limiting proxy
-in front if the dashboard is reachable from untrusted networks.
+group. After 10 failed logins in 15 minutes, a username is locked until the 15
+minutes are up, even if it doesn't exist. The
+[`auth "basic"` block](configuration.md#local-users--auth-modebasic) changes
+both values.
 
 ## Secret redaction
 
