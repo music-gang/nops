@@ -123,6 +123,28 @@ Your reverse proxy must forward the path as is, without stripping `/nops`.
 `/healthz` and `/metrics` also answer at the bare path, for health checks and
 scrapes that bypass the proxy.
 
+## Encrypting the dashboard
+
+To serve HTTPS from Nops, set the [`tls` block](configuration.md#certificate-and-key) and
+render the certificate and the key with a `template` that signals Nops, so it
+loads a renewed pair without a restart:
+
+```hcl
+template {
+  destination   = "secrets/nops.crt"
+  data          = "{{ with nomadVar \"nomad/jobs/nops\" }}{{ .tls_cert }}{{ end }}"
+  change_mode   = "signal"
+  change_signal = "SIGHUP"
+}
+```
+
+The service check then needs `protocol = "https"`.
+
+Nops trusts the certificate authorities of the system for git, the OIDC
+provider and notifications, and the `nops` client trusts them for Nops itself.
+To trust an internal authority, set `SSL_CERT_FILE` to a PEM bundle that holds
+it and the public authorities you still need.
+
 ## Logging in with OIDC
 
 Set `-public-url`, then create a confidential OIDC client with the

@@ -123,8 +123,8 @@ repository "apps" {
 
 ### Listen
 
-The `listen` block sets the timeouts of the dashboard's server. It has no
-flag or variable, and one block at most:
+The `listen` block sets the timeouts of the dashboard's server and its
+[TLS](#certificate-and-key). It has no flag or variable, and one block at most:
 
 ```hcl
 listen {
@@ -144,6 +144,32 @@ listen {
 
 A [backup](running-nops.md#backups) download isn't cut while it moves: `write_timeout`
 limits each block it writes, not the whole file.
+
+#### Certificate and key
+
+A `tls` block makes Nops serve the dashboard and the git webhook over HTTPS
+itself, either with no proxy or behind one that trusts your certificate authority:
+
+```hcl
+listen {
+  tls {
+    cert_file = "/secrets/nops.crt"
+    key_file  = "/secrets/nops.key"
+  }
+}
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `cert_file` | none, **required** | PEM file of the certificate, with its chain. |
+| `key_file` | none, **required** | PEM file of its private key. |
+
+- `SIGHUP` reloads both files; the rest of the configuration needs a restart.
+  If the reload fails, Nops keeps the current pair and logs an ERROR.
+- Every answer carries `Strict-Transport-Security`, so a browser reaches the
+  host only over HTTPS for a year.
+- Without `-public-url`, the URL derived from `-listen-addr` starts with
+  `https://`.
 
 ## Dashboard
 

@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -110,6 +112,7 @@ func buildNopsBinary(t *testing.T) string {
 // nopsProc is a running nops binary.
 type nopsProc struct {
 	baseURL string
+	client  *http.Client // trusts the certificate when nops serves TLS
 	dbPath  string
 	cmd     *exec.Cmd
 	exited  chan error
@@ -127,6 +130,22 @@ type nopsProc struct {
 // token does not allow fails here and not on a cluster.
 func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	t.Helper()
+	return startNopsTLS(t, repoURL, nil, env...)
+}
+
+// startNopsTLS is startNops for a nops that serves HTTPS itself (a tls block in
+// its configuration file): roots are the certificates its client trusts, and
+// nil is plain HTTP.
+func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...string) *nopsProc {
+	t.Helper()
+	scheme, client := "http", http.DefaultClient
+	if roots != nil {
+		scheme = "https"
+		client = &http.Client{Transport: &http.Transport{
+			TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+			DisableKeepAlives: true, // a handshake per request, to see the certificate served now
+		}}
+	}
 	addr := testAddr(t)
 	bin := buildNopsBinary(t)
 	tokenFile := writeNopsToken(t, managedNamespaces(env))
@@ -146,7 +165,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 		"NOPS_LISTEN_ADDR="+listenAddr,
 		"NOPS_AUTH_MODE=basic",
 		"NOPS_USERS_FILE="+usersFile,
-		"NOPS_PUBLIC_URL=http://"+listenAddr,
+		"NOPS_PUBLIC_URL="+scheme+"://"+listenAddr,
 		"NOPS_GIT_POLL_INTERVAL=200ms",
 		"NOPS_DRIFT_INTERVAL=200ms",
 		"NOPS_ENGINE_INTERVAL=200ms",
@@ -160,7 +179,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 		t.Fatalf("start nops: %v", err)
 	}
 
-	p := &nopsProc{baseURL: "http://" + listenAddr, dbPath: dbPath, cmd: cmd, exited: make(chan error, 1)}
+	p := &nopsProc{baseURL: scheme + "://" + listenAddr, client: client, dbPath: dbPath, cmd: cmd, exited: make(chan error, 1)}
 	go func() { p.exited <- cmd.Wait() }()
 	t.Cleanup(func() {
 		select {
@@ -173,7 +192,7 @@ func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
 	var lastErr error
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(p.baseURL + "/healthz")
+		resp, err := client.Get(p.baseURL + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

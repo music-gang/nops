@@ -104,6 +104,11 @@ type Config struct {
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 
+	// The PEM files of the certificate and the key, from the tls block of the
+	// listen block: both set, Nops serves HTTPS itself; both empty, plain HTTP.
+	TLSCertFile string
+	TLSKeyFile  string
+
 	// The limit on failed logins with a username and a password, from the auth
 	// block of the -config file (docs/configuration.md#local-users--auth-modebasic).
 	// A zero in either turns it off.
@@ -569,7 +574,7 @@ func resolveSecretValues(c *Config, getenv func(string) string) []error {
 func (c *Config) check() []error {
 	var errs []error
 	if c.PublicURL == "" {
-		c.PublicURL = publicURLDefault(c.ListenAddr)
+		c.PublicURL = publicURLDefault(c.ListenAddr, c.TLSCertFile != "")
 	}
 	c.BasePath = basePathOf(c.PublicURL)
 	for _, r := range c.Repositories {
@@ -663,10 +668,18 @@ type fileNomad struct {
 }
 
 type fileListen struct {
-	ReadHeaderTimeout *string `hcl:"read_header_timeout,optional"`
-	ReadTimeout       *string `hcl:"read_timeout,optional"`
-	WriteTimeout      *string `hcl:"write_timeout,optional"`
-	IdleTimeout       *string `hcl:"idle_timeout,optional"`
+	ReadHeaderTimeout *string  `hcl:"read_header_timeout,optional"`
+	ReadTimeout       *string  `hcl:"read_timeout,optional"`
+	WriteTimeout      *string  `hcl:"write_timeout,optional"`
+	IdleTimeout       *string  `hcl:"idle_timeout,optional"`
+	TLS               *fileTLS `hcl:"tls,block"`
+}
+
+// fileTLS has both files required, so a block with one alone or neither is a
+// decoding error.
+type fileTLS struct {
+	CertFile string `hcl:"cert_file"`
+	KeyFile  string `hcl:"key_file"`
 }
 
 type fileRepository struct {
@@ -745,8 +758,8 @@ func readConfigFile(file string) (*fileConfig, error) {
 	return &fc, nil
 }
 
-// loadListen sets the timeouts of the listen block of fc, when it has one.
-// Every error names the file and the attribute.
+// loadListen sets the timeouts and the TLS files of the listen block of fc,
+// when it has one. Every error names the file and the attribute.
 func (c *Config) loadListen(fc *fileConfig) []error {
 	if fc == nil || fc.Listen == nil {
 		return nil
@@ -771,6 +784,27 @@ func (c *Config) loadListen(fc *fileConfig) []error {
 			continue
 		}
 		*a.out = d
+	}
+	if t := fc.Listen.TLS; t != nil {
+		for _, f := range []struct {
+			name string
+			in   string
+			out  *string
+		}{
+			{"cert_file", t.CertFile, &c.TLSCertFile},
+			{"key_file", t.KeyFile, &c.TLSKeyFile},
+		} {
+			if f.in == "" {
+				errs = append(errs, fmt.Errorf("-config %s: listen: tls: %s: required", c.ConfigFile, f.name))
+				continue
+			}
+			file, err := readableFile(f.in)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("-config %s: listen: tls: %s: %w", c.ConfigFile, f.name, err))
+				continue
+			}
+			*f.out = file
+		}
 	}
 	return errs
 }
@@ -1066,8 +1100,9 @@ func optionalURL(v string) (string, error) {
 // interface), becomes localhost, since that says nothing about which
 // interface a browser should use. listenAddr is assumed already validated
 // by the -listen-addr option (net.SplitHostPort); an invalid one yields "",
-// same as no default, since that failure is already reported on its own.
-func publicURLDefault(listenAddr string) string {
+// same as no default, since that failure is already reported on its own. The
+// scheme is https when Nops serves TLS itself (tls).
+func publicURLDefault(listenAddr string, tls bool) string {
 	host, port, err := net.SplitHostPort(listenAddr)
 	if err != nil {
 		return ""
@@ -1076,7 +1111,11 @@ func publicURLDefault(listenAddr string) string {
 	case "", "0.0.0.0", "::":
 		host = "localhost"
 	}
-	return "http://" + net.JoinHostPort(host, port)
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
 // basePathOf reads the dashboard's base path from -public-url's own path
