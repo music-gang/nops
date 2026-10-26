@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -79,6 +81,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	if !cfg.ACL {
 		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (-acl turns it on)")
+	}
+	if plainHTTP(cfg) {
+		log.Warn("the dashboard is served over plain HTTP: passwords, tokens and session cookies cross the network in clear text (the tls block of the listen block makes Nops serve HTTPS; behind a TLS proxy, set -public-url to https://)")
 	}
 
 	var cert *certificate
@@ -216,6 +221,35 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		<-reloaded
 	}
 	return runErr
+}
+
+// plainHTTP says whether a login could cross a network in clear text: Nops
+// serves no TLS, the public URL is http://, and the host of the public URL or
+// of -listen-addr is not loopback. An empty host or a wildcard address
+// listens on every interface, so it is not loopback. config.Load has already
+// validated both addresses.
+func plainHTTP(cfg *config.Config) bool {
+	if cfg.TLSCertFile != "" {
+		return false
+	}
+	u, err := url.Parse(cfg.PublicURL)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	listenHost, _, err := net.SplitHostPort(cfg.ListenAddr)
+	if err != nil {
+		return false
+	}
+	return !loopback(u.Hostname()) || !loopback(listenHost)
+}
+
+// loopback says whether host is localhost or a loopback IP address.
+func loopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // startupAttrs is what the "starting" line says: which build runs, and the
