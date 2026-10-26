@@ -1394,6 +1394,14 @@ func TestLoadListenInvalid(t *testing.T) {
 		{"a number", listen(`read_header_timeout = 10`), "read_header_timeout"},
 		{"the address belongs to a flag", listen(`addr = ":9090"`), "Unsupported argument"},
 		{"two blocks", listen("") + listen(""), "Duplicate listen block"},
+		{"tls with no files", listen("tls {\n}"), `Missing required argument`},
+		{"tls with a certificate alone", listen("tls {\ncert_file = \"nops.crt\"\n}"), `"key_file" is required`},
+		{"tls with a key alone", listen("tls {\nkey_file = \"nops.key\"\n}"), `"cert_file" is required`},
+		{"two tls blocks", listen("tls {\ncert_file = \"a\"\nkey_file = \"b\"\n}\ntls {\ncert_file = \"a\"\nkey_file = \"b\"\n}"), "Duplicate tls block"},
+		{"a certificate that is not there", listen(`tls {
+  cert_file = "/nonexistent/nops.crt"
+  key_file  = "/nonexistent/nops.key"
+}`), "listen: tls: cert_file:"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1402,6 +1410,42 @@ func TestLoadListenInvalid(t *testing.T) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadListenTLS(t *testing.T) {
+	noPublicURL := envOf(map[string]string{"NOPS_PUBLIC_URL": ""}) // so the URL is derived
+	cert, key := writeFile(t, "nops.crt", "cert"), writeFile(t, "nops.key", "key")
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+listen {
+  tls {
+    cert_file = "`+cert+`"
+    key_file  = "`+key+`"
+  }
+}
+`)
+	c, err := Load([]string{"-config", file, "-listen-addr", "127.0.0.1:9443"}, noPublicURL, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TLSCertFile != cert || c.TLSKeyFile != key {
+		t.Errorf("TLS files = %q, %q; want %q, %q", c.TLSCertFile, c.TLSKeyFile, cert, key)
+	}
+	if c.PublicURL != "https://127.0.0.1:9443" {
+		t.Errorf("public URL = %q, want the https one", c.PublicURL)
+	}
+
+	// Without the block, Nops serves plain HTTP and the URL says so.
+	plain, err := Load([]string{"-config", writeFile(t, "plain.hcl", "repository \"apps\" {\n  url = \"https://git.example.com/ops/apps.git\"\n}\n")}, noPublicURL, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.TLSCertFile != "" || plain.TLSKeyFile != "" || plain.PublicURL != "http://localhost:8080" {
+		t.Errorf("without a tls block: files %q, %q, public URL %q", plain.TLSCertFile, plain.TLSKeyFile, plain.PublicURL)
 	}
 }
 

@@ -594,6 +594,18 @@ func TestSecurityHeaders(t *testing.T) {
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("healthz Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))
 	}
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("Strict-Transport-Security = %q without TLS, want none", got)
+	}
+}
+
+func TestSecurityHeadersHSTSWithTLS(t *testing.T) {
+	ts := newTestServerLogin(t, &fakeStore{}, &fakeEngine{}, "", nil, "", nil, func(o *Options) { o.TLS = true })
+	for _, path := range []string{"/healthz", "/login", "/static/app.css"} {
+		if got := ts.do("GET", path, nil).Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+			t.Errorf("GET %s: Strict-Transport-Security = %q, want max-age=31536000", path, got)
+		}
+	}
 }
 
 // -- approve / reject ---------------------------------------------------------

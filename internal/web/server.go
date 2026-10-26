@@ -120,6 +120,11 @@ type Options struct {
 	// Secure makes the cookies Secure: the public URL is https.
 	Secure bool
 
+	// TLS says that Nops serves HTTPS itself: every answer then carries
+	// Strict-Transport-Security. The browser applies it to the public host, so it
+	// holds behind a proxy too.
+	TLS bool
+
 	// ACL turns the access control on (-acl, docs/acl.md). Off, every token
 	// and every login can do everything.
 	ACL bool
@@ -190,6 +195,7 @@ type server struct {
 	aclOn     bool
 	bootstrap string
 	secure    bool // cookies are Secure
+	tls       bool // Nops serves HTTPS: the answers carry HSTS
 	cliCodes  cliCodes
 	xorigin   *http.CrossOriginProtection
 	nomad     Nomad  // nil: no Nomad panel
@@ -251,6 +257,7 @@ func newServer(o Options) (*server, error) {
 		aclOn:     o.ACL,
 		bootstrap: o.BootstrapToken,
 		secure:    o.Secure,
+		tls:       o.TLS,
 		xorigin:   http.NewCrossOriginProtection(),
 		nomad:     o.Nomad,
 		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
@@ -278,7 +285,7 @@ func newServer(o Options) (*server, error) {
 // orchestrator's health check and a Prometheus scrape hit the task's own port
 // directly.
 func (s *server) handler() http.Handler {
-	h := securityHeaders(s.routes())
+	h := securityHeaders(s.routes(), s.tls)
 	if s.basePath == "" {
 		return h
 	}
@@ -401,8 +408,10 @@ func noStoreExempt(next http.Handler) http.Handler {
 // securityHeaders adds the headers every response gets, dashboard and
 // webhook alike. The dashboard has no inline script or style, so the CSP
 // allows only same-origin sources; htmx.config.includeIndicatorStyles is
-// turned off in the page head so it never needs 'unsafe-inline'.
-func securityHeaders(next http.Handler) http.Handler {
+// turned off in the page head so it never needs 'unsafe-inline'. hsts adds
+// Strict-Transport-Security, for a server that serves HTTPS itself; it leaves
+// out includeSubDomains, since Nops usually sits on one host of a domain.
+func securityHeaders(next http.Handler, hsts bool) http.Handler {
 	const csp = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; " +
 		"form-action 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -411,6 +420,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
+		if hsts {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		if !strings.HasPrefix(r.URL.Path, "/static/") {
 			h.Set("Cache-Control", "no-store")
 		}

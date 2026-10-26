@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -80,6 +81,14 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (-acl turns it on)")
 	}
 
+	var cert *certificate
+	if cfg.TLSCertFile != "" {
+		var err error
+		if cert, err = newCertificate(cfg.TLSCertFile, cfg.TLSKeyFile, log); err != nil {
+			return err
+		}
+	}
+
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -143,7 +152,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	handler, err := web.New(web.Options{
-		Auth: auth, Store: st, Engine: eng, Git: repos, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: repos.Trigger,
+		Auth: auth, Store: st, Engine: eng, Git: repos, Access: st, ACL: cfg.ACL, BootstrapToken: cfg.ACLBootstrapToken, Secure: strings.HasPrefix(cfg.PublicURL, "https://"), TLS: cert != nil, Nomad: nomadClient, NomadUIURL: cfg.NomadUIURL, Trigger: repos.Trigger,
 		CommitURL:     repos.CommitURL,
 		WebhookSecret: cfg.WebhookSecret, Version: version.String(), BasePath: cfg.BasePath, WriteTimeout: cfg.WriteTimeout, Metrics: metricsHandler, Log: log,
 	})
@@ -170,9 +179,16 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout, ReadTimeout: cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleTimeout,
 	}
+	serve := srv.ListenAndServe
+	var reloaded <-chan struct{}
+	if cert != nil {
+		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: cert.get}
+		serve = func() error { return srv.ListenAndServeTLS("", "") }
+		reloaded = cert.reloadOnSIGHUP(ctx)
+	}
 	srvErr := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 			return
 		}
@@ -196,6 +212,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		runErr = fmt.Errorf("dashboard server shutdown: %w", err)
 	}
 	wg.Wait()
+	if cert != nil {
+		<-reloaded
+	}
 	return runErr
 }
 
