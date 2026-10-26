@@ -104,3 +104,35 @@ func TestStartupAttrs(t *testing.T) {
 		}
 	}
 }
+
+// Nops warns about plain HTTP when a login could cross a network: no TLS of
+// its own, an http:// public URL, and a public or listen host that is not
+// loopback. Behind a TLS proxy the public URL is https://, so it stays quiet.
+func TestPlainHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tls       bool
+		publicURL string
+		listen    string
+		want      bool
+	}{
+		{"TLS served by Nops", true, "https://localhost:8443", ":8443", false},
+		{"TLS proxy", false, "https://nops.example.org", ":8080", false},
+		{"loopback", false, "http://localhost:8080", "127.0.0.1:8080", false},
+		{"IPv6 loopback", false, "http://[::1]:8080", "[::1]:8080", false},
+		{"every interface", false, "http://localhost:8080", ":8080", true},
+		{"wildcard address", false, "http://localhost:8080", "0.0.0.0:8080", true},
+		{"plain proxy", false, "http://nops.example.org", "127.0.0.1:8080", true},
+		{"public address", false, "http://10.0.0.5:8080", "10.0.0.5:8080", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{PublicURL: tc.publicURL, ListenAddr: tc.listen}
+			if tc.tls {
+				cfg.TLSCertFile, cfg.TLSKeyFile = "nops.crt", "nops.key"
+			}
+			if got := plainHTTP(cfg); got != tc.want {
+				t.Errorf("plainHTTP = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
