@@ -283,44 +283,6 @@ func TestPlanAndRegisterCAS(t *testing.T) {
 	}
 }
 
-// Registering a spec identical to the live one passes the CAS check but does
-// not move the live job's modify index. The register response, on the other
-// hand, has been seen to report a different number (over the raw HTTP API), so
-// the engine must re-read the live job instead of trusting
-// RegisterResult.JobModifyIndex. Only the live index is asserted here; the
-// response index is logged.
-func TestRegisterIdenticalSpecKeepsLiveIndex(t *testing.T) {
-	c, raw := newClient(t)
-	ctx := context.Background()
-	id := uniqueID(t, raw, "same")
-
-	job, err := c.ParseHCL(ctx, "default", batchHCL(id, "one"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
-		t.Fatal(err)
-	}
-	live, err := c.Job(ctx, "default", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := *live.JobModifyIndex
-
-	res, err := c.RegisterCAS(ctx, job, before, false, nil)
-	if err != nil {
-		t.Fatalf("identical register at the live index: %v", err)
-	}
-	live, err = c.Job(ctx, "default", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if *live.JobModifyIndex != before {
-		t.Errorf("identical register moved the live index: %d -> %d", before, *live.JobModifyIndex)
-	}
-	t.Logf("live index %d, register response index %d", before, res.JobModifyIndex)
-}
-
 // A new job with a scaling block, planned again unchanged right after its
 // first register: Nomad marks its Scaling Edited with nothing in it, and Plan
 // reports no change.

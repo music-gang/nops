@@ -118,15 +118,24 @@ jobs:
           pip install -r scripts/mkdocs/requirements.txt
           mkdocs build --strict
 
-  integration:
-    name: integration
+  integration-nomad:
+    name: integration (Nomad ${{ matrix.nomad.version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Nomad versions nops is tested against
+        # (docs/development.md#nomad-version): the one place they are set. The
+        # README names them too (a test in docs/ compares the two).
+        nomad:
+          - version: "2.1.0"
+            sha256: f7329569ccf047897ac905d05d557ca8eb5f8f28e1e7cbc2e7c73241e64c4f37
+          - version: "2.0.7"
+            sha256: 4c9b8a0850d6fd9caadbbab09b3e6fdf8b77aa777729543c70c61b85acca68c1
     env:
-      # The Nomad nops is tested against: the one place the version is set. The
-      # README states it too (a test in docs/ compares the two).
-      NOMAD_VERSION: "2.0.7"
-      NOMAD_SHA256: 4c9b8a0850d6fd9caadbbab09b3e6fdf8b77aa777729543c70c61b85acca68c1
+      NOMAD_VERSION: ${{ matrix.nomad.version }}
+      NOMAD_SHA256: ${{ matrix.nomad.sha256 }}
       NOPS_TEST_NOMAD_ADDR: http://127.0.0.1:4646
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -180,3 +189,17 @@ jobs:
       - name: Nomad log
         if: failure()
         run: tail -n 200 nomad.log
+
+  # One check named integration whatever versions the matrix holds, so a new
+  # Nomad does not change the checks a pull request needs.
+  integration:
+    name: integration
+    needs: integration-nomad
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every Nomad version passed
+        env:
+          RESULT: ${{ needs.integration-nomad.result }}
+        run: test "${RESULT}" = success
