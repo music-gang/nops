@@ -65,7 +65,9 @@ with what is specific to a session:
    open issues that nothing open blocks, those of the current patch first,
    then those of the current minor (`milestone:vX.Y.x is:open` and
    `milestone:vX.Y.Z is:open` in the issue search): the maintainer picks,
-   the order is his.
+   the order is his. An issue the session opens itself, on a question
+   or an idea, stops there: it waits in the backlog, with no branch, until
+   the maintainer gives it to a session, this one included.
 2. Check what is in flight: `git ls-remote --heads origin` and the open PRs.
    Never start an issue that already has a branch or a PR.
 3. An issue with open design questions (a *To decide* list, or a proposal
