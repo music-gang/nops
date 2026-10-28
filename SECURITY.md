@@ -21,7 +21,9 @@ into an older one (see
 
 - The dashboard authenticates the acting user itself, with OpenID Connect or a
   local `username:bcrypt-hash` file depending on `-auth-mode` (see
-  [docs/dashboard.md](docs/dashboard.md#authentication)). A reverse proxy in
-  front of it is only for TLS.
+  [docs/dashboard.md](docs/dashboard.md#authentication)). Nops serves TLS
+  itself with the
+  [`tls` block](docs/configuration.md#certificate-and-key), or a reverse
+  proxy in front of it does.
 - Plan diffs are redacted before being stored or shown; a secret that reaches
   the database or the HTML is a valid report.
