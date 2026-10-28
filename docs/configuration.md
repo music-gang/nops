@@ -53,15 +53,19 @@ inject secrets into the environment. These variables have no flag.
 | `-nomad-client-key` | `NOPS_NOMAD_CLIENT_KEY` | none | PEM client key for mTLS. |
 | `-nomad-tls-skip-verify` | `NOPS_NOMAD_TLS_SKIP_VERIFY` | `false` | Skip server certificate checks. Testing only. |
 
-The `nomad` block of the [configuration file](#configuration-file) sets how
-long a request to Nomad may take, the answer included. It has no flag or
-variable, and one block at most:
+The `nomad` block of the [configuration file](#configuration-file) sets the
+deadline of the requests to Nomad. It has no flag or variable, and one block
+at most:
 
 ```hcl
 nomad {
   timeout = "30s"
 }
 ```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `timeout` | `30s` | How long a request to Nomad may take, the answer included. |
 
 ## Git
 
