@@ -4,6 +4,45 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.0
+
+### Features
+
+- `config`: the dashboard's server has timeouts, on by default: 10 seconds to
+  send the request headers, a minute for the whole request, a minute for the
+  answer, and 2 minutes for an idle connection. A slow client can no longer
+  hold a connection for as long as it likes. The `listen` block of the configuration file changes
+  them, and a backup download isn't cut while it moves
+  ([listen](docs/configuration.md#listen),
+  [#244](https://github.com/music-gang/nops/pull/244)).
+- `config`: a request to Nomad and a poll of a repository have a deadline,
+  30 seconds and 2 minutes by default, so a Nomad or a git server that never
+  answers no longer blocks Nops. The `nomad` block, the `timeout` of a `repository`
+  block and `-git-timeout` change them
+  ([Nomad](docs/configuration.md#nomad),
+  [repositories](docs/configuration.md#repositories),
+  [#245](https://github.com/music-gang/nops/pull/245)).
+- `web`: after 10 failed logins with a password in 15 minutes, a username is
+  locked until the 15 minutes are up, even one that doesn't exist, and a flood
+  of logins no longer saturates the CPU. The `auth "basic"` block changes both
+  values ([local users](docs/dashboard.md#local-users--auth-modebasic),
+  [#246](https://github.com/music-gang/nops/pull/246)).
+- `config`: Nops serves the dashboard and the git webhook over HTTPS itself,
+  with no proxy or behind one that trusts your certificate authority, from
+  the `tls` block of `listen`. `SIGHUP` reloads the certificate and the key
+  ([certificate and key](docs/configuration.md#certificate-and-key),
+  [encrypting the dashboard](docs/running-nops.md#encrypting-the-dashboard),
+  [#248](https://github.com/music-gang/nops/pull/248)).
+- Nops logs a WARN at start when it serves passwords and tokens over plain
+  HTTP to a host other than localhost
+  ([#249](https://github.com/music-gang/nops/pull/249)).
+
+### Fixes
+
+- A GitLab webhook request with a body over the limit gets a 400, like the
+  other forges, instead of a 202
+  ([#247](https://github.com/music-gang/nops/pull/247)).
+
 ## v0.14.0
 
 ### Features
