@@ -186,11 +186,9 @@ func (c *Client) Plan(ctx context.Context, job *api.Job) (*api.JobPlanResponse, 
 type RegisterResult struct {
 	EvalID string
 	// JobModifyIndex is what Nomad returned in the register response. Do not
-	// treat it as the live job's index: registering a spec identical to the
-	// live one leaves the live index unchanged, yet Nomad can answer with a
-	// newer number (seen over the raw HTTP API: response 62, live 61; see
-	// TestRegisterIdenticalSpecKeepsLiveIndex).
-	// Re-read the job with Job() when the live index matters.
+	// treat it as the live job's index: the two have been seen to differ
+	// (response 62, live 61). Re-read the job with Job() when the live index
+	// matters.
 	JobModifyIndex uint64
 	// Warnings is what Nomad says about the job it accepted, such as a
 	// submission it dropped for its size. Empty when it has none.
