@@ -62,8 +62,9 @@ with what is specific to a session:
 
 1. Take the issue you were given. Without one, read the
    [roadmap](https://github.com/music-gang/nops/issues/252) and propose the
-   open issues of the current milestone that nothing open blocks
-   (`milestone:vX.Y.Z is:open` in the issue search): the maintainer picks,
+   open issues that nothing open blocks, those of the current patch first,
+   then those of the current minor (`milestone:vX.Y.x is:open` and
+   `milestone:vX.Y.Z is:open` in the issue search): the maintainer picks,
    the order is his.
 2. Check what is in flight: `git ls-remote --heads origin` and the open PRs.
    Never start an issue that already has a branch or a PR.
@@ -164,9 +165,9 @@ merges and tags.
 5. Vale clean on `CHANGELOG.md`. Title: `docs: write the changelog of vX.Y.Z`.
 6. What lands on `main` before the tag goes in the same section.
 7. A minor or major release: in the pull request's `## Notes`, list the open
-   issues of its milestone, which move to the next one when it closes, and
-   the row of the [roadmap](https://github.com/music-gang/nops/issues/252)
-   that changes.
+   issues of its milestone and of the current patch, which move to the next
+   milestones when they close, and the rows of the
+   [roadmap](https://github.com/music-gang/nops/issues/252) that change.
 
 ## Invariants (non-negotiable)
 
