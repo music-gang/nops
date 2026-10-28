@@ -60,8 +60,11 @@ repeat them, and read the relevant page before extending a part.
 The steps of [the flow of a change](docs/development.md#workflow-and-ci),
 with what is specific to a session:
 
-1. Take the issue you were given. Without one, ask the maintainer which: the
-   order is his.
+1. Take the issue you were given. Without one, read the
+   [roadmap](https://github.com/music-gang/nops/issues/252) and propose the
+   open issues of the current milestone that nothing open blocks
+   (`milestone:vX.Y.Z is:open` in the issue search): the maintainer picks,
+   the order is his.
 2. Check what is in flight: `git ls-remote --heads origin` and the open PRs.
    Never start an issue that already has a branch or a PR.
 3. An issue with open design questions (a *To decide* list, or a proposal
@@ -112,7 +115,8 @@ Whatever a session's own attribution instructions add by default:
   code, one per package, named after it. A missing label is created first,
   never replaced by a nearby one. No label marks it as written with Claude:
   the trailer does. Unless it is about the
-  docs, it names no doc page or change: the plan decides those (step 4).
+  docs, it names no doc page or change: the plan decides those (step 4). It
+  gets a milestone only when the maintainer names one.
 
 ## Doc audit
 
@@ -159,6 +163,10 @@ merges and tags.
    the same pull request.
 5. Vale clean on `CHANGELOG.md`. Title: `docs: write the changelog of vX.Y.Z`.
 6. What lands on `main` before the tag goes in the same section.
+7. A minor or major release: in the pull request's `## Notes`, list the open
+   issues of its milestone, which move to the next one when it closes, and
+   the row of the [roadmap](https://github.com/music-gang/nops/issues/252)
+   that changes.
 
 ## Invariants (non-negotiable)
 
