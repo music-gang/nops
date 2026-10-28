@@ -39,10 +39,12 @@ on the same host as the tests.
 
 ### Nomad version
 
-CI tests against `NOMAD_VERSION` in `.github/workflows/ci.yml`; the README
-states the same version, and a test fails if they differ. To move to a new
-Nomad, change `NOMAD_VERSION` and `NOMAD_SHA256`, update the README, and run
-the integration tests.
+CI runs the integration tests once for each Nomad version in the matrix of
+`.github/workflows/ci.yml`: the latest patch of the two most recent Nomad
+minor releases. The README names the same versions, and a test fails if they
+differ. A new patch replaces the entry of its minor release. A new minor
+release gets an entry when it comes out. The oldest leaves the matrix in the
+next minor release of Nops, with a `BREAKING CHANGE:` footer.
 
 ## Coverage
 

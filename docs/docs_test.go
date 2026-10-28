@@ -97,31 +97,43 @@ func TestEveryTestNamedInTheDocsExists(t *testing.T) {
 	}
 }
 
-// TestREADMENamesTheNomadVersionCITestsWith fails when the README's Nomad
-// compatibility line names a version other than the one the integration job
-// of ci.yml installs, so the version is written by hand in exactly two places
-// and they cannot drift (docs/development.md#nomad-version).
-func TestREADMENamesTheNomadVersionCITestsWith(t *testing.T) {
+// TestREADMENamesTheNomadVersionsCITestsWith fails when the README's Nomad
+// compatibility section names other versions than the matrix of the
+// integration job of ci.yml, so the versions are written by hand in exactly
+// two places and they cannot drift, or when the matrix holds two patches of
+// one minor release (docs/development.md#nomad-version).
+func TestREADMENamesTheNomadVersionsCITestsWith(t *testing.T) {
 	ci, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?m)^\s*NOMAD_VERSION:\s*"?(\d+\.\d+\.\d+)"?\s*$`).FindSubmatch(ci)
-	if m == nil {
-		t.Fatal("NOMAD_VERSION not found in .github/workflows/ci.yml")
+	var want []string
+	minors := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*-\s*version:\s*"(\d+)\.(\d+)\.(\d+)"\s*$`).FindAllSubmatch(ci, -1) {
+		v := fmt.Sprintf("%s.%s.%s", m[1], m[2], m[3])
+		minor := fmt.Sprintf("%s.%s", m[1], m[2])
+		if other, ok := minors[minor]; ok {
+			t.Errorf("ci.yml tests Nomad %s and %s: keep only the latest patch of %s", other, v, minor)
+		}
+		minors[minor] = v
+		want = append(want, v)
 	}
-	want := string(m[1])
+	if len(want) == 0 {
+		t.Fatal("no Nomad version found in the matrix of .github/workflows/ci.yml")
+	}
 
 	readme, err := os.ReadFile("../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := regexp.MustCompile(`\*\*Nomad (\d+\.\d+\.\d+)\*\*`).FindAllSubmatch(readme, -1)
-	if len(found) != 1 {
-		t.Fatalf("README.md has %d mentions of the form **Nomad X.Y.Z**, want exactly one (the compatibility section)", len(found))
+	var got []string
+	for _, m := range regexp.MustCompile(`\*\*Nomad (\d+\.\d+\.\d+)\*\*`).FindAllSubmatch(readme, -1) {
+		got = append(got, string(m[1]))
 	}
-	if got := string(found[0][1]); got != want {
-		t.Errorf("README.md says Nomad %s, ci.yml tests against %s", got, want)
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("README.md names Nomad %v (mentions of the form **Nomad X.Y.Z**), ci.yml tests against %v", got, want)
 	}
 }
 
