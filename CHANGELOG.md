@@ -4,6 +4,39 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.1
+
+### Features
+
+- `hooks`: a hook that no node has room for still waits until its timeout,
+  but Nops logs a WARN with the cause, and the timeout's error names the
+  resource that ran out, like `no room on 1 node (memory)`
+  ([placement](docs/hooks.md#placement),
+  [#262](https://github.com/music-gang/nops/pull/262)).
+
+### Fixes
+
+- `web`: `/healthz` answers `ok` without the version, so a request without a
+  token no longer learns which version runs. The dashboard's footer,
+  `nops_build_info` on `/metrics` and `-version` still show it
+  ([#263](https://github.com/music-gang/nops/pull/263)).
+
+### Other changes
+
+- Tested against Nomad 2.1.1 and 2.0.7, the latest patch of the two most
+  recent Nomad minor releases. Support for a Nomad minor release ends only
+  in a minor release of Nops
+  ([Nomad compatibility](README.md#nomad-compatibility),
+  [#260](https://github.com/music-gang/nops/pull/260),
+  [#269](https://github.com/music-gang/nops/pull/269)).
+- `hooks`: a hook whose failures are often transient, like an image pull,
+  may keep a few restarts within its timeout, as the pre-pull on every node
+  now does ([rules for hook authors](docs/hooks.md#rules-for-hook-authors),
+  [pre-pull on every node](docs/hooks.md#pre-pull-on-every-node),
+  [#265](https://github.com/music-gang/nops/pull/265)).
+- The image's base, `distroless/static-debian13`, moves to a newer digest
+  ([#255](https://github.com/music-gang/nops/pull/255)).
+
 ## v0.15.0
 
 ### Features
