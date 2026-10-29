@@ -2,7 +2,13 @@ package web
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"log/slog"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +270,77 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 			}
 			if buf.Len() == 0 {
 				t.Fatalf("render %s: empty output", name)
+			}
+		})
+	}
+}
+
+// patterns is a Router that only keeps the patterns registered on it.
+type patterns []string
+
+func (p *patterns) Handle(pattern string, _ http.Handler) { *p = append(*p, pattern) }
+func (p *patterns) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.Request)) {
+	*p = append(*p, pattern)
+}
+
+var wildcard = regexp.MustCompile(`\{[^}]*\}`)
+
+// Every route answers a request without a login with a 401 or the redirect to
+// the login page, except those named here. A route added outside the tables
+// and not named here fails, so a new one can't go in without its login.
+func TestEveryRouteNeedsALogin(t *testing.T) {
+	// The routes that need no login, and why. Everything under /auth/ is too:
+	// the login page and the routes of the auth method.
+	open := map[string]string{
+		"GET /healthz":      "what an orchestrator probes",
+		"GET /static/":      "the embedded assets hold no secret",
+		"POST /webhook/git": "an HMAC protects it",
+	}
+	for _, aclOn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("acl=%t", aclOn), func(t *testing.T) {
+			s, err := newServer(Options{
+				Auth: newTestAuth(t), Store: &fakeStore{}, Engine: &fakeEngine{}, Git: &fakeGit{},
+				Access: openTestStore(t), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				ACL: aclOn, BootstrapToken: "bootstrap",
+				Metrics: http.NotFoundHandler(), Trigger: func() {}, WebhookSecret: "secret",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			exempt := maps.Clone(open)
+			if !aclOn {
+				exempt["GET /metrics"] = "with the ACL off, a scrape only reads"
+			}
+
+			var registered patterns
+			s.register(&registered)
+			h := s.handler()
+			seen := map[string]bool{}
+			for _, pattern := range registered {
+				seen[pattern] = true
+				method, path, ok := strings.Cut(pattern, " ")
+				if !ok {
+					method, path = http.MethodGet, pattern
+				}
+				if _, ok := exempt[pattern]; ok || strings.HasPrefix(path, "/auth/") {
+					continue
+				}
+				path = strings.ReplaceAll(path, "{$}", "")
+				path = wildcard.ReplaceAllString(path, "x")
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+				switch {
+				case rec.Code == http.StatusUnauthorized:
+				case rec.Code == http.StatusFound && strings.HasPrefix(rec.Header().Get("Location"), loginPath):
+				default:
+					t.Errorf("%s without a login: status %d, Location %q, want 401 or the login page",
+						pattern, rec.Code, rec.Header().Get("Location"))
+				}
+			}
+			for pattern := range exempt {
+				if !seen[pattern] {
+					t.Errorf("%s is named as open but is not a route", pattern)
+				}
 			}
 		})
 	}

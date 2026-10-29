@@ -86,7 +86,7 @@ func (a *Auth) Method() string { return "oidc" }
 
 // Register adds the OIDC routes to mux: GET /auth/oidc sends the person to the
 // provider, and the provider sends them back to GET /auth/callback.
-func (a *Auth) Register(mux *http.ServeMux, host LoginHost) {
+func (a *Auth) Register(mux Router, host LoginHost) {
 	a.host = host
 	mux.HandleFunc("GET "+startPath, a.start)
 	mux.HandleFunc("GET "+callbackPath, a.callback)

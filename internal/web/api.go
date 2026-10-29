@@ -31,17 +31,17 @@ var openAPIFile []byte
 // reason of 500 bytes.
 const maxAPIBody = 64 << 10
 
-// apiEndpoint is a route of the API, as the mux takes it ("GET /api/jobs"),
-// with what its token needs. openapi.json describes each one, and a test keeps
-// the two equal.
-type apiEndpoint struct {
+// route is a route behind a login, as the mux takes it ("GET /api/jobs"), with
+// what the login must allow. openapi.json describes each one of the API's, and
+// a test keeps the two equal.
+type route struct {
 	pattern string
 	check   check
 	handler http.HandlerFunc
 }
 
-func (s *server) apiEndpoints() []apiEndpoint {
-	endpoints := []apiEndpoint{
+func (s *server) apiEndpoints() []route {
+	endpoints := []route{
 		{"GET /api/openapi.json", anyToken(), s.apiOpenAPI},
 		{"GET /api/jobs", anyToken(), s.apiListJobs},
 		{"GET /api/jobs/{namespace}/{job}", inNamespace(acl.Read), s.apiGetJob},
@@ -77,12 +77,12 @@ func (s *server) apiEndpoints() []apiEndpoint {
 		{"GET /api/acl/changes", management(), s.apiChanges},
 	}
 	if s.trigger != nil {
-		endpoints = append(endpoints, apiEndpoint{"POST /api/fetch", globally(acl.Fetch), s.apiFetch})
+		endpoints = append(endpoints, route{"POST /api/fetch", globally(acl.Fetch), s.apiFetch})
 	}
 	return endpoints
 }
 
-func (s *server) apiRoutes(mux *http.ServeMux) {
+func (s *server) apiRoutes(mux Router) {
 	for _, e := range s.apiEndpoints() {
 		mux.Handle(e.pattern, s.requireToken(s.guard(e.check, apiForbidden, e.handler)))
 	}

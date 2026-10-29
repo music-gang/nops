@@ -43,7 +43,14 @@ type Authenticator interface {
 	Method() string
 	// Register adds the method's /auth/* routes to mux. When a person has
 	// proved who they are, the method calls host.Done.
-	Register(mux *http.ServeMux, host LoginHost)
+	Register(mux Router, host LoginHost)
+}
+
+// Router is what the routes are registered on: the server's mux, or in a test,
+// a list of the patterns.
+type Router interface {
+	Handle(pattern string, handler http.Handler)
+	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
 }
 
 // LoginHost is what an auth method calls back. The server implements it.
