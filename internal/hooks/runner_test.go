@@ -1,10 +1,10 @@
 package hooks
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"path/filepath"
 	"reflect"
@@ -47,12 +47,14 @@ type fakeNomad struct {
 	jobs   map[string]*api.Job
 	allocs map[string][]nomadx.Alloc
 	tokens map[string]string // idempotency token -> child ID
+	noRoom map[string]string // child ID -> why Nomad can't place it
 
 	dispatches []dispatchCall
 	stopped    []string
 	calls      int // every call, of any method
 
-	jobErr, dispatchErr, allocsErr, stopErr, findErr error
+	jobErr, dispatchErr, allocsErr, stopErr, findErr, noRoomErr error
+	noRoomCalls                                                 int
 }
 
 type dispatchCall struct {
@@ -76,6 +78,7 @@ func newFakeNomad() *fakeNomad {
 		jobs:   map[string]*api.Job{},
 		allocs: map[string][]nomadx.Alloc{},
 		tokens: map[string]string{},
+		noRoom: map[string]string{},
 	}
 }
 
@@ -146,6 +149,18 @@ func (f *fakeNomad) Allocations(_ context.Context, ns, jobID string) ([]nomadx.A
 	return f.allocs[jobID], nil
 }
 
+func (f *fakeNomad) NoRoom(_ context.Context, ns, jobID string) (string, error) {
+	f.calls++
+	f.noRoomCalls++
+	if err := f.check(ns); err != nil {
+		return "", err
+	}
+	if f.noRoomErr != nil {
+		return "", f.noRoomErr
+	}
+	return f.noRoom[jobID], nil
+}
+
 // StopJob marks the child dead and its allocations complete but not desired to run.
 func (f *fakeNomad) StopJob(_ context.Context, ns, id string) error {
 	f.calls++
@@ -184,6 +199,8 @@ type harness struct {
 	// onPoll runs at every wait, after the clock advanced; polls counts them.
 	onPoll func(n int)
 	polls  int
+	// logs is what the runner logged.
+	logs bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -206,7 +223,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.depID = d.ID
 
-	h.runner = New(h.nomad, st, slog.New(slog.NewTextHandler(io.Discard, nil)), testPoll,
+	h.runner = New(h.nomad, st, slog.New(slog.NewTextHandler(&h.logs, nil)), testPoll,
 		WithClock(h.clk.now),
 		WithWait(func(ctx context.Context, d time.Duration) error {
 			if err := ctx.Err(); err != nil {
@@ -374,6 +391,78 @@ func TestRunTimesOut(t *testing.T) {
 	if run := h.hookRun(); run.State != store.HookTimedOut || run.FinishedAt.IsZero() {
 		t.Errorf("stored run = %+v", run)
 	}
+}
+
+// A hook Nomad can't place waits until the timeout: room often frees up. The
+// cause is logged once, when first seen, and ends up in the timeout's error.
+func TestRunTimeoutNamesWhyNoNodeHasRoom(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.noRoom["hook/dispatch-1"] = "no room on 1 node (memory)"
+
+	res := mustRun(t, h.runner, h.request("hook", 10*time.Second))
+	if res.State != store.HookTimedOut || !strings.Contains(res.Error, "timed out after 10s: no room on 1 node (memory); hook run hook/dispatch-1 was stopped") {
+		t.Fatalf("result = %+v", res)
+	}
+	if h.polls < 3 {
+		t.Fatalf("polls = %d, want several", h.polls)
+	}
+	if n := strings.Count(h.logs.String(), "no node has room for it"); n != 1 {
+		t.Errorf("logged the cause %d times over %d polls, want once:\n%s", n, h.polls, h.logs.String())
+	}
+	if !strings.Contains(h.logs.String(), "level=WARN") || !strings.Contains(h.logs.String(), "no room on 1 node (memory)") {
+		t.Errorf("log = %s", h.logs.String())
+	}
+}
+
+// A hook that started has no cause to give, and costs no request for one.
+func TestRunAsksNoRoomOnlyOfAPendingChild(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.noRoom["hook/dispatch-1"] = "no room on 1 node (memory)"
+	h.onPoll = func(n int) {
+		if n == 1 {
+			// The room came: the child runs.
+			h.nomad.jobs["hook/dispatch-1"].Status = ptr("running")
+			h.nomad.allocs["hook/dispatch-1"] = []nomadx.Alloc{{ID: "a1", ClientStatus: "running", DesiredStatus: "run"}}
+			h.nomad.noRoom["hook/dispatch-1"] = ""
+		}
+		h.nomad.noRoomCalls = 0
+	}
+
+	res := mustRun(t, h.runner, h.request("hook", 10*time.Second))
+	if res.State != store.HookTimedOut || strings.Contains(res.Error, "no room") {
+		t.Fatalf("result = %+v, want a plain timeout", res)
+	}
+	if h.nomad.noRoomCalls != 0 {
+		t.Errorf("NoRoom called %d times after the child started", h.nomad.noRoomCalls)
+	}
+}
+
+func TestRunNoRoomErrors(t *testing.T) {
+	t.Run("nomad error is returned and the run stays resumable", func(t *testing.T) {
+		h := newHarness(t)
+		h.addHook("hook", []string{"nops_deployment_id"}, nil)
+		h.nomad.noRoomErr = errors.New("boom")
+
+		_, err := h.runner.Run(context.Background(), h.request("hook", time.Minute))
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("err = %v", err)
+		}
+		if run := h.hookRun(); run.State != store.HookRunning {
+			t.Errorf("stored state = %s, want running", run.State)
+		}
+	})
+	t.Run("child gone", func(t *testing.T) {
+		h := newHarness(t)
+		h.addHook("hook", []string{"nops_deployment_id"}, nil)
+		h.nomad.noRoomErr = fmt.Errorf("evaluations: %w", nomadx.ErrJobNotFound)
+
+		res := mustRun(t, h.runner, h.request("hook", time.Minute))
+		if res.State != store.HookFailed || !strings.Contains(res.Error, "disappeared") {
+			t.Fatalf("result = %+v", res)
+		}
+	})
 }
 
 // A hook that ends right at the deadline is a success: the outcome is read
