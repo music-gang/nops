@@ -27,3 +27,8 @@ into an older one (see
   proxy in front of it does.
 - Plan diffs are redacted before being stored or shown; a secret that reaches
   the database or the HTML is a valid report.
+- Some choices are deliberate and not a vulnerability while their reasoning
+  holds:
+  - With the ACL off, `/metrics` is open to anyone who reaches the port (see
+    [docs/metrics.md](docs/metrics.md#scraping) and
+    [why](https://github.com/music-gang/nops/pull/184)).
