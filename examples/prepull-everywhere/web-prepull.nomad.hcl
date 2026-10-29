@@ -11,8 +11,8 @@
 #
 # A sysbatch job runs once on every eligible node of its datacenters, node
 # pool and constraints: give it the same as the "web" job, or it pulls where
-# the service can't land and skips nodes where it can. A node that fails to
-# pull fails the hook, and so the deployment.
+# the service can't land and skips nodes where it can. A node that still fails
+# to pull after its restarts fails the hook, and so the deployment.
 #
 # Docker's image cache is per node. Each client collects an unused image
 # image_delay (3m by default) after its pull ends: raise it on the clients if
@@ -37,8 +37,11 @@ job "web-prepull" {
   }
 
   group "prepull" {
+    # A registry error is often transient, and one node's fails the whole
+    # deployment: two restarts give it time to pass, within nops_timeout.
     restart {
-      attempts = 0
+      attempts = 2
+      delay    = "15s"
       mode     = "fail"
     }
 
