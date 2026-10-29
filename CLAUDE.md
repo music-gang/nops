@@ -136,6 +136,14 @@ What an audit checks, its verdicts and its scope are in
    shown failing before the fix. The doc-only fixes and the missing tests go in
    one PR.
 
+## Security and operations audit
+
+What the audit checks, its verdicts and its scope are in
+[`docs/development.md#security-and-operations-audit`](docs/development.md#security-and-operations-audit).
+A session runs it like the [doc audit](#doc-audit): report in the session, no
+fix before the answer, each behaviour fix in its own branch with a failing
+test. Each finding names the wall that would close it.
+
 ## Preparing a release
 
 Asked to prepare a release, open the pull request of

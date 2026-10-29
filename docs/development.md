@@ -75,6 +75,30 @@ wrong*, *code wrong?*, *untested*, or *unclear*. The maintainer decides the
 fixes: doc fixes in one pull request, each behaviour fix in its own with a
 failing test first.
 
+## Security and operations audit
+
+Before a minor or major release, review what changed since the last tag for
+how it can be attacked and how it fails. The first audit, before `v1`, covers
+everything. Check against:
+
+- **Security:** the [OWASP ASVS 5.0](https://owasp.org/www-project-application-security-verification-standard/),
+  level 2 for the chapters that apply and level 3 for V8 Authorization and
+  V16 Security Logging. V17 WebRTC doesn't apply.
+- **Operations:** what Nops does when Nomad, git, SQLite, the OIDC provider
+  or the notification webhook refuses, hangs, fails or denies; a backup and a
+  restore, also in the middle of a deployment; whether the logs alone
+  reconstruct a deployment; a `kill -9` in each state.
+
+Report each finding as *vulnerable*, *fragile*, *unguarded* (right today, but
+nothing keeps it so) or *to verify*. The maintainer decides the fixes, each
+behaviour fix in its own pull request with a failing test first. A finding
+closes with the test or lint rule that rules out its whole category, not only
+the one case.
+
+The deliberate decisions are the
+[scope notes of `SECURITY.md`](../SECURITY.md#scope-notes): an audit doesn't
+report them again, but checks that each still holds.
+
 ## When a piece of work is "done"
 
 1. `go build`, `go vet`, `staticcheck`, gosec, `go test -race` and Vale pass.
@@ -158,7 +182,9 @@ Issues use the forms in `.github/ISSUE_TEMPLATE/`: a plain title, the type
 A release is a signed `vX.Y.Z` tag on `main`. Before `v1`, a minor release
 may break things and a patch never does.
 
-1. Make sure `main` is green and the [doc audit](#doc-audit) is done.
+1. Make sure `main` is green and the [doc audit](#doc-audit) is done, and for
+   a minor or major release the
+   [security and operations audit](#security-and-operations-audit).
 2. In a pull request, write the release's section of
    [the changelog](../CHANGELOG.md) and, for a minor or major release, move
    the image tag in [running-nops.md](running-nops.md) to the new `X.Y`. The
