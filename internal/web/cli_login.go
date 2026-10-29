@@ -220,7 +220,7 @@ func (s *server) cliDone(w http.ResponseWriter, r *http.Request) {
 
 // registerCLILogin adds the routes of the command-line login that do not
 // depend on the auth method.
-func (s *server) registerCLILogin(mux *http.ServeMux) {
+func (s *server) registerCLILogin(mux Router) {
 	mux.HandleFunc("GET "+cliInfoPath, s.cliInfo)
 	mux.Handle("POST "+cliTokenPath, s.xorigin.Handler(http.HandlerFunc(s.cliToken)))
 	mux.HandleFunc("GET "+cliDonePath, s.cliDone)

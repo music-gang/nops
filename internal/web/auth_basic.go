@@ -181,7 +181,7 @@ func (b *BasicAuth) Method() string { return "basic" }
 
 // Register adds the local-users route to mux: POST /auth/basic, which the form
 // of the login page posts to.
-func (b *BasicAuth) Register(mux *http.ServeMux, host LoginHost) {
+func (b *BasicAuth) Register(mux Router, host LoginHost) {
 	b.host = host
 	mux.Handle("POST "+basicPath, b.xorigin.Handler(http.HandlerFunc(b.login)))
 	mux.Handle("POST "+cliBasicPath, b.xorigin.Handler(http.HandlerFunc(b.cliLogin)))

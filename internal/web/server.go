@@ -319,9 +319,62 @@ func (s *server) metricsRoute() http.Handler {
 	return s.requireToken(s.guard(globally(acl.Metrics), apiForbidden, s.metrics))
 }
 
+// pageRoutes are the dashboard's routes behind a login, each through page.
+func (s *server) pageRoutes() []route {
+	routes := []route{
+		{"GET /{$}", anyToken(), s.index},
+		{"GET /repositories", anyToken(), s.repositories},
+		{"GET /jobs", anyToken(), s.jobs},
+		{"GET /jobs/{namespace}/{job}", inNamespace(acl.Read), s.job},
+		{"GET /history", anyToken(), s.history},
+		{"GET /drift", anyToken(), s.drift},
+		{"GET /deployments/{id}", onDeployment(acl.Read), s.deployment},
+		{"GET /deployments/{id}/status", onDeployment(acl.Read), s.deploymentStatus},
+		{"POST /deployments/{id}/approve", onDeployment(acl.Approve), s.approve},
+		{"POST /deployments/{id}/reject", onDeployment(acl.Approve), s.reject},
+		{"POST /deployments/{id}/promote", onDeployment(acl.Promote), s.promote},
+		{"POST /deployments/{id}/retry", onDeployment(acl.Retry), s.retry},
+		{"POST /jobs/{namespace}/{job}/pause", inNamespace(acl.Pause), s.pause},
+		{"POST /jobs/{namespace}/{job}/resume", inNamespace(acl.Pause), s.resume},
+		{"POST /jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.deployNow},
+		{"POST /pause", globally(acl.Pause), s.pauseAll},
+		{"POST /resume", globally(acl.Pause), s.resumeAll},
+		{"GET /admin", anyToken(), s.adminPage},
+		{"GET /admin/backup", globally(acl.Backup), s.backupPage},
+		{"POST /admin/backup", globally(acl.Backup), s.backupDownload},
+		{"GET /admin/tokens", management(), s.tokensPage},
+		{"GET /admin/tokens/new", management(), s.newTokenPage},
+		{"GET /admin/policies", management(), s.policiesPage},
+		{"GET /admin/policies/new", management(), s.newPolicyPage},
+		{"GET /admin/policies/{name}/edit", management(), s.policyPage},
+		{"GET /admin/policies/{name}/view", carriesPolicy(), s.policyView},
+		{"GET /admin/binding-rules", management(), s.rulesPage},
+		{"GET /admin/binding-rules/new", management(), s.newRulePage},
+		{"GET /admin/changes", management(), s.changesPage},
+		{"POST /admin/policies", management(), s.savePolicy},
+		{"POST /admin/policies/{name}/delete", management(), s.deletePolicy},
+		{"POST /admin/tokens", management(), s.createTokenForm},
+		{"POST /admin/tokens/{accessor}/revoke", management(), s.revokeTokenForm},
+		{"POST /admin/tokens/revoke", management(), s.revokeTokensForm},
+		{"GET /admin/binding-rules/{id}/edit", management(), s.bindingRulePage},
+		{"POST /admin/binding-rules", management(), s.saveBindingRule},
+		{"POST /admin/binding-rules/{id}/delete", management(), s.deleteBindingRule},
+	}
+	if s.trigger != nil {
+		routes = append(routes, route{"POST /fetch", globally(acl.Fetch), s.fetchNow})
+	}
+	return routes
+}
+
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
+	s.register(mux)
+	return mux
+}
 
+// register adds every route of the server to mux: the open ones by hand, the
+// dashboard's and the API's from their tables, each behind its login.
+func (s *server) register(mux Router) {
 	s.auth.Register(mux, s) // the /auth/* routes of the auth method
 	mux.HandleFunc("GET "+loginPath, s.loginPage)
 	s.registerCLILogin(mux)
@@ -339,50 +392,11 @@ func (s *server) routes() *http.ServeMux {
 	static := http.FileServerFS(s.static)
 	mux.Handle("GET /static/", noStoreExempt(http.StripPrefix("/static/", static)))
 
-	mux.Handle("GET /{$}", s.page(anyToken(), s.index))
-	mux.Handle("GET /repositories", s.page(anyToken(), s.repositories))
-	mux.Handle("GET /jobs", s.page(anyToken(), s.jobs))
-	mux.Handle("GET /jobs/{namespace}/{job}", s.page(inNamespace(acl.Read), s.job))
-	mux.Handle("GET /history", s.page(anyToken(), s.history))
-	mux.Handle("GET /drift", s.page(anyToken(), s.drift))
-	mux.Handle("GET /deployments/{id}", s.page(onDeployment(acl.Read), s.deployment))
-	mux.Handle("GET /deployments/{id}/status", s.page(onDeployment(acl.Read), s.deploymentStatus))
-	mux.Handle("POST /deployments/{id}/approve", s.page(onDeployment(acl.Approve), s.approve))
-	mux.Handle("POST /deployments/{id}/reject", s.page(onDeployment(acl.Approve), s.reject))
-	mux.Handle("POST /deployments/{id}/promote", s.page(onDeployment(acl.Promote), s.promote))
-	mux.Handle("POST /deployments/{id}/retry", s.page(onDeployment(acl.Retry), s.retry))
-	mux.Handle("POST /jobs/{namespace}/{job}/pause", s.page(inNamespace(acl.Pause), s.pause))
-	mux.Handle("POST /jobs/{namespace}/{job}/resume", s.page(inNamespace(acl.Pause), s.resume))
-	mux.Handle("POST /jobs/{namespace}/{job}/deploy-now", s.page(inNamespace(acl.DeployNow), s.deployNow))
-	mux.Handle("POST /pause", s.page(globally(acl.Pause), s.pauseAll))
-	mux.Handle("POST /resume", s.page(globally(acl.Pause), s.resumeAll))
-	if s.trigger != nil {
-		mux.Handle("POST /fetch", s.page(globally(acl.Fetch), s.fetchNow))
+	for _, r := range s.pageRoutes() {
+		mux.Handle(r.pattern, s.page(r.check, r.handler))
 	}
-	mux.Handle("GET /admin", s.page(anyToken(), s.adminPage))
-	mux.Handle("GET /admin/backup", s.page(globally(acl.Backup), s.backupPage))
-	mux.Handle("POST /admin/backup", s.page(globally(acl.Backup), s.backupDownload))
-	mux.Handle("GET /admin/tokens", s.page(management(), s.tokensPage))
-	mux.Handle("GET /admin/tokens/new", s.page(management(), s.newTokenPage))
-	mux.Handle("GET /admin/policies", s.page(management(), s.policiesPage))
-	mux.Handle("GET /admin/policies/new", s.page(management(), s.newPolicyPage))
-	mux.Handle("GET /admin/policies/{name}/edit", s.page(management(), s.policyPage))
-	mux.Handle("GET /admin/policies/{name}/view", s.page(carriesPolicy(), s.policyView))
-	mux.Handle("GET /admin/binding-rules", s.page(management(), s.rulesPage))
-	mux.Handle("GET /admin/binding-rules/new", s.page(management(), s.newRulePage))
-	mux.Handle("GET /admin/changes", s.page(management(), s.changesPage))
-	mux.Handle("POST /admin/policies", s.page(management(), s.savePolicy))
-	mux.Handle("POST /admin/policies/{name}/delete", s.page(management(), s.deletePolicy))
-	mux.Handle("POST /admin/tokens", s.page(management(), s.createTokenForm))
-	mux.Handle("POST /admin/tokens/{accessor}/revoke", s.page(management(), s.revokeTokenForm))
-	mux.Handle("POST /admin/tokens/revoke", s.page(management(), s.revokeTokensForm))
-	mux.Handle("GET /admin/binding-rules/{id}/edit", s.page(management(), s.bindingRulePage))
-	mux.Handle("POST /admin/binding-rules", s.page(management(), s.saveBindingRule))
-	mux.Handle("POST /admin/binding-rules/{id}/delete", s.page(management(), s.deleteBindingRule))
 
 	s.apiRoutes(mux)
-
-	return mux
 }
 
 // healthz never requires a session: it is what an orchestrator or a load
