@@ -157,8 +157,8 @@ type Options struct {
 	// incoming webhook request. Empty disables /webhook/git (a 404).
 	WebhookSecret string
 
-	// Version is the build shown in the dashboard's footer and in the
-	// /healthz body. Optional: empty shows none.
+	// Version is the build shown in the dashboard's footer. Optional: empty
+	// shows none.
 	Version string
 
 	// Metrics serves GET /metrics (internal/metrics). With the ACL on it needs
@@ -386,12 +386,12 @@ func (s *server) routes() *http.ServeMux {
 }
 
 // healthz never requires a session: it is what an orchestrator or a load
-// balancer probes. The body names the build ("ok v0.1.0"), so a probe or a
-// person can tell which release answers; a probe only reads the status.
+// balancer probes. The body names no build: with the ACL on, a request
+// without a token would learn which release runs.
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, strings.TrimSpace("ok "+s.version))
+	fmt.Fprintln(w, "ok")
 }
 
 // noStoreExempt serves static assets with a cacheable header instead of the
