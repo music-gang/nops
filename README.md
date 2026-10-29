@@ -65,7 +65,7 @@ see the [hooks guide](docs/hooks.md) and the [examples](examples/).
 
 ## Nomad compatibility
 
-Nops is tested against **Nomad 2.1.0** and **Nomad 2.0.7**, the latest patch
+Nops is tested against **Nomad 2.1.1** and **Nomad 2.0.7**, the latest patch
 of the two most recent Nomad minor releases. Other patches of those minor
 releases should work. Support for a Nomad minor release ends only in a minor
 release of Nops.

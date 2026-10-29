@@ -129,8 +129,8 @@ jobs:
         # (docs/development.md#nomad-version): the one place they are set. The
         # README names them too (a test in docs/ compares the two).
         nomad:
-          - version: "2.1.0"
-            sha256: f7329569ccf047897ac905d05d557ca8eb5f8f28e1e7cbc2e7c73241e64c4f37
+          - version: "2.1.1"
+            sha256: 073084f7690fdaea756ff1eff8b669b25c3a6c17778f19ae0c47606973ed3f39
           - version: "2.0.7"
             sha256: 4c9b8a0850d6fd9caadbbab09b3e6fdf8b77aa777729543c70c61b85acca68c1
     env:
