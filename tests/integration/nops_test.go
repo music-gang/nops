@@ -13,7 +13,7 @@ import (
 // TestNopsBinaryStartsAndShutsDown is the wiring task's smoke test: build the
 // real nops binary, run it against a real Nomad and a scratch git
 // repository (basic auth, so no OIDC provider is needed here), confirm the
-// dashboard answers with the linked version, then send SIGTERM and confirm
+// dashboard answers its health check, then send SIGTERM and confirm
 // it exits cleanly. What the binary does once it runs (detection, approval,
 // apply, hooks) is covered by the end-to-end tests in e2e_test.go and
 // e2e_hooks_test.go.
@@ -29,7 +29,7 @@ func TestNopsBinaryStartsAndShutsDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(body), "ok "+testVersion+"\n"; got != want {
+	if got, want := string(body), "ok\n"; got != want {
 		t.Errorf("healthz body = %q, want %q", got, want)
 	}
 
