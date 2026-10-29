@@ -40,7 +40,8 @@ in another namespace counts as missing.
 
 - **The exit code is the outcome.** A failed or lost allocation fails the
   hook. All allocations complete means success.
-- **Fail fast.** Turn off Nomad's retries, Nops decides them:
+- **Fail fast.** Turn off Nomad's retries: a failed hook fails the
+  deployment, and a person retries it.
 
     ```hcl
     restart {
@@ -52,6 +53,9 @@ in another namespace counts as missing.
       unlimited = false
     }
     ```
+
+    A hook whose failures are often transient, like an image pull, may keep
+    a few restarts: its timeout still bounds them.
 
     A `sysbatch` hook takes only `restart`: Nomad refuses a `reschedule`
     block on it.
