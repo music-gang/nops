@@ -70,6 +70,10 @@ A `sysbatch` hook runs once on every eligible node and fails if one of them
 fails. Give it the target's `datacenters`, `node_pool` and constraints, or it
 runs where the target can't land and skips nodes where it can.
 
+A hook that no node has room for waits until its timeout, since room often
+frees up while an apply stops the old allocations. Its error then names the
+resource that ran out.
+
 ## Hook revisions
 
 A deployment runs its hooks as they were when Nops created it: approving a

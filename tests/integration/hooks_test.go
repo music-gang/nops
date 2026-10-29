@@ -397,3 +397,33 @@ func TestHookRunSysbatchOnNoNodeFails(t *testing.T) {
 		t.Errorf("took %s for a hook that runs nowhere", elapsed)
 	}
 }
+
+// A hook no node has room for stays pending: Nomad blocks its evaluation. The
+// run waits for the timeout, and says what ran out.
+func TestHookRunWithNoRoomNamesTheCauseAtTimeout(t *testing.T) {
+	const memory = `      resources {
+        memory = 9000000
+      }
+`
+	for name, hcl := range map[string]func(id string) string{
+		"batch": func(id string) string {
+			return strings.Replace(hookCmdHCL(id, "true", true), "      config {", memory+"      config {", 1)
+		},
+		"sysbatch": func(id string) string {
+			return strings.Replace(hookSysbatchHCL(id, "true", ""), "      config {", memory+"      config {", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newHookEnvFor(t, hcl)
+
+			res := e.run(t, 5*time.Second)
+			if res.State != store.HookTimedOut {
+				t.Fatalf("result = %+v", res)
+			}
+			t.Logf("timeout message: %s", res.Error)
+			if !strings.Contains(res.Error, "no room on 1 node (memory)") {
+				t.Errorf("error %q does not name the exhausted resource", res.Error)
+			}
+		})
+	}
+}

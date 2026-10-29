@@ -333,6 +333,8 @@ func (f *fakeHookNomad) Allocations(_ context.Context, _, jobID string) ([]nomad
 	return []nomadx.Alloc{{ID: "alloc-1", ClientStatus: f.childStatus, DesiredStatus: "run"}}, nil
 }
 
+func (f *fakeHookNomad) NoRoom(context.Context, string, string) (string, error) { return "", nil }
+
 func (f *fakeHookNomad) StopJob(context.Context, string, string) error { return nil }
 
 // A pre-hook whose run was saved as running, but whose dispatched job ID never
