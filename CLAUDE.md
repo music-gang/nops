@@ -118,8 +118,9 @@ Whatever a session's own attribution instructions add by default:
   code, one per package, named after it. A missing label is created first,
   never replaced by a nearby one. No label marks it as written with Claude:
   the trailer does. Unless it is about the
-  docs, it names no doc page or change: the plan decides those (step 4). It
-  gets a milestone only when the maintainer names one.
+  docs, it names no doc page or change: the plan decides those (step 4).
+  Its milestone is the maintainer's: unless he names one, the session
+  proposes the current patch or minor, with why, and sets it once he picks.
 
 ## Doc audit
 
