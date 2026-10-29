@@ -427,3 +427,40 @@ func TestHookRunWithNoRoomNamesTheCauseAtTimeout(t *testing.T) {
 		})
 	}
 }
+
+// A hook that keeps restarts is not failed by a restart: Nomad keeps the
+// allocation running between attempts. A transient failure ends in success,
+// and a hook that never succeeds ends at its timeout.
+func TestHookRunWithRestartsIsBoundedByTheTimeout(t *testing.T) {
+	const restart = `    restart {
+      attempts = 3
+      interval = "1h"
+      delay    = "1s"
+      mode     = "delay"
+    }`
+	withRestarts := func(cmd string) func(id string) string {
+		return func(id string) string {
+			return strings.Replace(hookCmdHCL(id, cmd, true), `    restart {
+      attempts = 0
+      mode     = "fail"
+    }`, restart, 1)
+		}
+	}
+
+	t.Run("transient failure", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "failed-once")
+		e := newHookEnvFor(t, withRestarts(fmt.Sprintf("test -e %[1]s || { touch %[1]s; exit 1; }", marker)))
+
+		if res := e.run(t, 60*time.Second); res.State != store.HookSucceeded {
+			t.Fatalf("result = %+v, want succeeded after a restart", res)
+		}
+	})
+
+	t.Run("never succeeds", func(t *testing.T) {
+		e := newHookEnvFor(t, withRestarts("exit 1"))
+
+		if res := e.run(t, 8*time.Second); res.State != store.HookTimedOut {
+			t.Fatalf("result = %+v, want timed out", res)
+		}
+	})
+}
