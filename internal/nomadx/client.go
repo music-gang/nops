@@ -341,6 +341,68 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 	return out, nil
 }
 
+// NoRoom says why Nomad can't place part of a job for lack of resources, from
+// its blocked evaluations: "no room on 1 node (memory)". It is "" when no
+// evaluation is blocked or none exhausted a node. A job with several groups
+// that fail names each one.
+func (c *Client) NoRoom(ctx context.Context, ns, jobID string) (string, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return "", fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+	}
+	evals, _, err := c.jobs.Evaluations(jobID, q)
+	if err != nil {
+		if isNotFound(err) {
+			return "", fmt.Errorf("evaluations of job %s: %w", jobID, ErrJobNotFound)
+		}
+		return "", fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+	}
+	// The metric of each group, from its latest blocked evaluation.
+	failed := map[string]*api.AllocationMetric{}
+	for _, e := range evals {
+		if e.Status != "blocked" {
+			continue
+		}
+		for group, m := range e.FailedTGAllocs {
+			if m != nil && m.NodesExhausted > 0 {
+				failed[group] = m
+			}
+		}
+	}
+	groups := make([]string, 0, len(failed))
+	for g := range failed {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+	parts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		msg := noRoomMessage(failed[g])
+		if len(groups) > 1 {
+			msg = fmt.Sprintf("group %q: %s", g, msg)
+		}
+		parts = append(parts, msg)
+	}
+	return strings.Join(parts, "; "), nil
+}
+
+// noRoomMessage describes a metric that exhausted at least one node.
+func noRoomMessage(m *api.AllocationMetric) string {
+	nodes := "nodes"
+	if m.NodesExhausted == 1 {
+		nodes = "node"
+	}
+	msg := fmt.Sprintf("no room on %d %s", m.NodesExhausted, nodes)
+	dims := make([]string, 0, len(m.DimensionExhausted))
+	for d := range m.DimensionExhausted {
+		dims = append(dims, d)
+	}
+	sort.Strings(dims)
+	if len(dims) > 0 {
+		msg += " (" + strings.Join(dims, ", ") + ")"
+	}
+	return msg
+}
+
 // LatestDeployment returns the Nomad deployment currently tracking jobID, or
 // nil if the job has none (a batch job, or an update stanza that produces
 // none): Nomad answers with an empty body rather than a 404 in that case.

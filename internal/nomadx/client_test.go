@@ -132,6 +132,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 		"job":         func(c *Client) error { _, err := c.Job(ctx, "", "web"); return err },
 		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, ""); return err },
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "", "web"); return err },
+		"no room":     func(c *Client) error { _, err := c.NoRoom(ctx, "", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "", "web") },
 		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "", "dep-1") },
@@ -442,6 +443,53 @@ func TestAllocations(t *testing.T) {
 	}
 	_, c = newStub(t, 500, "boom")
 	if _, err := c.Allocations(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
+func TestNoRoom(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"no evaluation", `[]`, ""},
+		{"only a blocked evaluation counts", `[
+		  {"Status":"complete","FailedTGAllocs":{"g":{"NodesExhausted":1,"DimensionExhausted":{"cpu":1}}}},
+		  {"Status":"blocked","FailedTGAllocs":{"g":{"NodesExhausted":1,"DimensionExhausted":{"memory":1}}}}]`,
+			"no room on 1 node (memory)"},
+		{"several nodes and dimensions", `[{"Status":"blocked","FailedTGAllocs":{"g":{"NodesExhausted":3,"DimensionExhausted":{"memory":2,"cpu":1}}}}]`,
+			"no room on 3 nodes (cpu, memory)"},
+		{"no dimension named", `[{"Status":"blocked","FailedTGAllocs":{"g":{"NodesExhausted":2}}}]`, "no room on 2 nodes"},
+		{"several groups", `[{"Status":"blocked","FailedTGAllocs":{
+		  "b":{"NodesExhausted":1,"DimensionExhausted":{"cpu":1}},
+		  "a":{"NodesExhausted":1,"DimensionExhausted":{"memory":1}}}}]`,
+			`group "a": no room on 1 node (memory); group "b": no room on 1 node (cpu)`},
+		{"blocked but nothing exhausted", `[{"Status":"blocked","FailedTGAllocs":{"g":{"NodesEvaluated":1,"NodesFiltered":1}}}]`, ""},
+		{"blocked without a metric", `[{"Status":"blocked","FailedTGAllocs":{"g":null}}]`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, c := newStub(t, 200, tt.body)
+			got, err := c.NoRoom(context.Background(), "default", "hook/dispatch-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("NoRoom = %q, want %q", got, tt.want)
+			}
+			if s.path != "/v1/job/hook/dispatch-1/evaluations" || s.query["namespace"][0] != "default" {
+				t.Errorf("request = %s %v", s.path, s.query)
+			}
+		})
+	}
+
+	_, c := newStub(t, 404, "job not found")
+	if _, err := c.NoRoom(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("404: err = %v, want ErrJobNotFound", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.NoRoom(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }

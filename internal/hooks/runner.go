@@ -27,6 +27,7 @@ type Nomad interface {
 	Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*nomadx.DispatchResult, error)
 	FindDispatched(ctx context.Context, ns, parentID, idempotencyToken string) (string, error)
 	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
+	NoRoom(ctx context.Context, ns, jobID string) (string, error)
 	StopJob(ctx context.Context, ns, id string) error
 }
 
@@ -289,6 +290,8 @@ func (r *Runner) await(ctx context.Context, log *slog.Logger, ns string, run *st
 			"hook run %s disappeared from Nomad (garbage-collected or purged) before nops saw its outcome; the outcome is unknown, so it is not dispatched again",
 			run.DispatchedJobID))
 	}
+	// cause is why Nomad can't place the hook, while it can't.
+	cause := ""
 	for {
 		child, err := r.nomad.Job(ctx, ns, run.DispatchedJobID)
 		if errors.Is(err, nomadx.ErrJobNotFound) {
@@ -307,6 +310,17 @@ func (r *Runner) await(ctx context.Context, log *slog.Logger, ns string, run *st
 
 		expired := !r.now().Before(deadline)
 		v, msg := evaluate(child, allocs)
+		if v == verdictRunning {
+			// Nomad leaves a job it can't place pending. A hook that runs costs no
+			// extra request.
+			cause, err = r.noRoom(ctx, log, ns, run, child, cause)
+			if errors.Is(err, nomadx.ErrJobNotFound) {
+				return gone()
+			}
+			if err != nil {
+				return Result{}, err
+			}
+		}
 		switch {
 		case v == verdictSucceeded:
 			return r.finish(ctx, log, run, store.HookSucceeded, "")
@@ -320,11 +334,32 @@ func (r *Runner) await(ctx context.Context, log *slog.Logger, ns string, run *st
 			if err := r.nomad.StopJob(ctx, ns, run.DispatchedJobID); err != nil {
 				return Result{}, err
 			}
+			why := ""
+			if cause != "" {
+				why = cause + "; "
+			}
 			return r.finish(ctx, log, run, store.HookTimedOut, fmt.Sprintf(
-				"timed out after %s: hook run %s was stopped", run.Timeout, run.DispatchedJobID))
+				"timed out after %s: %shook run %s was stopped", run.Timeout, why, run.DispatchedJobID))
 		}
 		if err := r.wait(ctx, r.poll); err != nil {
 			return Result{}, err
 		}
 	}
+}
+
+// noRoom returns why Nomad can't place the pending child, given what the
+// previous poll found. It logs the cause when it first appears, and returns ""
+// for a child that is not pending.
+func (r *Runner) noRoom(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun, child *api.Job, prev string) (string, error) {
+	if child.Status == nil || *child.Status != "pending" {
+		return "", nil
+	}
+	cause, err := r.nomad.NoRoom(ctx, ns, run.DispatchedJobID)
+	if err != nil {
+		return "", err
+	}
+	if cause != "" && prev == "" {
+		log.Warn("hook waits: no node has room for it", "hook_job_run", run.DispatchedJobID, "cause", cause)
+	}
+	return cause, nil
 }
