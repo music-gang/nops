@@ -196,10 +196,11 @@ may break things and a patch never does.
    what to do; *Upgrade notes* hold the numbered steps of an upgrade that
    takes several. Each item says what changes for someone running Nops,
    with its pull request.
-3. Run `scripts/release.sh`. It lists the commits since the last tag,
-   suggests a version, then signs and pushes the tag. `--dry-run` only shows
-   the suggestion.
-4. Ship risky changes as a release candidate first (`v0.2.0-rc.1`).
+3. Run `scripts/release.sh`. It takes the version from the first section of
+   the changelog and shows the section. Once you confirm, it signs and pushes
+   the tag. `--dry-run` only shows what it would tag.
+4. Ship risky changes as a release candidate first: `scripts/release.sh --rc`
+   tags the next `vX.Y.Z-rc.N` of the section's version.
 5. Check the result:
    `docker run --rm ghcr.io/music-gang/nops:0.2.0 -version`.
 6. Never move or delete a tag: fix forward with a patch release.

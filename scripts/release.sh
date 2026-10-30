@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Cut a release: list what landed on origin/main since the last tag, suggest a
-# version, let the maintainer choose, then sign and push the tag. The `release`
+# Cut a release: tag the version of the first section of CHANGELOG.md on
+# origin/main, show the section, then sign and push the tag. The `release`
 # workflow does the rest (docs/development.md#releasing).
 #
 #   scripts/release.sh             interactive
+#   scripts/release.sh --rc        tag the next release candidate of that version
 #   scripts/release.sh --dry-run   preview only: no prompt, no tag, no push
 #
 # Needs git and gh (logged in), and a GPG key in `user.signingkey`.
@@ -251,6 +252,21 @@ changelog_section() {
   done
 }
 
+# changelog_version: reads CHANGELOG.md on stdin and prints the text of its
+# first `## ` heading, the version of the release it writes. Prints nothing
+# when there is no such heading.
+changelog_version() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      '## '*)
+        printf '%s\n' "${line#\#\# }"
+        return 0
+        ;;
+    esac
+  done
+}
+
 # absolute_links <url>: reads Markdown on stdin and puts <url>/ before each
 # relative link target, read from the root of the repository: a GitHub
 # Release would resolve it against its own page.
@@ -294,74 +310,10 @@ problem() {
   fi
 }
 
-# print_group <title> <class> <file>: the commits of one class, if any.
-print_group() {
-  local title=$1 class=$2 file=$3 hash subject printed=0
-  while IFS="$(printf '\t')" read -r hash subject; do
-    if [ "$(classify "$subject")" = "$class" ]; then
-      if [ $printed = 0 ]; then
-        echo
-        paint 1 1 "$title"
-        printed=1
-      fi
-      printf '  %s  %s\n' "$hash" "$subject"
-    fi
-  done <"$file"
-}
-
 # ci_problems <sha>: one line per check run of the commit that is not green.
 ci_problems() {
   gh api --paginate "repos/{owner}/{repo}/commits/$1/check-runs" \
     --jq '.check_runs[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | "\(.name): \(.status) \(.conclusion // "")"'
-}
-
-# choose_version <last> <suggested-kind>: asks, prints the chosen tag.
-choose_version() {
-  local last=$1 kind=$2
-  local patch minor major suggested rc default choice custom
-  patch=$(bump_version "$last" patch)
-  minor=$(bump_version "$last" minor)
-  major=$(bump_version "$last" major)
-  case $kind in
-    patch) suggested=$patch default=1 ;;
-    minor) suggested=$minor default=2 ;;
-    major) suggested=$major default=3 ;;
-  esac
-  rc=$(git tag -l "$suggested-rc.*" | next_rc "$suggested")
-
-  {
-    echo
-    paint 2 1 "Which version? (suggested: $suggested)"
-    echo "  1) patch   $patch"
-    echo "  2) minor   $minor"
-    echo "  3) major   $major"
-    echo "  4) rc      $rc"
-    echo "  5) custom"
-  } >&2
-
-  while true; do
-    read -r -p "Choice [$default]: " choice
-    choice=${choice:-$default}
-    case $choice in
-      1) echo "$patch"; return ;;
-      2) echo "$minor"; return ;;
-      3) echo "$major"; return ;;
-      4) echo "$rc"; return ;;
-      5)
-        read -r -p "Version (vX.Y.Z or vX.Y.Z-rc.N): " custom
-        case $custom in v*) ;; *) custom=v$custom ;; esac
-        if ! is_semver "$custom"; then
-          paint 2 31 "not a semver version: $custom" >&2
-        elif [ "$last" != v0.0.0 ] && ! semver_gt "$custom" "$last"; then
-          paint 2 31 "$custom is not higher than $last" >&2
-        else
-          echo "$custom"
-          return
-        fi
-        ;;
-      *) paint 2 31 "type 1-5" >&2 ;;
-    esac
-  done
 }
 
 # check_image_tag <last> <tag> <sha>: a new minor (or major) release needs the
@@ -403,18 +355,22 @@ usage() {
 main() {
   set -euo pipefail
   dry_run=0
-  case ${1:-} in
-    '') ;;
-    -n | --dry-run) dry_run=1 ;;
-    -h | --help)
-      usage
-      return 0
-      ;;
-    *)
-      usage >&2
-      return 2
-      ;;
-  esac
+  local rc=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -n | --dry-run) dry_run=1 ;;
+      --rc) rc=1 ;;
+      -h | --help)
+        usage
+        return 0
+        ;;
+      *)
+        usage >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
 
   command -v git >/dev/null || die "git is not installed"
   command -v gh >/dev/null || die "gh is not installed (https://cli.github.com)"
@@ -440,7 +396,7 @@ main() {
   commits=$(mktemp)
   # shellcheck disable=SC2064
   trap "rm -f '$commits'" EXIT
-  git log --reverse --format='%h%x09%s' "$range" >"$commits"
+  git log --reverse --format='  %h  %s' "$range" >"$commits"
   if [ ! -s "$commits" ]; then
     echo "Nothing to release: origin/main ($(git rev-parse --short "$sha")) is $last."
     return 0
@@ -448,11 +404,7 @@ main() {
 
   echo "origin/main is $(git rev-parse --short "$sha"), last release is $last."
   echo "$(wc -l <"$commits" | tr -d ' ') commit(s) since $last:"
-  print_group "Breaking changes" breaking "$commits"
-  print_group "Features" feat "$commits"
-  print_group "Fixes" fix "$commits"
-  print_group "Changes" change "$commits"
-  print_group "Other (not in a release candidate's notes)" other "$commits"
+  cat "$commits"
   echo
 
   # A release candidate's notes start with the same text; a final release's
@@ -482,20 +434,47 @@ main() {
   note "reminder: audit the docs for what changed since $last (docs/development.md#doc-audit):"
   note "  git diff --stat $range -- '*.md' cmd internal scripts examples .github"
 
-  local kind suggested
-  kind=$(cut -f2 "$commits" | suggest_bump "$last")
-  suggested=$(bump_version "$last" "$kind")
-
   if [ -z "$(git config --get user.signingkey || true)" ]; then
     problem "git config user.signingkey is not set: the tag has to be signed"
   fi
 
-  local tag
+  # The version is the changelog's: the first section is the release's.
+  local version
+  version=$(git show "$sha:CHANGELOG.md" 2>/dev/null | changelog_version) ||
+    die "could not read CHANGELOG.md on $sha"
+  if [ -z "$version" ]; then
+    die "CHANGELOG.md has no '## vX.Y.Z' section: add it in a pull request first"
+  fi
+  if ! is_semver "$version" || [[ $version == *-* ]]; then
+    die "the first section of CHANGELOG.md is '## $version', not '## vX.Y.Z': fix it in a pull request first"
+  fi
+  if [ "$last" != v0.0.0 ] && ! semver_gt "$version" "$last"; then
+    die "the first section of CHANGELOG.md is $version, not above $last: write the section of the release in a pull request first"
+  fi
+
+  local tag=$version
+  if [ "$rc" = 1 ]; then
+    tag=$(git tag -l "$version-rc.*" | next_rc "$version")
+  fi
+  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
+    [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
+    problem "$tag already exists (tags are never moved or recreated)"
+  fi
+  check_image_tag "$last" "$tag" "$sha"
+  check_changelog "$tag" "$sha" "$notes"
+
+  if [ "$rc" = 1 ]; then
+    echo "A release candidate's notes are generated from the commits."
+  else
+    paint 1 1 "Release notes, the $version section of CHANGELOG.md:"
+    echo
+    git show "$sha:CHANGELOG.md" | changelog_section "$version"
+  fi
+
+  echo
+  echo "Tag $tag on $sha"
+  echo "  $(git log -1 --format='%h %s' "$sha")"
   if [ "$dry_run" = 1 ]; then
-    tag=$suggested
-    paint 1 '1;32' "Suggested version: $tag ($kind)"
-    check_image_tag "$last" "$tag" "$sha"
-    check_changelog "$tag" "$sha" "$notes"
     echo
     echo "Dry run: nothing was tagged. A release would run:"
     echo "  git tag -s $tag -m $tag $sha"
@@ -503,19 +482,8 @@ main() {
     return 0
   fi
 
-  tag=$(choose_version "$last" "$kind")
-  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
-    [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
-    die "$tag already exists (tags are never moved or recreated: pick another version)"
-  fi
-  check_image_tag "$last" "$tag" "$sha"
-  check_changelog "$tag" "$sha" "$notes"
-
-  echo
-  echo "Tag $tag on $sha"
-  echo "  $(git log -1 --format='%h %s' "$sha")"
   local answer
-  read -r -p "Sign and push? [y/N] " answer
+  read -r -p "Sign and push $tag? [y/N] " answer
   case $answer in y | Y | yes) ;; *) die "aborted, nothing was tagged" ;; esac
 
   git tag -s "$tag" -m "$tag" "$sha"
