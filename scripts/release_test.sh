@@ -219,6 +219,14 @@ check section-exact-heading '' "$(printf '%s' "$changelog" | changelog_section v
 check section-no-final-newline '- x' "$(printf '## v1.0.0\n\n- x' | changelog_section v1.0.0)"
 check section-empty '' "$(printf '## v1.0.0\n\n## v0.9.0\n- x\n' | changelog_section v1.0.0)"
 
+# changelog_version
+check version-first v0.3.0 "$(printf '%s' "$changelog" | changelog_version)"
+check version-skips-intro v1.0.0 "$(printf '# Changelog\n\n## v1.0.0\n\n## v0.9.0\n' | changelog_version)"
+check version-none '' "$(printf '# Changelog\n\nIntro.\n\n### Fixes\n' | changelog_version)"
+check version-empty '' "$(printf '' | changelog_version)"
+check version-not-a-version 'Unreleased' "$(printf '## Unreleased\n\n## v0.9.0\n' | changelog_version)"
+check version-no-final-newline v0.4.0 "$(printf '## v0.4.0' | changelog_version)"
+
 # absolute_links
 base=https://github.com/o/r/blob/v1.0.0
 check links-relative "- [lists]($base/docs/api.md#lists), [up]($base/CHANGELOG.md)" \
