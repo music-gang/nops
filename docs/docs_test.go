@@ -286,6 +286,8 @@ var agentWords = regexp.MustCompile(`(?i)\bclaude\b|\bassistants?\b|\bAI\b|\bLLM
 // file for agents, talks about or to an AI agent: the docs describe Nops and
 // how anyone contributes, and what only an agent needs lives in CLAUDE.md.
 // It reads words, not tone: a written rule alone kept being broken.
+// The README's "How it's built" says to people that Nops is built with AI,
+// so the test skips it.
 func TestDocsSpeakToPeople(t *testing.T) {
 	for _, page := range markdownPages(t) {
 		name := filepath.ToSlash(strings.TrimPrefix(page, ".."+string(filepath.Separator)))
@@ -296,7 +298,14 @@ func TestDocsSpeakToPeople(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		section := ""
 		for n, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "## ") {
+				section = line
+			}
+			if name == "README.md" && section == "## How it's built" {
+				continue
+			}
 			// A product, not an assistant: one of the notification targets.
 			line = strings.ReplaceAll(line, "Home Assistant", "")
 			if w := agentWords.FindString(line); w != "" {

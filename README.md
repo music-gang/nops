@@ -23,6 +23,15 @@ that run before or after a deployment.
 **Try it:** [getting started](docs/getting-started.md) takes about fifteen
 minutes on one machine.
 
+## How it's built
+
+<!-- vale Google.FirstPerson = NO -->
+I needed Nops quickly, so I made it an experiment: a project where my role
+is the planner's and the rest is delegated to AI. I decide what gets built
+and how; I review and merge each pull request and sign each release. Claude
+writes the code and the docs, tests included.
+<!-- vale Google.FirstPerson = YES -->
+
 ## How it works
 
 1. Nops reads the job files from git and has Nomad parse them.
