@@ -41,6 +41,9 @@ type Nomad interface {
 	// applied job version is healthy (see docs/archive/engine-apply.md).
 	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
 	LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error)
+	// UnfinishedEvaluation tells apply whether Nomad may still reschedule a
+	// failed or lost allocation that names no replacement yet.
+	UnfinishedEvaluation(ctx context.Context, ns, jobID string) (bool, error)
 	// PromoteDeployment is used by Promote (see docs/archive/engine-apply.md,
 	// decision 11).
 	PromoteDeployment(ctx context.Context, ns, deploymentID string) error

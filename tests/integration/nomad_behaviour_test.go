@@ -8,8 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -572,5 +576,280 @@ func TestRegisterWithoutSourceAtTheNextVersion(t *testing.T) {
 	}
 	if sub := submissionOf(t, raw, id, *got.Version); sub != nil {
 		t.Errorf("v%d registered at the live version plus one has source %+v, want none", *got.Version, sub)
+	}
+}
+
+// serviceUpdateHCL is a raw_exec service with the given update block ("" for
+// none). tag is what a second register changes.
+func serviceUpdateHCL(id, update, tag string) string {
+	return fmt.Sprintf(`
+job %q {
+  type = "service"
+%s
+  group "g" {
+    count = 1
+    task "t" {
+      driver = "raw_exec"
+      env {
+        TAG = %q
+      }
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }
+}`, id, update, tag)
+}
+
+// TestWhichServiceRegistersGetANomadDeployment settles which service jobs take
+// the allocations path of apply health: those whose register gets no Nomad
+// deployment tracking its index. A service without an update block takes
+// Nomad's default rolling update, so its registers get one; max_parallel = 0
+// turns rolling updates off, and with them the deployments.
+func TestWhichServiceRegistersGetANomadDeployment(t *testing.T) {
+	for _, tc := range []struct {
+		name, update   string
+		wantDeployment bool
+	}{
+		{"no update block", "", true},
+		{"max_parallel = 0", "  update {\n    max_parallel = 0\n  }", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, raw := newClient(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			id := uniqueID(t, raw, "svcdep")
+
+			var index uint64
+			for _, tag := range []string{"one", "two"} {
+				job, err := c.ParseHCL(ctx, "default", serviceUpdateHCL(id, tc.update, tag), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.RegisterCAS(ctx, job, index, false, nil); err != nil {
+					t.Fatalf("register %s: %v", tag, err)
+				}
+				live, err := c.Job(ctx, "default", id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				index = *live.JobModifyIndex
+
+				// The scheduler has run once the version has an allocation; the
+				// deployment, if any, is created by the same evaluation.
+				deadline := time.Now().Add(30 * time.Second)
+				for {
+					allocs, err := c.Allocations(ctx, "default", id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					placed := false
+					for _, a := range allocs {
+						placed = placed || a.JobVersion == *live.Version
+					}
+					if placed {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("%s: no allocation of version %d", tag, *live.Version)
+					}
+					time.Sleep(200 * time.Millisecond)
+				}
+				dep, err := c.LatestDeployment(ctx, "default", id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tracks := dep != nil && dep.JobModifyIndex == index
+				if tracks != tc.wantDeployment {
+					t.Errorf("%s: Nomad deployment tracking index %d = %v (latest %+v), want %v", tag, index, tracks, dep, tc.wantDeployment)
+				}
+			}
+		})
+	}
+}
+
+// startClient runs a second Nomad client, named name, against the leader of
+// the agent under test, and returns its node ID once it is ready. The client is
+// killed and its node purged when the test ends.
+func startClient(t *testing.T, raw *api.Client, name string) (nodeID string, kill func()) {
+	t.Helper()
+	leader, err := raw.Status().Leader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cfg := fmt.Sprintf(`
+name      = %[1]q
+data_dir  = %[2]q
+bind_addr = "127.0.0.1"
+ports {
+  http = %[3]d
+  rpc  = %[4]d
+  serf = %[5]d
+}
+advertise {
+  http = "127.0.0.1:%[3]d"
+  rpc  = "127.0.0.1:%[4]d"
+  serf = "127.0.0.1:%[5]d"
+}
+client {
+  enabled      = true
+  servers      = [%[6]q]
+  no_host_uuid = true
+}
+plugin "raw_exec" {
+  config {
+    enabled = true
+  }
+}
+`, name, filepath.Join(dir, "data"), freePort(t), freePort(t), freePort(t), leader)
+	cfgPath := filepath.Join(dir, "client.hcl")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logFile, err := os.Create(filepath.Join(dir, "client.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("nomad", "agent", "-config", cfgPath)
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	// Its own process group, so the kill takes its executors with it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start a second Nomad client: %v", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	kill = func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-exited
+		exited <- nil // a second kill returns at once
+	}
+	t.Cleanup(func() {
+		kill()
+		// The executors of its tasks leave the group and outlive the client:
+		// their command lines name its data directory.
+		_ = exec.Command("pkill", "-KILL", "-f", dir).Run()
+		logFile.Close()
+		if nodeID != "" {
+			_, _, _ = raw.Nodes().Purge(nodeID, nil)
+		}
+	})
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		nodes, _, err := raw.Nodes().List(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range nodes {
+			if n.Name == name && n.Status == api.NodeStatusReady {
+				return n.ID, kill
+			}
+		}
+		select {
+		case err := <-exited:
+			exited <- err
+			log, _ := os.ReadFile(logFile.Name())
+			t.Fatalf("the second client exited (%v):\n%s", err, log)
+		default:
+		}
+		if time.Now().After(deadline) {
+			log, _ := os.ReadFile(logFile.Name())
+			t.Fatalf("the second client did not join in time:\n%s", log)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// TestALostAllocationNamesItsReplacement settles what apply health reads of a
+// lost allocation: when its node goes down, Nomad places a replacement on
+// another node and records it as the lost allocation's NextAllocation.
+func TestALostAllocationNamesItsReplacement(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	id := uniqueID(t, raw, "lost")
+	nodeName := id + "-node"
+	nodeID, kill := startClient(t, raw, nodeName)
+
+	// No rolling update, so no Nomad deployment: the allocations path of apply
+	// health. The affinity puts the allocation on the node that goes away. The
+	// task of the killed client outlives it (raw_exec gives it a process group
+	// of its own), so it sleeps no longer than the test needs.
+	hcl := fmt.Sprintf(`
+job %q {
+  type = "service"
+  update {
+    max_parallel = 0
+  }
+  group "g" {
+    count = 1
+    affinity {
+      attribute = "${node.unique.name}"
+      value     = %q
+      weight    = 100
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 60"]
+      }
+    }
+  }
+}`, id, nodeName)
+	job, err := c.ParseHCL(ctx, "default", hcl, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// waitAlloc waits for an allocation that ok accepts.
+	waitAlloc := func(what string, timeout time.Duration, ok func(*api.AllocationListStub) bool) *api.AllocationListStub {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for {
+			stubs, _, err := raw.Jobs().Allocations(id, true, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range stubs {
+				if ok(s) {
+					return s
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no allocation %s in %s: %+v", what, timeout, stubs)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	first := waitAlloc("running on the second node", 60*time.Second, func(s *api.AllocationListStub) bool {
+		return s.ClientStatus == "running"
+	})
+	if first.NodeID != nodeID {
+		t.Fatalf("setup: the allocation runs on node %s, want the second client %s", first.NodeName, nodeName)
+	}
+
+	kill()
+
+	lost := waitAlloc("lost", 2*time.Minute, func(s *api.AllocationListStub) bool {
+		return s.ID == first.ID && s.ClientStatus == "lost"
+	})
+	if lost.NextAllocation == "" {
+		// Nomad may record the replacement a moment after the loss.
+		lost = waitAlloc("lost with a replacement", 30*time.Second, func(s *api.AllocationListStub) bool {
+			return s.ID == first.ID && s.NextAllocation != ""
+		})
+	}
+	replacement := waitAlloc("replacing the lost one", 60*time.Second, func(s *api.AllocationListStub) bool {
+		return s.ID == lost.NextAllocation && s.ClientStatus == "running"
+	})
+	if replacement.NodeID == nodeID || replacement.JobVersion != lost.JobVersion {
+		t.Errorf("replacement = node %s version %d, want another node and version %d", replacement.NodeName, replacement.JobVersion, lost.JobVersion)
 	}
 }

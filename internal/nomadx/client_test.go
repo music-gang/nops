@@ -99,6 +99,7 @@ func TestNamespaceIsPerCall(t *testing.T) {
 		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, "apps"); return err },
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "apps", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "apps", "web"); return err },
+		"evaluations": func(c *Client) error { _, err := c.UnfinishedEvaluation(ctx, "apps", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "apps", "web") },
 		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "apps", "dep-1") },
 		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "apps", "hook", nil, ""); return err },
@@ -133,6 +134,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, ""); return err },
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "", "web"); return err },
 		"no room":     func(c *Client) error { _, err := c.NoRoom(ctx, "", "web"); return err },
+		"evaluations": func(c *Client) error { _, err := c.UnfinishedEvaluation(ctx, "", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "", "web") },
 		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "", "dep-1") },
@@ -404,7 +406,7 @@ func TestDispatchRefused(t *testing.T) {
 func TestAllocations(t *testing.T) {
 	const body = `[
 	  {"ID":"a1","JobVersion":3,"ClientStatus":"complete","DesiredStatus":"run"},
-	  {"ID":"a2","ClientStatus":"failed","DesiredStatus":"run","ClientDescription":"Failed tasks",
+	  {"ID":"a2","ClientStatus":"failed","DesiredStatus":"run","ClientDescription":"Failed tasks","FollowupEvalID":"e9",
 	   "TaskStates":{
 	     "z":{"Failed":false,"Events":[{"Type":"Terminated","DisplayMessage":"ignored"}]},
 	     "t":{"Failed":true,"Events":[{"Type":"Started","DisplayMessage":"Task started"},
@@ -413,7 +415,7 @@ func TestAllocations(t *testing.T) {
 	     "b":{"Failed":true,"Events":[{"Type":"Driver Failure"}]},
 	     "n":{"Failed":true,"Events":[{"Type":"Received","DisplayMessage":"Task received by client"},
 	                                  {"Type":"Killed","DisplayMessage":"Task successfully killed"}]}}},
-	  {"ID":"a3","ClientStatus":"lost","DesiredStatus":"stop","ClientDescription":"Client lost"}
+	  {"ID":"a3","ClientStatus":"lost","DesiredStatus":"stop","ClientDescription":"Client lost","NextAllocation":"a4"}
 	]`
 	s, c := newStub(t, 200, body)
 	got, err := c.Allocations(context.Background(), "default", "hook/dispatch-1")
@@ -425,8 +427,8 @@ func TestAllocations(t *testing.T) {
 	}
 	want := []Alloc{
 		{ID: "a1", JobVersion: 3, ClientStatus: "complete", DesiredStatus: "run"},
-		{ID: "a2", ClientStatus: "failed", DesiredStatus: "run", Failure: "Failed tasks; task b: Driver Failure; task n: Task successfully killed; task t: Exit Code: 1"},
-		{ID: "a3", ClientStatus: "lost", DesiredStatus: "stop", Failure: "Client lost"},
+		{ID: "a2", ClientStatus: "failed", DesiredStatus: "run", Failure: "Failed tasks; task b: Driver Failure; task n: Task successfully killed; task t: Exit Code: 1", FollowupEvalID: "e9"},
+		{ID: "a3", ClientStatus: "lost", DesiredStatus: "stop", Failure: "Client lost", NextAllocation: "a4"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d allocs, want %d: %+v", len(got), len(want), got)
@@ -490,6 +492,41 @@ func TestNoRoom(t *testing.T) {
 	}
 	_, c = newStub(t, 500, "boom")
 	if _, err := c.NoRoom(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
+func TestUnfinishedEvaluation(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"no evaluation", `[]`, false},
+		{"all finished", `[{"Status":"complete"},{"Status":"failed"},{"Status":"canceled"}]`, false},
+		{"one pending", `[{"Status":"complete"},{"Status":"pending"}]`, true},
+		{"one blocked", `[{"Status":"blocked"}]`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, c := newStub(t, 200, tt.body)
+			got, err := c.UnfinishedEvaluation(context.Background(), "default", "web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("UnfinishedEvaluation = %v, want %v", got, tt.want)
+			}
+			if s.path != "/v1/job/web/evaluations" || s.query["namespace"][0] != "default" {
+				t.Errorf("request = %s %v", s.path, s.query)
+			}
+		})
+	}
+
+	_, c := newStub(t, 404, "job not found")
+	if _, err := c.UnfinishedEvaluation(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("404: err = %v, want ErrJobNotFound", err)
+	}
+	_, c = newStub(t, 500, "boom")
+	if _, err := c.UnfinishedEvaluation(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }
