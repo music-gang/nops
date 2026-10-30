@@ -658,6 +658,99 @@ func TestStepHealthAllocationsPathFailedAlloc(t *testing.T) {
 	}
 }
 
+// Without a Nomad deployment, a failed or lost allocation is what Nomad makes
+// of it: one it replaced counts through its replacement, one it will
+// reschedule is waited for, and one it gave up on fails the apply.
+func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
+	failed := nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "failed", DesiredStatus: "run", Failure: "exit code 1"}
+	for _, tc := range []struct {
+		name       string
+		allocs     []nomadx.Alloc
+		unfinished bool
+		evalErr    error
+		want       store.State
+		message    string // of the transition, when it moves
+	}{
+		{
+			name: "lost and replaced by a running one",
+			allocs: []nomadx.Alloc{
+				{ID: "a1", JobVersion: 3, ClientStatus: "lost", DesiredStatus: "stop", Failure: "alloc is lost since its node is down", NextAllocation: "a2"},
+				{ID: "a2", JobVersion: 3, ClientStatus: "running", DesiredStatus: "run"},
+			},
+			want: store.StateCompleted, message: "healthy after Nomad replaced 1 failed or lost allocation",
+		},
+		{
+			name:   "failed, rescheduled after a delay",
+			allocs: []nomadx.Alloc{withFollowup(failed, "e2")},
+			want:   store.StateApplying,
+		},
+		{
+			name:       "failed, Nomad has yet to evaluate it",
+			allocs:     []nomadx.Alloc{failed},
+			unfinished: true,
+			want:       store.StateApplying,
+		},
+		{
+			name:    "failed, the evaluations can't be read",
+			allocs:  []nomadx.Alloc{failed},
+			evalErr: errors.New("nomad is unreachable"),
+			want:    store.StateApplying,
+		},
+		{
+			name:   "failed, Nomad gave up on it",
+			allocs: []nomadx.Alloc{failed},
+			want:   store.StateFailed, message: "apply did not become healthy: exit code 1",
+		},
+		{
+			name: "the replacement failed too, and Nomad gave up",
+			allocs: []nomadx.Alloc{
+				withNext(failed, "a2"),
+				{ID: "a2", JobVersion: 3, ClientStatus: "failed", DesiredStatus: "run", Failure: "exit code 2"},
+			},
+			want: store.StateFailed, message: "apply did not become healthy: exit code 2",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			job := managed("web", "auto", nil)
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			h.nomad.setAllocs("web", tc.allocs...)
+			h.nomad.unfinished["web"] = tc.unfinished
+			if tc.evalErr != nil {
+				h.nomad.unfinishedErr["web"] = tc.evalErr
+			}
+
+			h.step(d)
+
+			got := h.get(d.ID)
+			if got.State != tc.want {
+				t.Fatalf("state = %s (%s), want %s", got.State, got.Error, tc.want)
+			}
+			if tc.message == "" {
+				return
+			}
+			evs, err := h.store.Events(context.Background(), d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if last := evs[len(evs)-1]; last.To != tc.want || last.Message != tc.message {
+				t.Errorf("last event = %s %q, want %s %q", last.To, last.Message, tc.want, tc.message)
+			}
+		})
+	}
+}
+
+func withNext(a nomadx.Alloc, next string) nomadx.Alloc {
+	a.NextAllocation = next
+	return a
+}
+
+func withFollowup(a nomadx.Alloc, eval string) nomadx.Alloc {
+	a.FollowupEvalID = eval
+	return a
+}
+
 // The live job moved on after our register (an outside edit, e.g. while nops
 // was down) and no Nomad deployment tracks our index: its allocations are not
 // ours, so health must fail instead of reading them.

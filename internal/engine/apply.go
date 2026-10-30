@@ -517,7 +517,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 		if len(meta.Parse(job.Meta).PostHooks) > 0 {
 			next = store.StatePostHook
 		}
-		e.applyTransition(ctx, log, d, next, "")
+		e.applyTransition(ctx, log, d, next, reason)
 	case healthAwaitingPromotion:
 		e.awaitPromotion(ctx, log, d)
 	case healthPromoted:
@@ -583,7 +583,8 @@ const (
 // its Nomad deployment when there is one tracking exactly that apply, else
 // via the allocations of that job version (a batch job, or an update stanza
 // that produces no Nomad deployment). healthWaiting means neither healthy nor
-// failed; reason says why for healthFailed.
+// failed; reason says why for healthFailed, and for healthHealthy how many
+// allocations Nomad replaced on the way, if any.
 //
 // A live index that moved after the register while a fresh plan of the
 // deployment's spec, with the live counts of the groups with a scaling block,
@@ -655,15 +656,48 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	if len(ours) == 0 {
 		return healthWaiting, "", nil // scheduling not done yet
 	}
-	for _, a := range ours {
-		if a.ClientStatus == "failed" || a.ClientStatus == "lost" {
-			return healthFailed, a.Failure, nil
+	// A failed or lost allocation is what Nomad makes of it: replaced, its
+	// replacement counts in its place; rescheduled after a delay, it is waited
+	// for; neither, it fails the apply once Nomad has no evaluation left that
+	// could still reschedule it.
+	var replaced, rescheduling int
+	var down *nomadx.Alloc
+	for i, a := range ours {
+		if a.ClientStatus != "failed" && a.ClientStatus != "lost" {
+			continue
+		}
+		switch {
+		case a.NextAllocation != "":
+			replaced++
+		case a.FollowupEvalID != "":
+			rescheduling++
+		case down == nil:
+			down = &ours[i]
 		}
 	}
+	if down != nil {
+		unfinished, err := e.nomad.UnfinishedEvaluation(ctx, d.Namespace, d.JobID)
+		if err != nil {
+			return healthWaiting, "", err
+		}
+		if !unfinished {
+			return healthFailed, down.Failure, nil
+		}
+		return healthWaiting, "", nil // Nomad has yet to decide on it
+	}
+	if rescheduling > 0 {
+		return healthWaiting, "", nil
+	}
 	for _, a := range ours {
-		if a.ClientStatus != "running" && a.ClientStatus != "complete" {
+		if a.NextAllocation == "" && a.ClientStatus != "running" && a.ClientStatus != "complete" {
 			return healthWaiting, "", nil // still starting
 		}
+	}
+	switch {
+	case replaced == 1:
+		return healthHealthy, "healthy after Nomad replaced 1 failed or lost allocation", nil
+	case replaced > 1:
+		return healthHealthy, fmt.Sprintf("healthy after Nomad replaced %d failed or lost allocations", replaced), nil
 	}
 	return healthHealthy, "", nil
 }

@@ -308,6 +308,12 @@ type Alloc struct {
 	Healthy *bool
 	// Canary is set for a canary of a Nomad deployment.
 	Canary bool
+	// NextAllocation is the allocation Nomad placed to replace this one, after
+	// a reschedule or a lost node. Empty while there is none.
+	NextAllocation string
+	// FollowupEvalID is the evaluation that reschedules this allocation once
+	// its reschedule delay has passed. Empty when none is waiting.
+	FollowupEvalID string
 }
 
 // Allocations lists every allocation of a job, including finished ones.
@@ -326,12 +332,14 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 	out := make([]Alloc, 0, len(stubs))
 	for _, s := range stubs {
 		a := Alloc{
-			ID:            s.ID,
-			JobVersion:    s.JobVersion,
-			ClientStatus:  s.ClientStatus,
-			DesiredStatus: s.DesiredStatus,
-			Failure:       failure(s),
-			TaskGroup:     s.TaskGroup,
+			ID:             s.ID,
+			JobVersion:     s.JobVersion,
+			ClientStatus:   s.ClientStatus,
+			DesiredStatus:  s.DesiredStatus,
+			Failure:        failure(s),
+			TaskGroup:      s.TaskGroup,
+			NextAllocation: s.NextAllocation,
+			FollowupEvalID: s.FollowupEvalID,
 		}
 		if ds := s.DeploymentStatus; ds != nil {
 			a.Healthy, a.Canary = ds.Healthy, ds.Canary
@@ -339,6 +347,30 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// UnfinishedEvaluation reports whether Nomad has an evaluation of the job it
+// hasn't finished: pending, or blocked until there is room to place it.
+func (c *Client) UnfinishedEvaluation(ctx context.Context, ns, jobID string) (bool, error) {
+	q, err := c.query(ctx, ns)
+	if err != nil {
+		return false, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+	}
+	evals, _, err := c.jobs.Evaluations(jobID, q)
+	if err != nil {
+		if isNotFound(err) {
+			return false, fmt.Errorf("evaluations of job %s: %w", jobID, ErrJobNotFound)
+		}
+		return false, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+	}
+	for _, e := range evals {
+		switch e.Status {
+		case api.EvalStatusComplete, api.EvalStatusFailed, api.EvalStatusCancelled:
+		default:
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // NoRoom says why Nomad can't place part of a job for lack of resources, from
