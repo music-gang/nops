@@ -331,12 +331,12 @@ func TestOverviewCycleProblems(t *testing.T) {
 	t.Run("degraded", func(t *testing.T) {
 		ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Managed: 5, Skipped: 2, Unparsed: 1}}, "")
 		page := ts.get("/")
-		mustContain(t, page, "degraded", "2 jobs were skipped", "Nomad failed on them", "1 file in the repository could not be parsed", "5 managed jobs")
+		mustContain(t, page, "degraded", "couldn't read or plan 2 jobs in Nomad", `href="/jobs?state=nomad-error"`, "1 file in the repository could not be parsed", "5 managed jobs")
 		mustNotContain(t, page, "aborted")
 	})
 	t.Run("one of each is singular", func(t *testing.T) {
 		ts := newTestServer(t, &fakeStore{}, &fakeEngine{status: engine.Status{At: testNow, Managed: 1, Skipped: 1, Unparsed: 1}}, "")
-		mustContain(t, ts.get("/"), "1 managed job", "1 job was skipped", "1 file in the repository could not be parsed by Nomad and is ignored")
+		mustContain(t, ts.get("/"), "1 managed job", "couldn't read or plan 1 job in Nomad", "1 file in the repository could not be parsed by Nomad and is ignored")
 	})
 }
 
@@ -447,6 +447,8 @@ func TestJobSync(t *testing.T) {
 		{"invalid beats blocked", engine.Observation{Issues: errIssue, BlockedBy: "x"}, nil, syncInvalid},
 		{"blocked beats pending", engine.Observation{BlockedBy: "x"}, st(store.StatePendingApproval), syncBlocked},
 		{"pending beats drift", engine.Observation{Drift: true}, st(store.StatePendingApproval), syncPending},
+		{"a Nomad error beats pending and a pause", engine.Observation{NomadError: "plan job: x", Hold: &engine.Hold{Kind: engine.HoldPaused}}, st(store.StatePendingApproval), syncNomad},
+		{"invalid beats a Nomad error", engine.Observation{Issues: errIssue, NomadError: "plan job: x"}, nil, syncInvalid},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := jobSync(c.obs, c.latest); got != c.want {
@@ -1291,4 +1293,28 @@ func TestReviewOfARetryWithNothingToRegister(t *testing.T) {
 	page := newTestServer(t, st, &fakeEngine{}, "").get("/deployments/d1")
 	mustContain(t, page, "Wait for the new version to become healthy.", "Run the post-hook")
 	mustNotContain(t, page, "Run the pre-hook", "Update the job in Nomad", "Create the job in Nomad")
+}
+
+// A job Nomad couldn't read or plan in the last cycle shows as such, with the
+// error, on Jobs, behind its filter and on its page.
+func TestJobsPageShowsANomadError(t *testing.T) {
+	const nomadErr = "plan job: Unexpected response code: 500"
+	pending := dep("d1", "web", store.StatePendingApproval, time.Hour)
+	st := &fakeStore{latest: []*store.Deployment{pending}, byJob: []*store.Deployment{pending}, active: []*store.Deployment{pending}}
+	en := &fakeEngine{observations: []engine.Observation{
+		{JobID: "api", Namespace: "default", Policy: meta.PolicyApproval, FilePath: "api.nomad.hcl"},
+		{JobID: "web", Namespace: "default", Policy: meta.PolicyApproval, FilePath: "web.nomad.hcl", NomadError: nomadErr},
+	}}
+	ts := newTestServer(t, st, en, "")
+
+	page := ts.get("/jobs")
+	mustContain(t, page, `href="/jobs/default/web"`, "Nomad error", nomadErr, `href="/jobs?state=nomad-error"`)
+	mustNotContain(t, page, "not in the repository")
+
+	page = ts.get("/jobs?state=nomad-error")
+	mustContain(t, page, `href="/jobs/default/web"`)
+	mustNotContain(t, page, `href="/jobs/default/api"`)
+
+	page = ts.get("/jobs/default/web")
+	mustContain(t, page, "Nomad error", nomadErr, "web.nomad.hcl", `href="/deployments/d1"`)
 }

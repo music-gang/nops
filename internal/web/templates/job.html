@@ -55,6 +55,13 @@
 </section>
 {{end}}
 
+{{if .NomadError}}
+<section class="flash flash--error">
+  <strong>Nomad error.</strong> The last cycle couldn't read or plan this job in Nomad: {{.NomadError}}.
+  Nothing can be approved, retried or deployed now until a cycle can.
+</section>
+{{end}}
+
 {{if .Blocked}}
 <section class="flash flash--error flash--action">
   <div>

@@ -17,9 +17,10 @@ var ErrNotDeployable = errors.New("the job cannot be deployed outside its sync w
 // DeployNowable reports whether DeployNow would take the job o observes, whose
 // latest deployment is latest (nil if it never had one): a closed sync window
 // holds it, it drifts, nothing blocks it and no deployment is active. A pause
-// is the hold of a paused job, so a paused job is never deployable.
+// is the hold of a paused job, so a paused job is never deployable, and neither
+// is one Nomad couldn't plan: its drift is unknown.
 func DeployNowable(o Observation, latest *store.Deployment) bool {
-	if o.Hold == nil || o.Hold.Kind != HoldWindow || !o.Drift || o.BlockedBy != "" {
+	if o.Hold == nil || o.Hold.Kind != HoldWindow || !o.Drift || o.BlockedBy != "" || o.NomadError != "" {
 		return false
 	}
 	return latest == nil || !latest.State.IsActive()

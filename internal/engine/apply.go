@@ -27,6 +27,11 @@ var ErrStaleApproval = errors.New("approval no longer matches the deployment's c
 // would register a spec git no longer asks for.
 var ErrNotInRepo = errors.New("the job is not in the repository as of the last detection cycle")
 
+// ErrNomadError is returned by Approve when the last detection cycle could not
+// read or plan the deployment's job in Nomad: nothing confirms that the diff
+// approved is still the one to apply. The error that follows says what failed.
+var ErrNomadError = errors.New("Nomad couldn't read or plan the job in the last detection cycle")
+
 // RunApply runs the apply loop: every EngineInterval it picks up every
 // non-terminal deployment and advances it by one step, one goroutine per
 // deployment, until ctx is done. See docs/archive/engine-apply.md.
@@ -817,7 +822,9 @@ func neverHasAllocations(job *api.Job) bool {
 // current one (invariant 3), or if its job is not among the managed jobs of the
 // last detection cycle (ErrNotInRepo): a broken file elsewhere suspends the
 // removal of a job's deployments, so the deployment of a job git no longer has
-// can still be pending, and approving it would register that job. It also
+// can still be pending, and approving it would register that job. It refuses
+// (ErrNomadError) while the last cycle could not read or plan the job in Nomad:
+// nothing checked the deployment against git and the live job. It also
 // refuses (ErrPaused) while the job is paused: the deployment stays
 // pending_approval and can be approved once the job is resumed.
 func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -834,8 +841,12 @@ func (e *Engine) Approve(ctx context.Context, id, specHash, actor string) error 
 	if d.SpecHash != specHash {
 		return fmt.Errorf("approve %s: %w", id, ErrStaleApproval)
 	}
-	if !e.observed(d.Namespace, d.JobID) {
+	obs, ok := e.observation(jobKey{d.Namespace, d.JobID})
+	if !ok {
 		return fmt.Errorf("approve %s: %w", id, ErrNotInRepo)
+	}
+	if obs.NomadError != "" {
+		return fmt.Errorf("approve %s: %w: %s", id, ErrNomadError, obs.NomadError)
 	}
 	hold, err := e.pauseOf(ctx, d.Namespace, d.JobID)
 	if err != nil {

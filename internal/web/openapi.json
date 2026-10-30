@@ -709,9 +709,10 @@
           "policy": { "type": "string", "enum": ["auto", "approval", "none"] },
           "sync": {
             "type": "string",
-            "description": "The sync state of the job: invalid, paused, blocked, orphan, pending, deploying, held, drift, or sync. Empty for a job gone from git and from Nomad."
+            "description": "The sync state of the job: invalid, nomad-error, paused, blocked, orphan, pending, deploying, held, drift, or sync. Empty for a job gone from git and from Nomad."
           },
           "drift": { "type": "boolean" },
+          "nomad_error": { "type": "string", "description": "What failed in Nomad when the last detection cycle read or planned the job. Empty when Nomad answered." },
           "spec_hash": { "type": "string", "description": "What a deployment of the job would have now: the hash Deploy now asks for." },
           "blocked_by": { "type": "string" },
           "hold": { "$ref": "#/components/schemas/Hold" },

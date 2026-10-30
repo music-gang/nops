@@ -309,6 +309,7 @@ func TestAPIAnswersWhatTheEngineRefuses(t *testing.T) {
 		{"approve, spec changed", "/api/deployments/d1/approve", `{"spec_hash":"old"}`, func(e *fakeEngine, err error) { e.approveErr = err }, wrapped(engine.ErrStaleApproval), 409},
 		{"approve, job paused", "/api/deployments/d1/approve", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.approveErr = err }, wrapped(engine.ErrPaused), 409},
 		{"approve, not in git", "/api/deployments/d1/approve", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.approveErr = err }, wrapped(engine.ErrNotInRepo), 409},
+		{"approve, Nomad error", "/api/deployments/d1/approve", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.approveErr = err }, wrapped(engine.ErrNomadError), 409},
 		{"approve, unknown", "/api/deployments/d1/approve", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.approveErr = err }, wrapped(store.ErrNotFound), 404},
 		{"approve, store down", "/api/deployments/d1/approve", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.approveErr = err }, errors.New("disk on fire"), 500},
 		{"reject, unknown", "/api/deployments/d1/reject", "", func(e *fakeEngine, err error) { e.rejectErr = err }, store.ErrNotFound, 404},

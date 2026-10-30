@@ -27,18 +27,19 @@ const jobHistoryLimit = 50
 type syncKey string
 
 const (
-	syncInvalid   syncKey = "invalid"   // its meta has an error: nops ignores its policy and hooks
-	syncPaused    syncKey = "paused"    // a person paused it: nops starts no deployment for it
-	syncBlocked   syncKey = "blocked"   // a failed or rejected deployment holds its drift back
-	syncOrphan    syncKey = "orphan"    // deployed by nops, gone from git, still running in Nomad
-	syncPending   syncKey = "pending"   // a deployment waits for a human decision
-	syncDeploying syncKey = "deploying" // a deployment is on its way (detected, hooks, apply)
-	syncHeld      syncKey = "held"      // it drifts, and its sync window is closed: nops deploys it when it opens
-	syncDrift     syncKey = "drift"     // the cluster differs from git and nothing is being done
-	syncInSync    syncKey = "sync"      // the cluster is what git says
+	syncInvalid   syncKey = "invalid"     // its meta has an error: nops ignores its policy and hooks
+	syncNomad     syncKey = "nomad-error" // the last cycle could not read or plan it in Nomad
+	syncPaused    syncKey = "paused"      // a person paused it: nops starts no deployment for it
+	syncBlocked   syncKey = "blocked"     // a failed or rejected deployment holds its drift back
+	syncOrphan    syncKey = "orphan"      // deployed by nops, gone from git, still running in Nomad
+	syncPending   syncKey = "pending"     // a deployment waits for a human decision
+	syncDeploying syncKey = "deploying"   // a deployment is on its way (detected, hooks, apply)
+	syncHeld      syncKey = "held"        // it drifts, and its sync window is closed: nops deploys it when it opens
+	syncDrift     syncKey = "drift"       // the cluster differs from git and nothing is being done
+	syncInSync    syncKey = "sync"        // the cluster is what git says
 )
 
-var syncOrder = []syncKey{syncInvalid, syncPaused, syncBlocked, syncOrphan, syncPending, syncDeploying, syncHeld, syncDrift, syncInSync}
+var syncOrder = []syncKey{syncInvalid, syncNomad, syncPaused, syncBlocked, syncOrphan, syncPending, syncDeploying, syncHeld, syncDrift, syncInSync}
 
 // valid reports whether k is one of the sync states.
 func (k syncKey) valid() bool {
@@ -54,6 +55,8 @@ func (k syncKey) label() string {
 	switch k {
 	case syncInvalid:
 		return "Invalid meta"
+	case syncNomad:
+		return "Nomad error"
 	case syncPaused:
 		return "Paused"
 	case syncBlocked:
@@ -76,7 +79,7 @@ func (k syncKey) label() string {
 // class is the palette color of the state (the same five as a deployment's).
 func (k syncKey) class() string {
 	switch k {
-	case syncInvalid, syncBlocked:
+	case syncInvalid, syncNomad, syncBlocked:
 		return "state-failed"
 	case syncPending, syncDrift, syncOrphan, syncPaused, syncHeld:
 		return "state-pending"
@@ -94,6 +97,10 @@ func jobSync(o engine.Observation, latest *store.Deployment) syncKey {
 		if iss.Severity == meta.SeverityError {
 			return syncInvalid
 		}
+	}
+	// Without a plan, nothing below can be told: neither the drift nor a block.
+	if o.NomadError != "" {
+		return syncNomad
 	}
 	// A pause is a person's decision that holds everything below it, so it says
 	// so whether or not the job drifts: a forgotten one must show.
@@ -160,8 +167,11 @@ func (s *server) jobRow(o engine.Observation, latest *store.Deployment) jobRow {
 		Policy: o.Policy, Sync: k, SyncLabel: k.label(), SyncClass: k.class(),
 		BlockedReason: o.BlockedReason, File: o.FilePath, Observed: s.when(o.ObservedAt),
 	}
-	if k == syncPaused || k == syncHeld {
+	switch k {
+	case syncPaused, syncHeld:
 		row.BlockedReason = o.Hold.Reason
+	case syncNomad:
+		row.BlockedReason = o.NomadError
 	}
 	if latest != nil {
 		c := s.card(latest)
@@ -429,6 +439,7 @@ type jobData struct {
 	Observed                timeView
 	PreHooks, PostHooks     []hookView  // in the order they run
 	Orphan                  *orphanView // set when the job is gone from git but still runs in Nomad
+	NomadError              string      // what failed in Nomad in the last cycle, if anything
 	Blocked                 bool
 	BlockedReason           string
 	BlockedBy               string
@@ -531,6 +542,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		data.Sync, data.SyncLabel, data.SyncClass = k, k.label(), k.class()
 		data.File, data.Observed = obs.Repository+": "+obs.FilePath, s.when(obs.ObservedAt)
 		data.PreHooks, data.PostHooks = hooksOf(obs.PreHooks), hooksOf(obs.PostHooks)
+		data.NomadError = obs.NomadError
 		data.Blocked, data.BlockedBy, data.BlockedReason = obs.BlockedBy != "", obs.BlockedBy, obs.BlockedReason
 		if data.Blocked && allows(r, ns, acl.Retry) {
 			data.RetryPath = s.retryPath(obs.BlockedBy)

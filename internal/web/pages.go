@@ -434,11 +434,13 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, approve bool) {
 		http.Redirect(w, r, s.basePath+"/deployments/"+id, http.StatusSeeOther)
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
-	case errors.Is(err, engine.ErrStaleApproval), errors.Is(err, engine.ErrNotInRepo), errors.Is(err, engine.ErrPaused):
+	case errors.Is(err, engine.ErrStaleApproval), errors.Is(err, engine.ErrNotInRepo), errors.Is(err, engine.ErrNomadError), errors.Is(err, engine.ErrPaused):
 		notice := "The spec changed since this page loaded: review the new diff before deciding."
 		switch {
 		case errors.Is(err, engine.ErrNotInRepo):
 			notice = "This job is not in the repository as nops last read it (removed, refused by its repository's jobs, or its file does not parse): there is nothing to approve until it is back. You can still reject it."
+		case errors.Is(err, engine.ErrNomadError):
+			notice = "The last cycle couldn't read or plan this job in Nomad: approve it once a cycle can. You can still reject it."
 		case errors.Is(err, engine.ErrPaused):
 			notice = "This job is paused: resume it to approve. You can still reject it."
 		}

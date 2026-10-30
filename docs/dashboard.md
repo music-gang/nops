@@ -51,6 +51,7 @@ Where a job stands against git. The first state that applies wins.
 | State | Meaning |
 |---|---|
 | **Invalid meta** | A `nops_*` key has an error: Nops ignores the job's policy and hooks. |
+| **Nomad error** | The last cycle couldn't read or plan the job in Nomad. Nops shows why, and doesn't approve, retry or deploy it now until a cycle can. |
 | **Paused** | Someone [paused](deployment-lifecycle.md#holding-a-job) the job: Nops starts no deployment for it. |
 | **Blocked** | A failed or rejected deployment holds the drift back until a retry or a new commit. |
 | **Not in git** | An [orphan](architecture.md#orphan-jobs): deployed by Nops, removed from git, still running. |

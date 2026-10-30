@@ -85,6 +85,8 @@ func TestCollect(t *testing.T) {
 			{Namespace: "infra", JobID: "typo", Policy: meta.PolicyNone, Issues: []meta.Issue{{Severity: meta.SeverityError}, {Severity: meta.SeverityWarn}}},
 			// An unknown key is a warning: the policy stands.
 			{Namespace: "infra", JobID: "extra", Policy: meta.PolicyAuto, Issues: []meta.Issue{{Severity: meta.SeverityWarn}}},
+			// Nomad couldn't plan it: its drift and block are unknown, so they have no series.
+			{Namespace: "apps", JobID: "api", Policy: meta.PolicyApproval, NomadError: "plan job: nomad is unreachable"},
 		},
 		// The pause of every job holds each job, and is not the pause of any.
 		paused: &engine.Hold{Kind: engine.HoldPaused, All: true},
@@ -128,6 +130,7 @@ nops_job_drift{job="typo",namespace="infra"} 0
 nops_job_drift{job="web",namespace="apps"} 1
 # HELP nops_job_info Always 1, one per managed job of the last detection cycle; the policy label is its effective policy.
 # TYPE nops_job_info gauge
+nops_job_info{job="api",namespace="apps",policy="approval"} 1
 nops_job_info{job="db",namespace="apps",policy="approval"} 1
 nops_job_info{job="extra",namespace="infra",policy="auto"} 1
 nops_job_info{job="proxy",namespace="infra",policy="auto"} 1
@@ -135,6 +138,7 @@ nops_job_info{job="typo",namespace="infra",policy="none"} 1
 nops_job_info{job="web",namespace="apps",policy="auto"} 1
 # HELP nops_job_invalid_meta 1 if a nops_* meta key of the job has an invalid value, so nops reads its policy as none.
 # TYPE nops_job_invalid_meta gauge
+nops_job_invalid_meta{job="api",namespace="apps"} 0
 nops_job_invalid_meta{job="db",namespace="apps"} 0
 nops_job_invalid_meta{job="extra",namespace="infra"} 0
 nops_job_invalid_meta{job="proxy",namespace="infra"} 0
@@ -142,6 +146,7 @@ nops_job_invalid_meta{job="typo",namespace="infra"} 1
 nops_job_invalid_meta{job="web",namespace="apps"} 0
 # HELP nops_job_paused 1 if a person paused the job.
 # TYPE nops_job_paused gauge
+nops_job_paused{job="api",namespace="apps"} 0
 nops_job_paused{job="db",namespace="apps"} 1
 nops_job_paused{job="extra",namespace="infra"} 0
 nops_job_paused{job="proxy",namespace="infra"} 0

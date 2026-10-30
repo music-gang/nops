@@ -678,6 +678,20 @@ func TestApproveOfAJobThatIsNotInGitConflict(t *testing.T) {
 	}
 }
 
+func TestApproveOfAJobNomadCouldNotPlanConflict(t *testing.T) {
+	st := &fakeStore{deployment: sampleDeployment()}
+	en := &fakeEngine{approveErr: fmt.Errorf("approve d1: %w: plan job: boom", engine.ErrNomadError)}
+	ts := newTestServer(t, st, en, "")
+	cookie := ts.session("alice")
+
+	rec := ts.do("POST", "/deployments/d1/approve", formBody(url.Values{"spec_hash": {"spec-hash-1"}}), cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "read or plan this job in Nomad", "reject")
+	mustNotContain(t, rec.Body.String(), "not in the repository", "spec changed")
+}
+
 func TestApproveNotFound(t *testing.T) {
 	st := &fakeStore{deployment: sampleDeployment()}
 	en := &fakeEngine{approveErr: store.ErrNotFound}
