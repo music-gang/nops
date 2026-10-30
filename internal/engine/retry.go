@@ -20,15 +20,16 @@ var ErrNotRetryable = errors.New("the deployment cannot be retried")
 // latest deployment is latest (nil if unknown): it is failed or rejected, not
 // retried yet, the latest of its job, and still the head, that is the job's
 // spec in git now is its spec (anything else would be a rollback). The job must
-// still be one nops deploys, and there must be something to run: drift, or a
-// deployment that failed after its register.
+// still be one nops deploys, the last cycle must have planned it, and there
+// must be something to run: drift, or a deployment that failed after its
+// register.
 func (e *Engine) Retryable(d, latest *store.Deployment) bool {
 	if latest == nil || latest.ID != d.ID || !d.RetriedAt.IsZero() ||
 		(d.State != store.StateFailed && d.State != store.StateRejected) {
 		return false
 	}
 	obs, ok := e.observation(jobKey{d.Namespace, d.JobID})
-	if !ok || obs.Policy == meta.PolicyNone || obs.SpecHash != d.SpecHash {
+	if !ok || obs.NomadError != "" || obs.Policy == meta.PolicyNone || obs.SpecHash != d.SpecHash {
 		return false
 	}
 	return obs.Drift || d.AppliedIndex != 0

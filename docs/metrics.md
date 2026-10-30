@@ -52,9 +52,9 @@ at the bare path.
 | `nops_orphan_jobs` | | [Orphans](architecture.md#orphan-jobs): removed from git, still running. |
 | `nops_paused` | | 1 if someone paused every job. |
 | `nops_job_info` | `namespace`, `job`, `policy` | Always 1, one per managed job. |
-| `nops_job_drift` | `namespace`, `job` | 1 if the job differs from git. |
+| `nops_job_drift` | `namespace`, `job` | 1 if the job differs from git. No series while the job is in Nomad error. |
 | `nops_job_paused` | `namespace`, `job` | 1 if someone paused the job. |
-| `nops_job_blocked` | `namespace`, `job` | 1 if a failed or rejected deployment blocks the job. |
+| `nops_job_blocked` | `namespace`, `job` | 1 if a failed or rejected deployment blocks the job. No series while the job is in Nomad error. |
 | `nops_job_invalid_meta` | `namespace`, `job` | 1 if a `nops_*` key has an invalid value. |
 | `nops_notifications_failed_total` | `adapter` | Notifications that failed to deliver. |
 | `nops_acl_token_expires_timestamp_seconds` | `accessor_id`, `name`, `type` | When a created token that works in the current ACL mode expires. Session tokens and tokens that never expire have no series. |

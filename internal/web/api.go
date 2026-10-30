@@ -220,10 +220,12 @@ type apiJob struct {
 	Job       string `json:"job"`
 	Policy    string `json:"policy"`
 	// Sync is the job's sync state, in the words of docs/dashboard.md#sync-state-of-a-job:
-	// "invalid", "paused", "blocked", "orphan", "pending", "deploying", "held",
-	// "drift" or "sync".
+	// "invalid", "nomad-error", "paused", "blocked", "orphan", "pending",
+	// "deploying", "held", "drift" or "sync".
 	Sync  string `json:"sync"`
 	Drift bool   `json:"drift"`
+	// NomadError is what failed in Nomad when the last cycle read or planned the job.
+	NomadError string `json:"nomad_error,omitempty"`
 	// SpecHash is what a deployment of the job would have now: the one Deploy now asks for.
 	SpecHash       string         `json:"spec_hash,omitempty"`
 	BlockedBy      string         `json:"blocked_by,omitempty"`
@@ -234,7 +236,7 @@ type apiJob struct {
 func jobOf(o engine.Observation, latest *store.Deployment) apiJob {
 	j := apiJob{
 		Namespace: o.Namespace, Job: o.JobID, Policy: string(o.Policy), Sync: string(jobSync(o, latest)),
-		Drift: o.Drift, SpecHash: o.SpecHash, BlockedBy: o.BlockedBy,
+		Drift: o.Drift, NomadError: o.NomadError, SpecHash: o.SpecHash, BlockedBy: o.BlockedBy,
 	}
 	if h := o.Hold; h != nil {
 		j.Hold = &apiHold{Kind: string(h.Kind), Reason: h.Reason, By: h.By, Since: timePtr(h.Since)}
@@ -498,6 +500,8 @@ func (s *server) apiDecided(w http.ResponseWriter, r *http.Request, action strin
 		apiError(w, http.StatusConflict, "the spec changed since you read it: read the deployment again before deciding")
 	case errors.Is(err, engine.ErrNotInRepo):
 		apiError(w, http.StatusConflict, "the job is not in the repository as nops last read it: there is nothing to approve until it is back, but you can reject it")
+	case errors.Is(err, engine.ErrNomadError):
+		apiError(w, http.StatusConflict, "the last cycle couldn't read or plan the job in Nomad: approve it once a cycle can, or reject the deployment")
 	case errors.Is(err, engine.ErrPaused):
 		apiError(w, http.StatusConflict, "the job is paused: resume it to approve, or reject the deployment")
 	default:

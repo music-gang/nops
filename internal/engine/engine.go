@@ -179,6 +179,11 @@ type Observation struct {
 	// page says so rather than offer the button again. The next cycle that runs
 	// replaces the observation, and the request is a deployment or dropped.
 	DeployNowBy string
+	// NomadError is what failed in Nomad when this cycle read or planned the
+	// job, and why ("plan job: ..."); empty when Nomad answered. With it set,
+	// the drift and any block are unknown: Drift, PlanDiff and BlockedBy stay
+	// empty.
+	NomadError string
 }
 
 // HookRef is a hook a job declares, as the repository has it now.

@@ -127,7 +127,8 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		}
 		if ok {
 			observations[key] = obs
-		} else {
+		}
+		if !ok || obs.NomadError != "" {
 			st.Skipped++
 		}
 	}
@@ -359,9 +360,11 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID string, pf parsedFile
 // deployment. hooks are the hook jobs of the job's own namespace, by ID. pause is
 // the person's pause on the job (nil if none), window where its sync window
 // stands (nil without one) and lift the Deploy now request waiting for it, if
-// any. ok is false when the job
-// was skipped because of a Nomad failure scoped to it (already logged): the
-// caller keeps no observation for it this cycle rather than showing stale data.
+// any. When Nomad fails to read or plan the job, the observation holds what
+// git says and the failure (NomadError), and the job's deployment is left as it
+// is. ok is false when the job was skipped for a failure of nops scoped to it
+// (already logged): the caller keeps no observation for it this cycle rather
+// than showing stale data.
 func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
 	jobID, ns, commit := key.id, key.namespace, mf.commit
@@ -385,6 +388,12 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 		hold, liftedBy = nil, lift.RequestedBy
 	}
 
+	obs = Observation{
+		JobID: jobID, Namespace: ns, Repository: commit.repo, FilePath: mf.path,
+		Policy: mf.cfg.Policy, SpecHash: hash, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
+		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
+	}
+
 	var (
 		live      *api.Job
 		liveIndex uint64
@@ -395,7 +404,8 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 		live = nil
 	case err != nil:
 		log.ErrorContext(ctx, "get live job", "error", err)
-		return Observation{}, false, nil
+		obs.NomadError = "get live job: " + err.Error()
+		return obs, true, nil
 	default:
 		liveIndex = derefUint64(live.JobModifyIndex)
 	}
@@ -412,7 +422,8 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 	plan, err := e.nomad.Plan(ctx, planJob)
 	if err != nil {
 		log.ErrorContext(ctx, "plan job", "error", err)
-		return Observation{}, false, nil
+		obs.NomadError = "plan job: " + err.Error()
+		return obs, true, nil
 	}
 	drift := plan.Diff != nil && plan.Diff.Type != "None"
 	redacted, err := redact.Diff(plan.Diff)
@@ -426,11 +437,6 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 		}
 	}
 
-	obs = Observation{
-		JobID: jobID, Namespace: ns, Repository: commit.repo, FilePath: mf.path,
-		Policy: mf.cfg.Policy, SpecHash: hash, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
-		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
-	}
 	if drift {
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}

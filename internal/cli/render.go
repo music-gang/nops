@@ -45,13 +45,14 @@ type deploymentDetail struct {
 }
 
 type job struct {
-	Namespace string `json:"namespace"`
-	Job       string `json:"job"`
-	Policy    string `json:"policy"`
-	Sync      string `json:"sync"`
-	SpecHash  string `json:"spec_hash"`
-	BlockedBy string `json:"blocked_by"`
-	Hold      *struct {
+	Namespace  string `json:"namespace"`
+	Job        string `json:"job"`
+	Policy     string `json:"policy"`
+	Sync       string `json:"sync"`
+	NomadError string `json:"nomad_error"`
+	SpecHash   string `json:"spec_hash"`
+	BlockedBy  string `json:"blocked_by"`
+	Hold       *struct {
 		Kind   string `json:"kind"`
 		Reason string `json:"reason"`
 		By     string `json:"by"`
@@ -168,6 +169,7 @@ func writeJob(w io.Writer, j jobDetail) error {
 	field(w, "Job", j.Namespace+"/"+j.Job)
 	field(w, "Policy", j.Policy)
 	field(w, "Sync", j.Sync)
+	field(w, "Nomad error", j.NomadError)
 	field(w, "Spec hash", j.SpecHash)
 	field(w, "File", j.File)
 	field(w, "Blocked by", j.BlockedBy)

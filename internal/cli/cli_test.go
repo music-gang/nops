@@ -194,6 +194,23 @@ func TestDeployNowSendsTheSpecHashOfTheJob(t *testing.T) {
 	}
 }
 
+func TestJobShowsANomadError(t *testing.T) {
+	s, addr := newStub(t, nil)
+	s.answers = map[string]answer{
+		"GET /api/jobs/default/web": {200, `{"namespace":"default","job":"web","policy":"approval","sync":"nomad-error",` +
+			`"nomad_error":"plan job: boom","spec_hash":"hash-9","deployments":[]}`},
+	}
+	code, out, errOut := run(t, envFor(addr), "", "job", "web")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	for _, want := range []string{"Sync:        nomad-error", "Nomad error: plan job: boom"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestNamespaceComesFromTheFlagThenTheVariable(t *testing.T) {
 	s, addr := newStub(t, nil)
 	s.answers = map[string]answer{

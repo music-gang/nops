@@ -234,11 +234,14 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	for _, obs := range c.o.Engine.Observations() {
 		ns, job := obs.Namespace, obs.JobID
 		gauge(c.jobInfo, 1, ns, job, string(obs.Policy))
-		gauge(c.jobDrift, boolValue(obs.Drift), ns, job)
 		// The pause of every job is nops_paused, not one of each job's.
 		gauge(c.jobPaused, boolValue(obs.Hold != nil && obs.Hold.Kind == engine.HoldPaused && !obs.Hold.All), ns, job)
-		gauge(c.jobBlocked, boolValue(obs.BlockedBy != ""), ns, job)
 		gauge(c.jobMeta, boolValue(invalidMeta(obs.Issues)), ns, job)
+		// Without a plan the drift and the block are unknown: no series, not a 0.
+		if obs.NomadError == "" {
+			gauge(c.jobDrift, boolValue(obs.Drift), ns, job)
+			gauge(c.jobBlocked, boolValue(obs.BlockedBy != ""), ns, job)
+		}
 	}
 
 	for adapter, n := range c.o.Notifier.Failures() {

@@ -85,7 +85,7 @@ the last page. The token is opaque.
 | `per_page` | Rows per page: `25`, `50` (default) or `100`. |
 | `next_token` | Where the page starts: the `next_token` of the previous answer. |
 | `q` | Search. Deployments: at least 3 characters, part of the job, the namespace, the commit subject or its author, or the start of a deployment ID or commit SHA. Jobs: part of the job, the namespace, or the file. |
-| `state` | Deployments: a state, or `active` for every state that isn't terminal. Jobs: a [sync state](dashboard.md#sync-state-of-a-job), as `invalid`, `paused`, `blocked`, `orphan`, `pending`, `deploying`, `held`, `drift` or `sync`. |
+| `state` | Deployments: a state, or `active` for every state that isn't terminal. Jobs: a [sync state](dashboard.md#sync-state-of-a-job), as `invalid`, `nomad-error`, `paused`, `blocked`, `orphan`, `pending`, `deploying`, `held`, `drift` or `sync`. |
 | `namespace` | The namespace. |
 | `job` | Deployments: the job. |
 | `repository` | The repository the job file comes from. |
@@ -100,4 +100,5 @@ An error answers `{"error": "..."}` with the status the dashboard would show:
 `401` without a valid token, `403` for an action the token doesn't allow,
 `404` for something that doesn't exist, `409` when the state moved since you
 read it, and `400` for a bad request. An
-approval with an old spec hash, or for a paused job, is a `409`.
+approval with an old spec hash, for a paused job, or for a job in Nomad error,
+is a `409`.
