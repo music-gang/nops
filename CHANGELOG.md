@@ -4,6 +4,24 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.2
+
+### Fixes
+
+- `engine`: a job without a Nomad deployment, like a batch job, no longer
+  fails its deployment on the first failed or lost allocation when Nomad
+  reschedules it. The replacement decides, within the apply timeout, and the
+  deployment fails only once Nomad gives up on the allocation
+  ([healthy](docs/architecture.md#healthy),
+  [#277](https://github.com/music-gang/nops/pull/277)).
+- `engine`: a job that Nomad couldn't read or plan no longer looks gone from
+  git until the next cycle. It shows the new **Nomad error** sync state with
+  the error, an approval answers `409` with it, and pause and resume work.
+  `nops_job_drift` and `nops_job_blocked` have no series for it
+  ([sync state of a job](docs/dashboard.md#sync-state-of-a-job),
+  [metrics](docs/metrics.md),
+  [#278](https://github.com/music-gang/nops/pull/278)).
+
 ## v0.15.1
 
 ### Features
