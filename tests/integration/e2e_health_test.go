@@ -108,11 +108,11 @@ func TestEngineApplyWaitsForTheNomadDeployment(t *testing.T) {
 	}
 }
 
-// flakyBatchHCL is a managed batch job whose task fails the first time it runs
-// and succeeds the next, through a marker file. Without local restarts, its
-// first allocation fails and Nomad's default reschedule of a batch job
-// (attempts = 1) places the second.
-func flakyBatchHCL(id, marker string) string {
+// flakyBatchHCL is a managed batch job whose task runs command. While command
+// doesn't exist the task can't start, so without local restarts its allocation
+// fails without ever being running, which apply would take as healthy. Nomad's
+// default reschedule of a batch job (attempts = 1) places the second.
+func flakyBatchHCL(id, command string) string {
 	return fmt.Sprintf(`
 job %q {
   type = "batch"
@@ -128,12 +128,11 @@ job %q {
     task "t" {
       driver = "raw_exec"
       config {
-        command = "/bin/sh"
-        args    = ["-c", "if [ -e %[2]s ]; then exit 0; fi; touch %[2]s; exit 1"]
+        command = %q
       }
     }
   }
-}`, id, marker)
+}`, id, command)
 }
 
 // TestEngineApplyBatchRescheduledAfterAFailureCompletes runs a batch job whose
@@ -143,10 +142,10 @@ func TestEngineApplyBatchRescheduledAfterAFailureCompletes(t *testing.T) {
 	ctx := context.Background()
 	_, raw := newClient(t)
 	jobID := uniqueID(t, raw, "flaky")
-	marker := filepath.Join(t.TempDir(), "ran")
+	command := filepath.Join(t.TempDir(), "task.sh")
 
 	snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
-		Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: flakyBatchHCL(jobID, marker)}},
+		Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: flakyBatchHCL(jobID, command)}},
 	}}
 	e, st := newEngine(t, snap)
 	if err := e.Detect(ctx); err != nil {
@@ -162,28 +161,38 @@ func TestEngineApplyBatchRescheduledAfterAFailureCompletes(t *testing.T) {
 	go e.RunApply(runCtx)
 
 	// What Nomad did, whatever nops decided: a failed allocation replaced by a
-	// complete one. Without it the test proves nothing.
+	// complete one. Without it the test proves nothing. The first failure is
+	// also when the command appears, for the replacement to run.
+	created := false
 	recovered := func() bool {
 		stubs, _, err := raw.Jobs().Allocations(jobID, true, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var failed, complete bool
+		var failed, replaced, complete bool
 		for _, s := range stubs {
-			failed = failed || (s.ClientStatus == "failed" && s.NextAllocation != "")
+			failed = failed || s.ClientStatus == "failed"
+			replaced = replaced || (s.ClientStatus == "failed" && s.NextAllocation != "")
 			complete = complete || s.ClientStatus == "complete"
 		}
-		return failed && complete
+		if failed && !created {
+			if err := os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			created = true
+		}
+		return replaced && complete
 	}
 
 	deadline := time.Now().Add(60 * time.Second)
 	for {
+		ok := recovered()
 		got, err := st.GetDeployment(ctx, d.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		done := got.State == store.StateCompleted || got.State == store.StateFailed
-		if done && recovered() {
+		if done && ok {
 			if got.State == store.StateFailed {
 				t.Fatalf("deployment failed although Nomad rescheduled the allocation and it completed: %s", got.Error)
 			}
