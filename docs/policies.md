@@ -57,6 +57,11 @@ token has `pause` on the job's namespace ([ACL](acl.md#acl-policies)) can
 pause and resume, from the dashboard or the [API](api.md), and Nops records
 who did it.
 
+A job you stop in Nomad (`nomad job stop`) and keep in git is drift: under
+`auto`, Nops runs it again on the next cycle; under `approval`, it waits for
+an approval to do so. Pause the job or remove it from git to keep it
+stopped.
+
 **Pause** in the Overview pauses every job at once, for a Nomad upgrade or
 an incident that spans several jobs. It holds the jobs added to git in the
 meantime too. Every page says that Nops is paused, since when, and by whom.
