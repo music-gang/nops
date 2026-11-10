@@ -54,8 +54,9 @@ person's **pause**, of the job or of every job, or from a closed
 While a job is held:
 
 - Nops still shows the drift but creates no deployment;
-- a deployment not started yet is superseded;
-- a pause blocks approvals, and a sync window doesn't;
+- a deployment under `auto` not started yet is superseded;
+- a deployment waiting for approval stays: a pause blocks its approval, and
+  a sync window doesn't;
 - a deployment already running finishes.
 
 When the hold ends, Nops plans again from git. A blocked job stays blocked
