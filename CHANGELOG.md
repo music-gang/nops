@@ -4,6 +4,25 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.3
+
+### Other changes
+
+- Built with Go 1.27.4, with the dependencies updated
+  ([#291](https://github.com/music-gang/nops/pull/291),
+  [#287](https://github.com/music-gang/nops/pull/287),
+  [#288](https://github.com/music-gang/nops/pull/288)).
+- The image's base, `distroless/static-debian13`, moves to a newer digest
+  ([#286](https://github.com/music-gang/nops/pull/286)).
+- `policies`: the docs say that a job stopped in Nomad and kept in git runs
+  again, and how to keep it stopped
+  ([pausing a job](docs/policies.md#pausing-a-job),
+  [#289](https://github.com/music-gang/nops/pull/289)).
+- The docs say that a hold supersedes only a deployment under `auto`: one
+  waiting for approval stays
+  ([holding a job](docs/deployment-lifecycle.md#holding-a-job),
+  [#290](https://github.com/music-gang/nops/pull/290)).
+
 ## v0.15.2
 
 ### Fixes
