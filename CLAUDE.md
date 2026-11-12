@@ -153,7 +153,10 @@ merges and tags.
 
 1. `git fetch --tags origin`. The release holds the commits on `origin/main`
    since the last final tag
-   (`git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main`).
+   (`git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main`),
+   less those a patch already shipped from `release/X.Y.x` (the commits there
+   carry `cherry picked from commit <sha>`). A patch once `main` holds a
+   `feat` holds only the commits the maintainer picks in the script.
    After `. scripts/release.sh`, `suggest_bump` and `bump_version` give the
    version; one the maintainer names wins.
 2. Read each commit's whole message, its pull request and what it changed in

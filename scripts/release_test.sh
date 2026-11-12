@@ -262,6 +262,63 @@ ok breaking-changes has_breaking_changes <<<"$(printf '%s' "$changelog" | change
 no breaking-changes-none has_breaking_changes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"
 no breaking-changes-in-text has_breaking_changes <<<'- see the ### Breaking changes'
 
+# release_branch
+check branch-patch release/0.15.x "$(release_branch v0.15.5)"
+check branch-rc release/0.15.x "$(release_branch v0.15.5-rc.1)"
+
+# needs_branch: a patch of the last minor while main holds more than fixes
+ok needs-branch-feat needs_branch v0.15.4 v0.15.5 <<<$'fix: a\nfeat(web): b'
+ok needs-branch-breaking needs_branch v1.2.0 v1.2.1 <<<'fix!: a'
+no needs-branch-fixes needs_branch v0.15.4 v0.15.5 <<<$'fix: a\ndocs: b'
+no needs-branch-minor needs_branch v0.15.4 v0.16.0 <<<'feat: a'
+no needs-branch-first needs_branch v0.0.0 v0.1.0 <<<'feat: a'
+
+# pickable
+check pick-fix yes "$(pickable 'fix(engine): a (#1)')"
+check pick-docs no "$(pickable 'docs: a (#2)')"
+check pick-deps no "$(pickable 'build(deps): bump x from 1 to 2 (#3)')"
+check pick-feat never "$(pickable 'feat(web): a (#4)')"
+check pick-refactor never "$(pickable 'refactor(store): a')"
+check pick-breaking-fix never "$(pickable 'fix!: drop a column')"
+
+# picked_from
+check picked-trailers 'abc123
+def456' "$(printf '%s\n' 'fix: a (#1)' '' '(cherry picked from commit abc123)' 'docs: b' '(cherry picked from commit def456)' | picked_from)"
+check picked-in-text '' "$(printf '%s\n' 'see (cherry picked from commit abc123) above' | picked_from)"
+check picked-none '' "$(printf 'fix: a\n' | picked_from)"
+
+# insert_section
+section_file=$(mktemp)
+trap 'rm -f "$section_file"' EXIT
+printf '### Fixes\n\n- a\n' >"$section_file"
+check insert-above-first '# Changelog
+
+Intro.
+
+## v0.15.5
+
+### Fixes
+
+- a
+
+## v0.15.4
+
+- b' "$(printf '# Changelog\n\nIntro.\n\n## v0.15.4\n\n- b\n' | insert_section v0.15.5 "$section_file")"
+check insert-already-there $'## v0.15.5\n\n- old' "$(printf '## v0.15.5\n\n- old\n' | insert_section v0.15.5 "$section_file")"
+check insert-no-section $'# Changelog\n\n## v0.1.0\n\n### Fixes\n\n- a' "$(printf '# Changelog\n' | insert_section v0.1.0 "$section_file")"
+
+# toggle_picks
+check toggle-none $'yes\nno\nnever' "$(toggle_picks '' yes no never)"
+check toggle-two $'no\nyes\nnever' "$(toggle_picks '1 2' yes no never)"
+check toggle-commas $'no\nyes' "$(toggle_picks '1,2' yes no)"
+check toggle-twice $'yes\nno' "$(toggle_picks '1 1' yes no)"
+check toggle-leading-zero $'yes\nno' "$(toggle_picks '02' yes yes)"
+no toggle-never toggle_picks 3 yes no never 2>/dev/null
+no toggle-out-of-range toggle_picks 4 yes no never 2>/dev/null
+no toggle-zero toggle_picks 0 yes 2>/dev/null
+no toggle-word toggle_picks 'all' yes 2>/dev/null
+no toggle-glob toggle_picks '*' yes 2>/dev/null
+
 if [ "$failed" = 0 ]; then
   echo "release_test: ok"
 fi
