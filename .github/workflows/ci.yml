@@ -154,10 +154,22 @@ jobs:
           nomad version
       # One agent, with ACLs: the tests set up on its management token and run
       # nops on the token docs/running-nops.md documents, so a missing
-      # capability fails here and not on a cluster.
+      # capability fails here and not on a cluster. The cloud fingerprints are
+      # off: the runner's metadata service sometimes times out on the EC2 probe,
+      # and the agent doesn't start.
       - name: Start Nomad dev agent with ACLs
         run: |
-          printf 'acl {\n  enabled = true\n}\n' > agent.hcl
+          cat > agent.hcl <<'EOF'
+          acl {
+            enabled = true
+          }
+
+          client {
+            options = {
+              "fingerprint.denylist" = "env_aws,env_azure,env_digitalocean,env_gce"
+            }
+          }
+          EOF
           nomad agent -dev -bind=127.0.0.1 -config=agent.hcl > nomad.log 2>&1 &
           # The step's shell has no pipefail: the pipeline's status is jq's, so
           # the loop looks at the token, not at the status.
