@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -483,8 +484,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 17 {
-		t.Errorf("user_version = %d, %v; want 17", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 18 {
+		t.Errorf("user_version = %d, %v; want 18", v, err)
 	}
 }
 
@@ -1077,6 +1078,134 @@ func TestLatestCompletedPerJob(t *testing.T) {
 	staging, err := s.LatestCompletedPerJob(ctx, "staging")
 	if err != nil || len(staging) != 1 || staging[0].Namespace != "staging" {
 		t.Errorf("LatestCompletedPerJob(staging) = %+v, %v, want only the staging deployment", staging, err)
+	}
+}
+
+// A deployment older than the latest, inserted or completed after it, does not
+// take its place.
+func TestLatestPerJobOnlyMovesForward(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	newest := mustCreate(t, s, newDep("web"))
+	if err := s.Transition(ctx, newest.ID, StateCompleted, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+		 VALUES ('older', 'web', 'default', 'abc1234', 'h', '{}', 'auto', 'detected', 7, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+		`UPDATE deployments SET state = 'completed' WHERE id = 'older'`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	latest, err := s.LatestPerJob(ctx)
+	if err != nil || len(latest) != 1 || latest[0].ID != newest.ID {
+		t.Errorf("LatestPerJob = %v, %v; want [%s]", ids(latest), err, newest.ID)
+	}
+	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	if err != nil || len(completed) != 1 || completed[0].ID != newest.ID {
+		t.Errorf("LatestCompletedPerJob = %v, %v; want [%s]", ids(completed), err, newest.ID)
+	}
+}
+
+// The deployments made before the upgrade count: the latest of each job is
+// found after it, and the next deployment moves it.
+func TestLatestPerJobFromBeforeTheUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names[:17] {
+		body, err := migrationsFS.ReadFile("migrations/" + name.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", name.Name(), err)
+		}
+	}
+	row := func(id, ns, job, state, at string) string {
+		return fmt.Sprintf(`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+			VALUES ('%s', '%s', '%s', 'abc1234', 'h', '{}', 'auto', '%s', 7, '%s', '%s')`, id, job, ns, state, at, at)
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 17",
+		row("web-1", "default", "web", "completed", "2026-09-01T00:00:01Z"),
+		row("web-2", "default", "web", "completed", "2026-09-01T00:00:02Z"),
+		row("web-3", "default", "web", "failed", "2026-09-01T00:00:03Z"),
+		row("db-1", "default", "db", "failed", "2026-09-01T00:00:01Z"),
+		row("staging-1", "staging", "web", "completed", "2026-09-01T00:00:01Z"),
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v17: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	latest, err := s.LatestPerJob(ctx)
+	if want := []string{"db-1", "web-3", "staging-1"}; err != nil || !slices.Equal(ids(latest), want) {
+		t.Errorf("LatestPerJob after the upgrade = %v, %v; want %v", ids(latest), err, want)
+	}
+	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	if want := []string{"web-2"}; err != nil || !slices.Equal(ids(completed), want) {
+		t.Errorf("LatestCompletedPerJob after the upgrade = %v, %v; want %v", ids(completed), err, want)
+	}
+
+	next := mustCreate(t, s, newDep("db"))
+	if err := s.Transition(ctx, next.ID, StateCompleted, Transition{From: StateDetected, Actor: "nops"}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err = s.LatestPerJob(ctx)
+	if want := []string{next.ID, "web-3", "staging-1"}; err != nil || !slices.Equal(ids(latest), want) {
+		t.Errorf("LatestPerJob after a new deployment = %v, %v; want %v", ids(latest), err, want)
+	}
+	completed, err = s.LatestCompletedPerJob(ctx, "default")
+	if want := []string{next.ID, "web-2"}; err != nil || !slices.Equal(ids(completed), want) {
+		t.Errorf("LatestCompletedPerJob after a new deployment = %v, %v; want %v", ids(completed), err, want)
+	}
+}
+
+// The latest deployments are looked up by ID, one per job: no read walks the
+// history, of every job or of a namespace.
+func TestLatestPerJobDoesNotScanTheHistory(t *testing.T) {
+	s := newTestStore(t)
+	for _, q := range []struct {
+		name, sql string
+		args      []any
+	}{
+		{"LatestPerJob", latestPerJobSQL, nil},
+		{"LatestCompletedPerJob", latestCompletedPerJobSQL, []any{"default"}},
+	} {
+		rows, err := s.db.Query("EXPLAIN QUERY PLAN "+q.sql, q.args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		for _, step := range plan {
+			byID := strings.HasPrefix(step, "SEARCH deployments ") && strings.HasSuffix(step, "(id=?)")
+			ofJobs := strings.HasPrefix(step, "SCAN latest_deployments") || strings.HasPrefix(step, "SEARCH latest_deployments")
+			if (strings.HasPrefix(step, "SCAN ") || strings.HasPrefix(step, "SEARCH ")) && !byID && !ofJobs {
+				t.Errorf("%s reads more than one deployment per job: %q in %q", q.name, step, plan)
+			}
+		}
 	}
 }
 
