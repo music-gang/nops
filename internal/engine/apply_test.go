@@ -624,6 +624,38 @@ func TestStepHealthAllocationsPathNoNomadDeployment(t *testing.T) {
 	}
 }
 
+// Without a Nomad deployment, a batch or sysbatch job is healthy only once its
+// run is over: a running allocation can still fail. Any other job is healthy
+// once it runs.
+func TestStepHealthAllocationsPathWaitsForABatchRunToComplete(t *testing.T) {
+	for _, tc := range []struct {
+		jobType, status string
+		want            store.State
+	}{
+		{api.JobTypeBatch, "running", store.StateApplying},
+		{api.JobTypeBatch, "complete", store.StateCompleted},
+		{api.JobTypeSysbatch, "running", store.StateApplying},
+		{api.JobTypeSysbatch, "complete", store.StateCompleted},
+		{api.JobTypeService, "running", store.StateCompleted},
+		{api.JobTypeSystem, "running", store.StateCompleted},
+	} {
+		t.Run(tc.jobType+" "+tc.status, func(t *testing.T) {
+			h := newHarness(t)
+			job := managed("web", "auto", nil)
+			job.Type = &tc.jobType
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: tc.status, DesiredStatus: "run"})
+
+			h.step(d)
+
+			if got := h.get(d.ID); got.State != tc.want {
+				t.Fatalf("state = %s, want %s", got.State, tc.want)
+			}
+		})
+	}
+}
+
 func TestStepHealthCompletedNotifiesWhenOptedIn(t *testing.T) {
 	h := newHarness(t)
 	job := managed("web", "auto", map[string]string{meta.KeyNotifyCompleted: "true"})

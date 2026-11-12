@@ -111,8 +111,10 @@ doesn't become healthy fails; Nops doesn't roll back.
 ### Healthy
 
 - With a Nomad deployment for this register: healthy when it's `successful`.
-- Without one, as for batch jobs: healthy when every allocation of the new
-  version is `running` or `complete`. A failed or lost allocation that Nomad
+- Without one: healthy when every allocation of the new version is
+  `complete` for a `batch` or `sysbatch` job, so the
+  [apply timeout](#the-apply-timeout) covers its whole run, and `running` or
+  `complete` for any other job. A failed or lost allocation that Nomad
   reschedules counts as its replacement does, and one Nomad gives up on fails
   the deployment.
 - A job with no allocations, like a periodic or parameterized job: healthy

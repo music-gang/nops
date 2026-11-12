@@ -37,7 +37,7 @@ func TestE2EOrphanJobIsShownAndNeverStopped(t *testing.T) {
 
 	// A job that keeps running, deployed by nops.
 	e.repo.commit(t, "job "+jobID, map[string]string{
-		file(jobID): e2eJob{id: jobID, policy: "auto", version: "1", cmd: "sleep 300"}.hcl(),
+		file(jobID): e2eJob{id: jobID, policy: "auto", version: "1", cmd: "sleep 300", service: true}.hcl(),
 	})
 	d := e.waitNew(jobID, "", store.StateCompleted)
 
@@ -98,7 +98,7 @@ func TestE2EOrphanGoesAwayWhenTheFileComesBack(t *testing.T) {
 	jobID := uniqueID(t, e.raw, "restore")
 	push := func() {
 		e.repo.commit(t, "job "+jobID, map[string]string{
-			file(jobID): e2eJob{id: jobID, policy: "auto", version: "1", cmd: "sleep 300"}.hcl(),
+			file(jobID): e2eJob{id: jobID, policy: "auto", version: "1", cmd: "sleep 300", service: true}.hcl(),
 		})
 	}
 

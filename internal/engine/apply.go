@@ -587,9 +587,10 @@ const (
 // applyHealth decides whether the job version nops applied is healthy: via
 // its Nomad deployment when there is one tracking exactly that apply, else
 // via the allocations of that job version (a batch job, or an update stanza
-// that produces no Nomad deployment). healthWaiting means neither healthy nor
-// failed; reason says why for healthFailed, and for healthHealthy how many
-// allocations Nomad replaced on the way, if any.
+// that produces no Nomad deployment): every one complete for a batch or
+// sysbatch job, running or complete for any other. healthWaiting means
+// neither healthy nor failed; reason says why for healthFailed, and for
+// healthHealthy how many allocations Nomad replaced on the way, if any.
 //
 // A live index that moved after the register while a fresh plan of the
 // deployment's spec, with the live counts of the groups with a scaling block,
@@ -693,9 +694,13 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	if rescheduling > 0 {
 		return healthWaiting, "", nil
 	}
+	toCompletion := runsToCompletion(live)
 	for _, a := range ours {
-		if a.NextAllocation == "" && a.ClientStatus != "running" && a.ClientStatus != "complete" {
-			return healthWaiting, "", nil // still starting
+		if a.NextAllocation != "" || a.ClientStatus == "complete" {
+			continue
+		}
+		if a.ClientStatus != "running" || toCompletion {
+			return healthWaiting, "", nil // still starting, or still running a batch
 		}
 	}
 	switch {
@@ -794,6 +799,16 @@ func autoPromotes(job *api.Job, g *api.TaskGroup) bool {
 		u = job.Update
 	}
 	return u != nil && u.AutoPromote != nil && *u.AutoPromote
+}
+
+// runsToCompletion reports whether a job's allocations end once their work is
+// done (batch and sysbatch): one still running can still fail, so only a
+// complete one is healthy.
+func runsToCompletion(job *api.Job) bool {
+	if job.Type == nil {
+		return false
+	}
+	return *job.Type == api.JobTypeBatch || *job.Type == api.JobTypeSysbatch
 }
 
 // neverHasAllocations reports whether a job has no allocation of its own to
