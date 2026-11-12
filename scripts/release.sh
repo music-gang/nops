@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Cut a release: tag the version of the first section of CHANGELOG.md on
-# origin/main, show the section, then sign and push the tag. The `release`
-# workflow does the rest (docs/development.md#releasing).
+# Cut a release: tag the version of the first section of CHANGELOG.md, a minor
+# or major on origin/main and a patch on release/X.Y.x, show the section, then
+# sign and push the tag (docs/development.md#releasing).
 #
 #   scripts/release.sh             interactive
 #   scripts/release.sh --rc        tag the next release candidate of that version
@@ -319,6 +319,106 @@ has_breaking_changes() {
   return 1
 }
 
+# release_branch <version>: release/X.Y.x, the branch of the patches of the
+# minor of <version>.
+release_branch() {
+  echo "release/$(minor_of "$1").x"
+}
+
+# is_patch <last> <version>: succeeds when <version> is in the minor of
+# <last>, a patch, which is tagged on release/X.Y.x rather than on main.
+is_patch() {
+  [ "$(minor_of "$2")" = "$(minor_of "$1")" ]
+}
+
+# pickable <subject>: whether a commit goes into a patch on a release branch:
+# yes (picked unless unpicked), no (listed unpicked), never (a feature, a
+# change or a breaking commit, which a patch never carries).
+pickable() {
+  case $(classify "$1") in
+    fix) echo yes ;;
+    other) echo no ;;
+    *) echo never ;;
+  esac
+}
+
+# picked_from: reads commit messages on stdin and prints the commit of each
+# `(cherry picked from commit <sha>)` trailer.
+picked_from() {
+  local line re='^\(cherry picked from commit ([0-9a-f]+)\)$'
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ $line =~ $re ]]; then
+      echo "${BASH_REMATCH[1]}"
+    fi
+  done
+}
+
+# insert_section <tag> <file>: reads CHANGELOG.md on stdin and prints it with
+# `## <tag>` and the section in <file> above its first `## ` heading, or at its
+# end when it has none. Prints it unchanged when it already has `## <tag>`.
+insert_section() {
+  local want="## $1" file=$2 line n=0 i done=0
+  local lines=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    lines[n]=$line
+    n=$((n + 1))
+    [ "$line" = "$want" ] && done=1
+  done
+  for ((i = 0; i < n; i++)); do
+    line=${lines[i]}
+    if [ $done = 0 ]; then
+      case $line in
+        '## '*)
+          printf '%s\n\n' "$want"
+          cat "$file"
+          echo
+          done=1
+          ;;
+      esac
+    fi
+    printf '%s\n' "$line"
+  done
+  if [ $done = 0 ]; then
+    printf '\n%s\n\n' "$want"
+    cat "$file"
+  fi
+}
+
+# toggle_picks <answer> <pick>...: the picks (yes, no or never, one per
+# commit, one per line) with those whose numbers are in <answer> (from 1,
+# separated by spaces or commas) turned from yes to no or from no to yes.
+# Fails, saying why on stderr, on anything but the number of a commit that
+# can be picked.
+toggle_picks() {
+  local words=() picks=() k n i
+  IFS=', ' read -r -a words <<<"$1" || true
+  shift
+  picks=("$@")
+  for ((k = 0; k < ${#words[@]}; k++)); do
+    n=${words[k]}
+    case $n in
+      '' | *[!0-9]*)
+        echo "'$n' is not the number of a commit" >&2
+        return 1
+        ;;
+    esac
+    i=$((10#$n - 1))
+    if [ "$i" -lt 0 ] || [ "$i" -ge ${#picks[@]} ]; then
+      echo "there is no commit $n" >&2
+      return 1
+    fi
+    case ${picks[i]} in
+      yes) picks[i]=no ;;
+      no) picks[i]=yes ;;
+      *)
+        echo "commit $n can't go in a patch" >&2
+        return 1
+        ;;
+    esac
+  done
+  printf '%s\n' "${picks[@]}"
+}
+
 # ---- flow --------------------------------------------------------------------
 
 die() {
@@ -437,6 +537,23 @@ main() {
     return 0
   fi
 
+  # The version is the changelog's: the first section is the release's.
+  local version
+  version=$(git show "$sha:CHANGELOG.md" 2>/dev/null | changelog_version) ||
+    die "could not read CHANGELOG.md on $sha"
+  if [ -z "$version" ]; then
+    die "CHANGELOG.md has no '## vX.Y.Z' section: add it in a pull request first"
+  fi
+  if ! is_semver "$version" || [[ $version == *-* ]]; then
+    die "the first section of CHANGELOG.md is '## $version', not '## vX.Y.Z': fix it in a pull request first"
+  fi
+
+  # A patch goes on the release branch of its minor.
+  if [ "$last" != v0.0.0 ] && is_patch "$last" "$version"; then
+    release_on_branch "$sha" "$last" "$version" "$rc"
+    return
+  fi
+
   echo "origin/main is $(git rev-parse --short "$sha"), last release is $last."
   echo "$(wc -l <"$commits" | tr -d ' ') commit(s) since $last:"
   cat "$commits"
@@ -473,16 +590,6 @@ main() {
     problem "git config user.signingkey is not set: the tag has to be signed"
   fi
 
-  # The version is the changelog's: the first section is the release's.
-  local version
-  version=$(git show "$sha:CHANGELOG.md" 2>/dev/null | changelog_version) ||
-    die "could not read CHANGELOG.md on $sha"
-  if [ -z "$version" ]; then
-    die "CHANGELOG.md has no '## vX.Y.Z' section: add it in a pull request first"
-  fi
-  if ! is_semver "$version" || [[ $version == *-* ]]; then
-    die "the first section of CHANGELOG.md is '## $version', not '## vX.Y.Z': fix it in a pull request first"
-  fi
   if [ "$last" != v0.0.0 ] && ! semver_gt "$version" "$last"; then
     die "the first section of CHANGELOG.md is $version, not above $last: write the section of the release in a pull request first"
   fi
@@ -506,6 +613,14 @@ main() {
     git show "$sha:CHANGELOG.md" | changelog_section "$version"
   fi
 
+  sign_and_push "$tag" "$sha"
+}
+
+# sign_and_push <tag> <sha>: show the commit, then, once confirmed, sign <tag>
+# on <sha>, push it and offer to follow the release run. A dry run only shows
+# the commands.
+sign_and_push() {
+  local tag=$1 sha=$2
   echo
   echo "Tag $tag on $sha"
   echo "  $(git log -1 --format='%h %s' "$sha")"
@@ -543,6 +658,174 @@ main() {
   done
   [ -n "$run" ] || die "no release run found yet: gh run list --workflow release.yml"
   gh run watch "$run" --exit-status
+}
+
+# print_picks: the commits of release_on_branch, numbered, with their picks.
+# Reads its caller's hashes, subjects and picks.
+print_picks() {
+  local i mark
+  for ((i = 0; i < ${#hashes[@]}; i++)); do
+    case ${picks[i]} in
+      yes) mark='[x]' ;;
+      no) mark='[ ]' ;;
+      *) mark=' - ' ;;
+    esac
+    printf '  %2d %s %s %s\n' $((i + 1)) "$mark" "${hashes[i]:0:7}" "${subjects[i]}"
+  done
+}
+
+# release_on_branch <main-sha> <last> <version> <rc>: the patch <version> of
+# the minor of <last>, the newest final release on main. The maintainer picks
+# the commits of main since <last> that release/X.Y.x doesn't hold yet; they
+# are cherry-picked there, in a worktree of their own, with the release's
+# section of the changelog, and the branch is pushed. Once nothing is left to
+# pick and the checks of the branch are green, its head is tagged.
+release_on_branch() {
+  local main_sha=$1 start=$2 version=$3 rc=$4
+  local branch base last
+  branch=$(release_branch "$version")
+  if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null; then
+    base=$(git rev-parse "origin/$branch")
+    last=$(last_release "$base")
+  else
+    base=$(git rev-parse "$start^{commit}")
+    last=$start
+  fi
+  if ! semver_gt "$version" "$last"; then
+    die "the first section of CHANGELOG.md is $version, not above $last: write the section of the release in a pull request first"
+  fi
+  echo "$version is a patch of $start: it goes on $branch."
+  echo
+
+  # The commits of main the branch doesn't hold yet, by their trailer. One
+  # that changes only the changelog is left out: the script carries the
+  # release's section itself.
+  local held h s
+  local hashes=() subjects=() picks=()
+  held=$(git log --format=%B "$start..$base" | picked_from)
+  while IFS=$'\t' read -r h s; do
+    case $'\n'$held$'\n' in *$'\n'"$h"$'\n'*) continue ;; esac
+    [ "$(git diff-tree --no-commit-id --name-only -r "$h")" != CHANGELOG.md ] || continue
+    hashes+=("$h")
+    subjects+=("$s")
+    picks+=("$(pickable "$s")")
+  done < <(git log --reverse --format='%H%x09%s' "$start..$main_sha")
+
+  if [ ${#hashes[@]} = 0 ]; then
+    echo "$branch holds every commit of origin/main since $start it can."
+  else
+    echo "Commits of origin/main since $start that $branch doesn't hold"
+    echo "([x] goes in the patch, [ ] doesn't, - never can):"
+    print_picks
+    echo
+    local answer new p
+    while [ "$dry_run" = 0 ]; do
+      read -r -p "Enter to go on, or the numbers of the commits to pick or unpick: " answer
+      [ -z "${answer//[[:space:]]/}" ] && break
+      if new=$(toggle_picks "$answer" "${picks[@]}"); then
+        picks=()
+        while IFS= read -r p; do picks+=("$p"); done <<<"$new"
+        print_picks
+        echo
+      fi
+    done
+  fi
+
+  local chosen=() i k
+  for ((i = 0; i < ${#hashes[@]}; i++)); do
+    if [ "${picks[i]}" = yes ]; then chosen+=("$i"); fi
+  done
+
+  # A final release carries its section of the changelog, written on main.
+  local section
+  section=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$commits' '$section'" EXIT
+  local add_section=0
+  if [ "$rc" = 0 ] && [ -z "$(git show "$base:CHANGELOG.md" | changelog_section "$version")" ]; then
+    git show "$main_sha:CHANGELOG.md" | changelog_section "$version" >"$section"
+    [ -s "$section" ] || die "CHANGELOG.md on main has no section for $version: add it in a pull request first"
+    add_section=1
+  fi
+
+  if [ ${#chosen[@]} -gt 0 ] || [ $add_section = 1 ]; then
+    if [ "$dry_run" = 1 ]; then
+      echo "Dry run: nothing was picked or pushed. A release would cherry-pick ${#chosen[@]} commit(s) onto $branch,"
+      if [ $add_section = 1 ]; then echo "add the $version section of CHANGELOG.md,"; fi
+      echo "push $branch, and tag it once its checks are green."
+      return 0
+    fi
+    if [ -z "$(git config --get user.signingkey || true)" ]; then
+      die "git config user.signingkey is not set: the commits and the tag have to be signed"
+    fi
+
+    local wt
+    wt=$(mktemp -d)
+    git worktree add --quiet --detach "$wt" "$base" || die "could not make a worktree of $branch in $wt"
+    for ((k = 0; k < ${#chosen[@]}; k++)); do
+      i=${chosen[k]}
+      if ! git -C "$wt" cherry-pick -x -S "${hashes[i]}" >/dev/null; then
+        paint 2 '1;31' "release: ${hashes[i]:0:7} ${subjects[i]} does not apply on $branch" >&2
+        cat >&2 <<EOF
+Resolve it in $wt and finish it there:
+  git -C $wt cherry-pick --continue
+  git -C $wt push origin HEAD:refs/heads/$branch
+  git worktree remove $wt
+then run scripts/release.sh again for the rest.
+EOF
+        exit 1
+      fi
+    done
+    if [ $add_section = 1 ]; then
+      git -C "$wt" show HEAD:CHANGELOG.md | insert_section "$version" "$section" >"$wt/CHANGELOG.md"
+      git -C "$wt" commit --quiet -S -m "docs: write the changelog of $version" -- CHANGELOG.md
+    fi
+    git -C "$wt" push --quiet origin "HEAD:refs/heads/$branch" || die "could not push $branch: the commits are in $wt"
+    git worktree remove "$wt"
+    echo
+    paint 1 '1;32' "Pushed $branch. Run scripts/release.sh again once its checks are green to tag $version."
+    return 0
+  fi
+
+  if [ "$(git rev-list --count "$last..$base")" = 0 ]; then
+    echo "Nothing to release: $branch is $last and nothing was picked."
+    return 0
+  fi
+
+  local tag=$version
+  if [ "$rc" = 1 ]; then
+    tag=$(git tag -l "$version-rc.*" | next_rc "$version")
+  fi
+  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
+    [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
+    problem "$tag already exists (tags are never moved or recreated)"
+  fi
+
+  # Checks that have yet to start would read as green.
+  local runs ci
+  runs=$(gh api "repos/{owner}/{repo}/commits/$base/check-runs" --jq .total_count) ||
+    die "could not read the checks of $base (gh auth status?)"
+  if [ "$runs" = 0 ]; then
+    problem "$branch ($(git rev-parse --short "$base")) has no checks yet: wait for CI to run on it"
+  fi
+  ci=$(ci_problems "$base") || die "could not read the checks of $base (gh auth status?)"
+  if [ -n "$ci" ]; then
+    echo "$ci" >&2
+    problem "checks on $branch ($(git rev-parse --short "$base")) are not all green"
+  fi
+  if [ -z "$(git config --get user.signingkey || true)" ]; then
+    problem "git config user.signingkey is not set: the tag has to be signed"
+  fi
+  check_changelog "$tag" "$base" ""
+
+  if [ "$rc" = 1 ]; then
+    echo "A release candidate's notes are generated from the commits."
+  else
+    paint 1 1 "Release notes, the $version section of CHANGELOG.md on $branch:"
+    echo
+    git show "$base:CHANGELOG.md" | changelog_section "$version"
+  fi
+  sign_and_push "$tag" "$base"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

@@ -1,6 +1,7 @@
 name: release
 
-# A vX.Y.Z tag pushed on a commit of main publishes the release: the image on
+# A vX.Y.Z tag pushed on a commit of main, or of the release branch
+# release/X.Y.x of a patch, publishes the release: the image on
 # ghcr.io/music-gang/nops and the binary, checksums and release notes on the
 # GitHub Release, and a final one (not an -rc) the docs site on GitHub Pages.
 # How to cut one: docs/development.md#releasing.
@@ -27,12 +28,19 @@ jobs:
         with:
           fetch-depth: 0 # the changelog reads the history since the last final release
           persist-credentials: false
-      - name: The tag is on main
+      - name: The tag is on main or on its release branch
         run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "$GITHUB_REF_NAME is not on main: releases are cut from main only"
-            exit 1
+          . scripts/release.sh
+          branch="origin/$(release_branch "$GITHUB_REF_NAME")"
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            exit 0
           fi
+          if git rev-parse -q --verify "$branch" >/dev/null &&
+            git merge-base --is-ancestor "$GITHUB_SHA" "$branch"; then
+            exit 0
+          fi
+          echo "$GITHUB_REF_NAME is neither on main nor on ${branch#origin/}: releases are cut from those only"
+          exit 1
       # A final release's notes are its section of CHANGELOG.md, which
       # scripts/release.sh checks before the tag, with its links to the docs of
       # the tag, each paragraph on one line, and a link to its commits.
