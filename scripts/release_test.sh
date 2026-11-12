@@ -235,6 +235,28 @@ check links-absolute '- [#2](https://github.com/o/r/pull/2)' \
   "$(printf '%s\n' '- [#2](https://github.com/o/r/pull/2)' | absolute_links "$base")"
 check links-anchor '- [above](#v100)' "$(printf '%s\n' '- [above](#v100)' | absolute_links "$base")"
 
+# unwrap
+check unwrap-items '### Fixes
+
+- engine: a job fails ([healthy](docs/a.md#healthy), [#1](https://x/1)).
+- one line
+
+Some text that goes on.' "$(printf '%s\n' '### Fixes' '' '- engine: a job' '  fails ([healthy](docs/a.md#healthy),' '  [#1](https://x/1)).' '- one line' '' 'Some text' 'that goes on.' | unwrap)"
+check unwrap-numbered '1. stop it
+2. start it again' "$(printf '%s\n' '1. stop' '   it' '2. start it' '   again' | unwrap)"
+check unwrap-nested '- a b
+  - c d' "$(printf '%s\n' '- a' '  b' '  - c' '    d' | unwrap)"
+check unwrap-heading-after-text 'a b
+### Fixes' "$(printf '%s\n' 'a' 'b' '### Fixes' | unwrap)"
+check unwrap-code '```sh
+nops serve
+  -config x
+```
+a b' "$(printf '%s\n' '```sh' 'nops serve' '  -config x' '```' 'a' 'b' | unwrap)"
+check unwrap-table '| a |
+| b |' "$(printf '%s\n' '| a |' '| b |' | unwrap)"
+check unwrap-no-final-newline 'a b' "$(printf 'a\nb' | unwrap)"
+
 # has_breaking_changes
 ok breaking-changes has_breaking_changes <<<"$(printf '%s' "$changelog" | changelog_section v0.3.0)"
 no breaking-changes-none has_breaking_changes <<<"$(printf '%s' "$changelog" | changelog_section v0.2.0)"

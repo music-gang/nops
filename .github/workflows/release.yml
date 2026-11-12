@@ -35,7 +35,7 @@ jobs:
           fi
       # A final release's notes are its section of CHANGELOG.md, which
       # scripts/release.sh checks before the tag, with its links to the docs of
-      # the tag, and a link to its commits.
+      # the tag, each paragraph on one line, and a link to its commits.
       # A release candidate's are goreleaser's changelog, from the same last
       # final tag, under the BREAKING CHANGE footers scripts/release.sh shows.
       - name: Release notes
@@ -59,7 +59,8 @@ jobs:
               ;;
             *)
               changelog_section "$GITHUB_REF_NAME" <CHANGELOG.md |
-                absolute_links "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME" >"$file"
+                absolute_links "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME" |
+                unwrap >"$file"
               if [ ! -s "$file" ]; then
                 echo "CHANGELOG.md has no section for $GITHUB_REF_NAME"
                 exit 1
