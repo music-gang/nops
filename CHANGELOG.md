@@ -4,6 +4,17 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.4
+
+### Fixes
+
+- `engine`: a `batch` or `sysbatch` job without a Nomad deployment is healthy
+  only once every allocation of the new version is complete, so a job that
+  fails after it starts fails its deployment, and its post-hooks don't run.
+  The apply timeout covers its whole run
+  ([healthy](docs/architecture.md#healthy),
+  [#299](https://github.com/music-gang/nops/pull/299)).
+
 ## v0.15.3
 
 ### Other changes
