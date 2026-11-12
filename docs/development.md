@@ -179,9 +179,9 @@ Issues use the forms in `.github/ISSUE_TEMPLATE/`: a plain title, the type
 
 ## Releasing
 
-A release is a signed `vX.Y.Z` tag on `main`, or, for a patch once `main`
-holds a feature, on the release branch `release/X.Y.x`. Before `v1`, a minor
-release may break things and a patch never does.
+A release is a signed `vX.Y.Z` tag: a minor or major release on `main`, a
+patch on the release branch `release/X.Y.x`. Before `v1`, a minor release
+may break things and a patch never does.
 
 1. Make sure `main` is green and the [doc audit](#doc-audit) is done, and for
    a minor or major release the
@@ -200,12 +200,13 @@ release may break things and a patch never does.
 3. Run `scripts/release.sh`. It takes the version from the first section of
    the changelog and shows the section. Once you confirm, it signs and pushes
    the tag. `--dry-run` only shows what it would tag.
-4. A patch once `main` holds a feature: the script makes `release/X.Y.x`
-   from the last tag, or updates it, lists the commits since then with the
-   fixes picked, cherry-picks the ones you confirm with the release's
-   section of the changelog, and pushes the branch. Run it again once CI on the branch is
+4. For a patch, the script makes `release/X.Y.x` from the last tag, or
+   updates it, lists the commits since then with the fixes picked,
+   cherry-picks the ones you confirm with the release's section of the
+   changelog, and pushes the branch. Run it again once CI on the branch is
    green to sign the tag there. A cherry-pick that conflicts stops it,
-   naming the commit.
+   naming the commit. The branch is never merged into `main`: every fix
+   lands on `main` first.
 5. Ship risky changes as a release candidate first: `scripts/release.sh --rc`
    tags the next `vX.Y.Z-rc.N` of the section's version.
 6. Check the result:

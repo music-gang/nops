@@ -266,12 +266,12 @@ no breaking-changes-in-text has_breaking_changes <<<'- see the ### Breaking chan
 check branch-patch release/0.15.x "$(release_branch v0.15.5)"
 check branch-rc release/0.15.x "$(release_branch v0.15.5-rc.1)"
 
-# needs_branch: a patch of the last minor while main holds more than fixes
-ok needs-branch-feat needs_branch v0.15.4 v0.15.5 <<<$'fix: a\nfeat(web): b'
-ok needs-branch-breaking needs_branch v1.2.0 v1.2.1 <<<'fix!: a'
-no needs-branch-fixes needs_branch v0.15.4 v0.15.5 <<<$'fix: a\ndocs: b'
-no needs-branch-minor needs_branch v0.15.4 v0.16.0 <<<'feat: a'
-no needs-branch-first needs_branch v0.0.0 v0.1.0 <<<'feat: a'
+# is_patch: a version in the minor of the last release
+ok is-patch is_patch v0.15.4 v0.15.5
+ok is-patch-of-minor is_patch v0.16.0 v0.16.1
+no is-patch-minor is_patch v0.15.4 v0.16.0
+no is-patch-major is_patch v0.15.4 v1.0.0
+no is-patch-first is_patch v0.0.0 v0.1.0
 
 # pickable
 check pick-fix yes "$(pickable 'fix(engine): a (#1)')"

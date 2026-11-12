@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Cut a release: tag the version of the first section of CHANGELOG.md on
-# origin/main, or a patch on release/X.Y.x once main holds a feature, show the
-# section, then sign and push the tag (docs/development.md#releasing).
+# Cut a release: tag the version of the first section of CHANGELOG.md, a minor
+# or major on origin/main and a patch on release/X.Y.x, show the section, then
+# sign and push the tag (docs/development.md#releasing).
 #
 #   scripts/release.sh             interactive
 #   scripts/release.sh --rc        tag the next release candidate of that version
@@ -325,15 +325,10 @@ release_branch() {
   echo "release/$(minor_of "$1").x"
 }
 
-# needs_branch <last> <version>: reads the commit subjects since <last> on
-# stdin and succeeds when <version> is a patch of the minor of <last> while the
-# subjects need a minor or major release: the patch can't be tagged on main.
-needs_branch() {
-  [ "$(minor_of "$2")" = "$(minor_of "$1")" ] || return 1
-  case $(suggest_bump "$1") in
-    minor | major) return 0 ;;
-  esac
-  return 1
+# is_patch <last> <version>: succeeds when <version> is in the minor of
+# <last>, a patch, which is tagged on release/X.Y.x rather than on main.
+is_patch() {
+  [ "$(minor_of "$2")" = "$(minor_of "$1")" ]
 }
 
 # pickable <subject>: whether a commit goes into a patch on a release branch:
@@ -553,8 +548,8 @@ main() {
     die "the first section of CHANGELOG.md is '## $version', not '## vX.Y.Z': fix it in a pull request first"
   fi
 
-  # A patch once main holds a feature goes on the release branch of its minor.
-  if [ "$last" != v0.0.0 ] && git log --format=%s "$range" | needs_branch "$last" "$version"; then
+  # A patch goes on the release branch of its minor.
+  if [ "$last" != v0.0.0 ] && is_patch "$last" "$version"; then
     release_on_branch "$sha" "$last" "$version" "$rc"
     return
   fi
@@ -680,8 +675,7 @@ print_picks() {
 }
 
 # release_on_branch <main-sha> <last> <version> <rc>: the patch <version> of
-# the minor of <last>, once main holds more than fixes. <last> is the newest
-# final release, since every minor is tagged on main. The maintainer picks
+# the minor of <last>, the newest final release on main. The maintainer picks
 # the commits of main since <last> that release/X.Y.x doesn't hold yet; they
 # are cherry-picked there, in a worktree of their own, with the release's
 # section of the changelog, and the branch is pushed. Once nothing is left to
@@ -690,9 +684,6 @@ release_on_branch() {
   local main_sha=$1 start=$2 version=$3 rc=$4
   local branch base last
   branch=$(release_branch "$version")
-  echo "origin/main holds more than fixes since $start: $version is a patch on $branch."
-  echo
-
   if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null; then
     base=$(git rev-parse "origin/$branch")
     last=$(last_release "$base")
@@ -703,6 +694,8 @@ release_on_branch() {
   if ! semver_gt "$version" "$last"; then
     die "the first section of CHANGELOG.md is $version, not above $last: write the section of the release in a pull request first"
   fi
+  echo "$version is a patch of $start: it goes on $branch."
+  echo
 
   # The commits of main the branch doesn't hold yet, by their trailer. One
   # that changes only the changelog is left out: the script carries the
