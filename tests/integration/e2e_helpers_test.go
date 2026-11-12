@@ -645,8 +645,9 @@ func (e *e2eEnv) editOutsideNops(jobID, jobHCL string) {
 
 // -- job HCL --------------------------------------------------------------
 
-// e2eJob is a managed raw_exec batch job. version is a job meta key: changing
-// it between commits is the "change" nops has to deploy.
+// e2eJob is a managed raw_exec batch job, healthy once its task completes.
+// version is a job meta key: changing it between commits is the "change" nops
+// has to deploy.
 type e2eJob struct {
 	id, policy, version string
 	// namespace is the job's namespace; empty leaves it out of the HCL, so it
@@ -655,6 +656,9 @@ type e2eJob struct {
 	preHook, postHook string
 	// cmd is the target's shell command; empty means "exit 0".
 	cmd string
+	// service makes it a service job, healthy once its task runs: its update
+	// block has max_parallel = 0, so no Nomad deployment tracks it.
+	service bool
 }
 
 func (j e2eJob) hcl() string {
@@ -674,9 +678,13 @@ func (j e2eJob) hcl() string {
 	if j.namespace != "" {
 		ns = fmt.Sprintf("  namespace = %q\n", j.namespace)
 	}
+	kind := `type = "batch"`
+	if j.service {
+		kind = "type = \"service\"\n  update {\n    max_parallel = 0\n  }"
+	}
 	return fmt.Sprintf(`
 job %q {
-%s  type = "batch"
+%s  %s
   meta {
 %s  }
   group "g" {
@@ -689,7 +697,7 @@ job %q {
     }
   }
 }
-`, j.id, ns, meta.String(), cmd)
+`, j.id, ns, kind, meta.String(), cmd)
 }
 
 // file is the repository path of a job or hook.

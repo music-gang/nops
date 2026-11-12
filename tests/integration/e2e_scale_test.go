@@ -157,7 +157,7 @@ job %q {
       driver = "raw_exec"
       config {
         command = "/bin/sh"
-        args    = ["-c", "sleep 600"]
+        args    = ["-c", "exit 0"]
       }
     }
   }
@@ -187,7 +187,7 @@ func (e *e2eEnv) setNodeMeta(key, value string) {
 // TestE2EAScaleWhileWaitingForHealthIsNotAnOutsideEdit scales a batch job
 // while nops waits for it to be healthy: the deployment keeps waiting, and
 // completes once the allocations of the version nops registered and of the
-// scale run.
+// scale complete.
 func TestE2EAScaleWhileWaitingForHealthIsNotAnOutsideEdit(t *testing.T) {
 	e := newE2E(t)
 	jobID := uniqueID(t, e.raw, "scaledbatch")
