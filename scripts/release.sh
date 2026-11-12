@@ -274,6 +274,41 @@ absolute_links() {
   sed -E "s|\]\(([^)/:#][^):]*)\)|](${1}/\1)|g"
 }
 
+# unwrap: reads Markdown on stdin and puts each paragraph and list item on one
+# line: a GitHub Release breaks the line at each newline. Blank lines,
+# headings, tables, quotes and code blocks stay as they are.
+unwrap() {
+  local line text held='' fence=0
+  local item='^([-*+]|[0-9]+[.)])[[:space:]]'
+  while IFS= read -r line || [ -n "$line" ]; do
+    text=${line#"${line%%[![:space:]]*}"}
+    if [ $fence = 1 ]; then
+      printf '%s\n' "$line"
+      case $text in '```'*) fence=0 ;; esac
+      continue
+    fi
+    case $text in
+      '' | '#'* | '|'* | '>'* | '```'*)
+        [ -n "$held" ] && printf '%s\n' "$held"
+        held=''
+        printf '%s\n' "$line"
+        case $text in '```'*) fence=1 ;; esac
+        continue
+        ;;
+    esac
+    if [[ $text =~ $item ]]; then
+      [ -n "$held" ] && printf '%s\n' "$held"
+      held=$line
+    elif [ -n "$held" ]; then
+      held="$held $text"
+    else
+      held=$line
+    fi
+  done
+  [ -n "$held" ] && printf '%s\n' "$held"
+  return 0
+}
+
 # has_breaking_changes: succeeds when the changelog section on stdin has an
 # `### Breaking changes` heading.
 has_breaking_changes() {
