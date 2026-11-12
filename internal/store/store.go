@@ -827,14 +827,21 @@ func (s *Store) ListByJob(ctx context.Context, namespace, jobID string, limit in
 		ORDER BY created_at DESC, id DESC LIMIT ?`, namespace, jobID, limit)
 }
 
+// The latest deployments are read through latest_deployments, one row per
+// job, so their cost does not grow with the history.
+const (
+	latestPerJobSQL = `SELECT ` + deploymentCols + ` FROM deployments
+		WHERE id IN (SELECT latest_id FROM latest_deployments)
+		ORDER BY namespace, job_id`
+	latestCompletedPerJobSQL = `SELECT ` + deploymentCols + ` FROM deployments
+		WHERE id IN (SELECT completed_id FROM latest_deployments WHERE namespace = ?)
+		ORDER BY job_id`
+)
+
 // LatestPerJob returns the most recent deployment of every job that ever had
 // one, whatever its state, ordered by namespace and job ID.
 func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
-	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
-		WHERE id = (SELECT x.id FROM deployments x
-			WHERE x.namespace = deployments.namespace AND x.job_id = deployments.job_id
-			ORDER BY x.created_at DESC, x.id DESC LIMIT 1)
-		ORDER BY namespace, job_id`)
+	return s.queryDeployments(ctx, latestPerJobSQL)
 }
 
 // LatestCompletedPerJob returns, for every job of a namespace that ever had a
@@ -842,12 +849,7 @@ func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
 // what nops has put into production: the jobs it is answerable for, and the
 // only ones it looks for after they leave the repository.
 func (s *Store) LatestCompletedPerJob(ctx context.Context, namespace string) ([]*Deployment, error) {
-	return s.queryDeployments(ctx, `SELECT `+deploymentCols+` FROM deployments
-		WHERE namespace = ? AND state = 'completed'
-		  AND id = (SELECT x.id FROM deployments x
-			WHERE x.namespace = deployments.namespace AND x.job_id = deployments.job_id AND x.state = 'completed'
-			ORDER BY x.created_at DESC, x.id DESC LIMIT 1)
-		ORDER BY job_id`, namespace)
+	return s.queryDeployments(ctx, latestCompletedPerJobSQL, namespace)
 }
 
 // DeploymentHooks returns the hooks a deployment froze, pre before post and by

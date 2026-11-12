@@ -75,6 +75,7 @@ The migrations in `internal/store/migrations/` define the tables:
 | `job_pauses` | Pauses and resumes. Each records who did it and why. |
 | `nops_pauses` | Pauses and resumes of every job, with the same record. |
 | `window_lifts` | Deploy now requests detection hasn't used yet. |
+| `latest_deployments` | The latest deployment of each job and its latest completed one. |
 | `events` | The audit log of every deployment. |
 
 A partial unique index on `deployments` allows one active deployment per job.
