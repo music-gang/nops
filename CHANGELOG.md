@@ -4,6 +4,34 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.5
+
+### Fixes
+
+- `store`: the Jobs page and the orphan check no longer read the whole
+  deployment history on each refresh and detection cycle: their cost follows
+  the number of jobs, however long the history grows. The upgrade reads the
+  history once to fill a table of the latest deployment of each job
+  ([#315](https://github.com/music-gang/nops/pull/315)).
+- `store`: the lists, newest first, no longer show rows of the same second
+  oldest first, and the latest deployment of a job is no longer the older of
+  two created within one second. The upgrade rewrites the stored timestamps
+  once ([#316](https://github.com/music-gang/nops/pull/316)).
+- `meta`: a `nops_*` key that doesn't apply to its job logs a WARN that names
+  it and says why: a managed job's key on a hook, and `nops_pre_hook` or
+  `nops_post_hook` on a job that isn't managed
+  ([validation](docs/meta-keys.md#validation),
+  [#317](https://github.com/music-gang/nops/pull/317)).
+- `engine`: a job without a Nomad deployment that Nomad places only in part
+  no longer completes its deployment: it waits for the rest, up to the apply
+  timeout. An allocation Nomad gives up on fails the deployment at once with
+  its own failure, even while another part of the job waits for room. When
+  the apply timeout runs out while no node has room for part of a job, its
+  message names the cause
+  ([healthy](docs/architecture.md#healthy),
+  [the apply timeout](docs/architecture.md#the-apply-timeout),
+  [#318](https://github.com/music-gang/nops/pull/318)).
+
 ## v0.15.4
 
 ### Fixes
