@@ -91,8 +91,8 @@ type fakeNomad struct {
 	deployment map[string]*api.Deployment
 	deployErr  map[string]error
 
-	unfinished    map[string]bool  // jobID -> an evaluation Nomad hasn't finished
-	unfinishedErr map[string]error // what UnfinishedEvaluation returns instead
+	evals    map[string]nomadx.Evaluations // jobID -> what its evaluations say
+	evalsErr map[string]error              // what Evaluations returns instead
 
 	promoted   []string // Nomad deployment IDs PromoteDeployment was called for
 	promoteErr error    // what PromoteDeployment returns
@@ -148,8 +148,8 @@ func newFakeNomad() *fakeNomad {
 		allocsErr:      map[string]error{},
 		deployment:     map[string]*api.Deployment{},
 		deployErr:      map[string]error{},
-		unfinished:     map[string]bool{},
-		unfinishedErr:  map[string]error{},
+		evals:          map[string]nomadx.Evaluations{},
+		evalsErr:       map[string]error{},
 	}
 }
 
@@ -340,14 +340,14 @@ func (f *fakeNomad) LatestDeployment(_ context.Context, ns, jobID string) (*api.
 	return f.deployment[jobID], nil
 }
 
-func (f *fakeNomad) UnfinishedEvaluation(_ context.Context, ns, jobID string) (bool, error) {
+func (f *fakeNomad) Evaluations(_ context.Context, ns, jobID string) (nomadx.Evaluations, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	jobID = nsKey(ns, jobID)
-	if err, ok := f.unfinishedErr[jobID]; ok {
-		return false, err
+	if err, ok := f.evalsErr[jobID]; ok {
+		return nomadx.Evaluations{}, err
 	}
-	return f.unfinished[jobID], nil
+	return f.evals[jobID], nil
 }
 
 // -- fake Snapshots and Notifier ------------------------------------------

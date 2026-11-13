@@ -111,21 +111,22 @@ doesn't become healthy fails; Nops doesn't roll back.
 ### Healthy
 
 - With a Nomad deployment for this register: healthy when it's `successful`.
-- Without one: healthy when every allocation of the new version is
-  `complete` for a `batch` or `sysbatch` job, so the
+- Without one: healthy when Nomad has placed the whole new version and every
+  allocation of it is `complete` for a `batch` or `sysbatch` job, so the
   [apply timeout](#the-apply-timeout) covers its whole run, and `running` or
-  `complete` for any other job. A failed or lost allocation that Nomad
-  reschedules counts as its replacement does, and one Nomad gives up on fails
-  the deployment.
+  `complete` for any other job. While no node has room for part of it, the
+  deployment waits. A failed or lost allocation that Nomad reschedules counts
+  as its replacement does, and one Nomad gives up on fails the deployment.
 - A job with no allocations, like a periodic or parameterized job: healthy
   once registered.
 
 ### The apply timeout
 
 `-apply-timeout` counts from the start of the apply and covers the register
-and the wait for health. It pauses while canaries wait for someone to promote
-them, and restarts in full after the promotion. Promote from the deployment's
-page or in Nomad.
+and the wait for health. When it runs out while no node has room for part of
+the job, its message says what ran out. It pauses while canaries wait for
+someone to promote them, and restarts in full after the promotion. Promote
+from the deployment's page or in Nomad.
 
 ## Hook revisions
 

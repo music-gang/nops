@@ -64,6 +64,7 @@ func (e *Engine) applyCycle(ctx context.Context) {
 	e.mu.Lock()
 	e.applyAt = e.now()
 	e.mu.Unlock()
+	e.forgetNoRoom(active)
 	for _, d := range active {
 		if !e.managedNS[d.Namespace] || !e.startApply(d.ID) {
 			continue
@@ -89,6 +90,37 @@ func (e *Engine) finishApply(id string) {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
 	delete(e.inFlight, id)
+}
+
+// newNoRoom records cause as what deployment id waits for, and reports
+// whether it differs from the one recorded before.
+func (e *Engine) newNoRoom(id, cause string) bool {
+	e.applyMu.Lock()
+	defer e.applyMu.Unlock()
+	if e.noRoom[id] == cause {
+		return false
+	}
+	if cause == "" {
+		delete(e.noRoom, id)
+	} else {
+		e.noRoom[id] = cause
+	}
+	return true
+}
+
+// forgetNoRoom drops the causes recorded for deployments no longer active.
+func (e *Engine) forgetNoRoom(active []*store.Deployment) {
+	ids := make(map[string]bool, len(active))
+	for _, d := range active {
+		ids[d.ID] = true
+	}
+	e.applyMu.Lock()
+	defer e.applyMu.Unlock()
+	for id := range e.noRoom {
+		if !ids[id] {
+			delete(e.noRoom, id)
+		}
+	}
 }
 
 // applyStep advances one deployment by exactly one step, driven by its
@@ -492,8 +524,15 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 			since = d.PromotedAt
 		}
 		if e.now().After(since.Add(e.applyTimeout)) {
-			e.applyTransition(ctx, log, d, store.StateFailed,
-				fmt.Sprintf("apply did not become healthy within %s", e.applyTimeout))
+			msg := fmt.Sprintf("apply did not become healthy within %s", e.applyTimeout)
+			evals, err := e.nomad.Evaluations(ctx, d.Namespace, d.JobID)
+			switch {
+			case err != nil:
+				log.ErrorContext(ctx, "read why part of the job is unplaced", "error", err)
+			case evals.NoRoom != "":
+				msg += ": " + evals.NoRoom
+			}
+			e.applyTransition(ctx, log, d, store.StateFailed, msg)
 			return
 		}
 	}
@@ -530,7 +569,11 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 			e.promoted(ctx, log, d)
 		}
 	default:
-		// still waiting: nothing to do this cycle.
+		// still waiting: nothing to do this cycle but say once why, when no
+		// node has room for part of the job.
+		if e.newNoRoom(d.ID, reason) && reason != "" {
+			log.WarnContext(ctx, "apply waits: no node has room for part of the job", "cause", reason)
+		}
 	}
 }
 
@@ -588,9 +631,11 @@ const (
 // its Nomad deployment when there is one tracking exactly that apply, else
 // via the allocations of that job version (a batch job, or an update stanza
 // that produces no Nomad deployment): every one complete for a batch or
-// sysbatch job, running or complete for any other. healthWaiting means
-// neither healthy nor failed; reason says why for healthFailed, and for
-// healthHealthy how many allocations Nomad replaced on the way, if any.
+// sysbatch job, running or complete for any other, once Nomad has placed the
+// whole version. healthWaiting means neither healthy nor failed; reason says
+// why for healthFailed, for healthHealthy how many allocations Nomad replaced
+// on the way, if any, and for healthWaiting what no node has room for, if
+// that is what it waits for.
 //
 // A live index that moved after the register while a fresh plan of the
 // deployment's spec, with the live counts of the groups with a scaling block,
@@ -662,12 +707,18 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	if len(ours) == 0 {
 		return healthWaiting, "", nil // scheduling not done yet
 	}
+	evals, err := e.nomad.Evaluations(ctx, d.Namespace, d.JobID)
+	if err != nil {
+		return healthWaiting, "", err
+	}
 	// A failed or lost allocation is what Nomad makes of it: replaced, its
 	// replacement counts in its place; rescheduled after a delay, it is waited
 	// for; neither, it fails the apply once Nomad has no evaluation left that
-	// could still reschedule it.
+	// could still reschedule it. A blocked evaluation can place the
+	// replacement of a lost allocation, but never reschedules a failed one:
+	// Nomad does that through a follow-up evaluation.
 	var replaced, rescheduling int
-	var down *nomadx.Alloc
+	var failed, lost *nomadx.Alloc
 	for i, a := range ours {
 		if a.ClientStatus != "failed" && a.ClientStatus != "lost" {
 			continue
@@ -677,22 +728,21 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 			replaced++
 		case a.FollowupEvalID != "":
 			rescheduling++
-		case down == nil:
-			down = &ours[i]
+		case a.ClientStatus == "failed" && failed == nil:
+			failed = &ours[i]
+		case a.ClientStatus == "lost" && lost == nil:
+			lost = &ours[i]
 		}
 	}
-	if down != nil {
-		unfinished, err := e.nomad.UnfinishedEvaluation(ctx, d.Namespace, d.JobID)
-		if err != nil {
-			return healthWaiting, "", err
-		}
-		if !unfinished {
-			return healthFailed, down.Failure, nil
-		}
-		return healthWaiting, "", nil // Nomad has yet to decide on it
-	}
-	if rescheduling > 0 {
-		return healthWaiting, "", nil
+	switch {
+	case failed != nil && !evals.Pending:
+		return healthFailed, failed.Failure, nil
+	case lost != nil && !evals.Pending && !evals.Blocked:
+		return healthFailed, lost.Failure, nil
+	case failed != nil || lost != nil || rescheduling > 0:
+		return healthWaiting, evals.NoRoom, nil // Nomad has yet to decide on it
+	case evals.Blocked:
+		return healthWaiting, evals.NoRoom, nil // part of the version waits for room
 	}
 	toCompletion := runsToCompletion(live)
 	for _, a := range ours {
@@ -700,7 +750,7 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 			continue
 		}
 		if a.ClientStatus != "running" || toCompletion {
-			return healthWaiting, "", nil // still starting, or still running a batch
+			return healthWaiting, evals.NoRoom, nil // still starting, or still running a batch
 		}
 	}
 	switch {

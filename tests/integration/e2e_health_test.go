@@ -460,3 +460,164 @@ func TestE2EPromoteFromTheDashboard(t *testing.T) {
 		t.Errorf("a second promote answered %d, want 409", status)
 	}
 }
+
+// waitDeploymentEnds waits for the deployment to complete or fail.
+func waitDeploymentEnds(t *testing.T, st *store.Store, id string, timeout time.Duration) *store.Deployment {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		got, err := st.GetDeployment(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == store.StateCompleted || got.State == store.StateFailed {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment still %s after %s", got.State, timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// waitsForRoomGroup is a group no node has room for: Nomad blocks it.
+const waitsForRoomGroup = `
+  group "waits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "true"]
+      }
+      resources {
+        memory = 9000000
+      }
+    }
+  }`
+
+// A job without a Nomad deployment that Nomad places only in part is not
+// healthy: the deployment waits for the rest up to the apply timeout, and the
+// timeout says no node has room for it.
+func TestEngineApplyPlacedInPartWaitsAndNamesTheCause(t *testing.T) {
+	for name, fits := range map[string]string{
+		"batch": `
+  type = "batch"
+  group "fits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "true"]
+      }
+    }
+  }`,
+		"service": `
+  type = "service"
+  update {
+    max_parallel = 0
+  }
+  group "fits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			_, raw := newClient(t)
+			jobID := uniqueID(t, raw, "inpart")
+			hcl := fmt.Sprintf(`
+job %q {
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+  }%s%s
+}`, jobID, fits, waitsForRoomGroup)
+
+			snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+				Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: hcl}},
+			}}
+			e, st := newEngineWithApplyTimeout(t, snap, 8*time.Second)
+			if err := e.Detect(ctx); err != nil {
+				t.Fatalf("Detect: %v", err)
+			}
+			d, err := st.ActiveDeployment(ctx, "default", jobID)
+			if err != nil {
+				t.Fatalf("ActiveDeployment: %v", err)
+			}
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go e.RunApply(runCtx)
+
+			got := waitDeploymentEnds(t, st, d.ID, 60*time.Second)
+			if got.State != store.StateFailed {
+				t.Fatalf("deployment %s with group waits unplaced", got.State)
+			}
+			const want = "apply did not become healthy within 8s: no room on 1 node (memory)"
+			if got.Error != want {
+				t.Errorf("error = %q, want %q", got.Error, want)
+			}
+		})
+	}
+}
+
+// An allocation Nomad gave up on fails the deployment with its own failure,
+// though another group waits for room: the blocked evaluation can't
+// reschedule it.
+func TestEngineApplyGivenUpAllocationFailsWhileAnotherGroupWaits(t *testing.T) {
+	ctx := context.Background()
+	_, raw := newClient(t)
+	jobID := uniqueID(t, raw, "gaveup")
+	hcl := fmt.Sprintf(`
+job %q {
+  type = "batch"
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+  }
+  group "fails" {
+    restart {
+      attempts = 0
+      mode     = "fail"
+    }
+    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "exit 1"]
+      }
+    }
+  }%s
+}`, jobID, waitsForRoomGroup)
+
+	snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+		Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: hcl}},
+	}}
+	e, st := newEngineWithApplyTimeout(t, snap, time.Minute)
+	if err := e.Detect(ctx); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	d, err := st.ActiveDeployment(ctx, "default", jobID)
+	if err != nil {
+		t.Fatalf("ActiveDeployment: %v", err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go e.RunApply(runCtx)
+
+	got := waitDeploymentEnds(t, st, d.ID, 30*time.Second)
+	if got.State != store.StateFailed {
+		t.Fatalf("deployment %s, want failed", got.State)
+	}
+	if !strings.Contains(got.Error, "task t: Exit Code: 1") {
+		t.Errorf("error = %q, want the allocation's failure", got.Error)
+	}
+}
