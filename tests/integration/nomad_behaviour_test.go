@@ -853,3 +853,238 @@ job %q {
 		t.Errorf("replacement = node %s version %d, want another node and version %d", replacement.NodeName, replacement.JobVersion, lost.JobVersion)
 	}
 }
+
+// freeMemoryMB is the memory the dev agent's node has left for new
+// allocations: its own, less what it reserves and what its allocations hold.
+func freeMemoryMB(t *testing.T, raw *api.Client) int64 {
+	t.Helper()
+	nodes, _, err := raw.Nodes().List(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("want the dev agent's one node, got %d", len(nodes))
+	}
+	node, _, err := raw.Nodes().Info(nodes[0].ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	free := node.NodeResources.Memory.MemoryMB
+	if r := node.ReservedResources; r != nil {
+		free -= int64(r.Memory.MemoryMB)
+	}
+	allocs, _, err := raw.Nodes().Allocations(node.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range allocs {
+		if a.ClientTerminalStatus() || a.ServerTerminalStatus() || a.AllocatedResources == nil {
+			continue
+		}
+		for _, tr := range a.AllocatedResources.Tasks {
+			free -= tr.Memory.MemoryMB
+		}
+	}
+	return free
+}
+
+// waitJobAlloc waits for an allocation of the job that ok accepts.
+func waitJobAlloc(t *testing.T, raw *api.Client, id, what string, timeout time.Duration, ok func(*api.AllocationListStub) bool) *api.AllocationListStub {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		stubs, _, err := raw.Jobs().Allocations(id, true, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range stubs {
+			if ok(s) {
+				return s
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no allocation %s in %s: %+v", what, timeout, stubs)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// blockedEvaluations returns the job's evaluations Nomad keeps blocked until
+// there is room, once none of the others is still pending.
+func blockedEvaluations(t *testing.T, raw *api.Client, id string) []*api.Evaluation {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		evals, _, err := raw.Jobs().Evaluations(id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var blocked []*api.Evaluation
+		pending := false
+		for _, e := range evals {
+			switch e.Status {
+			case api.EvalStatusBlocked:
+				blocked = append(blocked, e)
+			case api.EvalStatusComplete, api.EvalStatusFailed, api.EvalStatusCancelled:
+			default:
+				pending = true
+			}
+		}
+		if !pending {
+			return blocked
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("evaluations of %s still pending after 30s", id)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// TestAJobPlacedInPartKeepsABlockedEvaluation settles what apply health reads
+// of a job without a Nomad deployment whose count doesn't fit: Nomad places
+// what fits and keeps a blocked evaluation for the rest, at the job's index.
+// A register that fits leaves no blocked evaluation behind.
+func TestAJobPlacedInPartKeepsABlockedEvaluation(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	id := uniqueID(t, raw, "inpart")
+
+	hcl := func(memory int64) string {
+		return fmt.Sprintf(`
+job %q {
+  type = "service"
+  update {
+    max_parallel = 0
+  }
+  group "g" {
+    count = 2
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 60"]
+      }
+      resources {
+        memory = %d
+      }
+    }
+  }
+}`, id, memory)
+	}
+	// Room for one allocation, not two.
+	register := func(memory int64) uint64 {
+		t.Helper()
+		job, err := c.ParseHCL(ctx, "default", hcl(memory), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := uint64(0)
+		if live, _, err := raw.Jobs().Info(id, nil); err == nil {
+			index = *live.JobModifyIndex
+		}
+		if _, err := c.RegisterCAS(ctx, job, index, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		live, _, err := raw.Jobs().Info(id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *live.JobModifyIndex
+	}
+	index := register(freeMemoryMB(t, raw) * 2 / 3)
+
+	waitJobAlloc(t, raw, id, "running", 60*time.Second, func(s *api.AllocationListStub) bool {
+		return s.ClientStatus == "running"
+	})
+	blocked := blockedEvaluations(t, raw, id)
+	if len(blocked) != 1 {
+		t.Fatalf("blocked evaluations = %d, want 1", len(blocked))
+	}
+	if m := blocked[0].FailedTGAllocs["g"]; m == nil || m.NodesExhausted == 0 {
+		t.Errorf("blocked evaluation's metric of group g = %+v, want an exhausted node", m)
+	}
+	if blocked[0].JobModifyIndex != index {
+		t.Errorf("blocked evaluation at job index %d, want the register's %d", blocked[0].JobModifyIndex, index)
+	}
+	stubs, _, err := raw.Jobs().Allocations(id, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stubs) != 1 {
+		t.Errorf("allocations = %d, want the 1 that fits", len(stubs))
+	}
+
+	register(50)
+	waitJobAlloc(t, raw, id, "of the version that fits", 60*time.Second, func(s *api.AllocationListStub) bool {
+		return s.ClientStatus == "running" && s.JobVersion == 1
+	})
+	for _, e := range blockedEvaluations(t, raw, id) {
+		t.Errorf("blocked evaluation %s at job index %d left after a register that fits", e.ID, e.JobModifyIndex)
+	}
+}
+
+// TestAnAllocationNomadGaveUpOnLeavesTheBlockedEvaluation settles what apply
+// health reads of a failed allocation with no reschedule left while another
+// group waits for room: no replacement and no follow-up evaluation, and the
+// other group's blocked evaluation stays.
+func TestAnAllocationNomadGaveUpOnLeavesTheBlockedEvaluation(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	id := uniqueID(t, raw, "gaveup")
+
+	job, err := c.ParseHCL(ctx, "default", fmt.Sprintf(`
+job %q {
+  type = "batch"
+  group "fails" {
+    restart {
+      attempts = 0
+      mode     = "fail"
+    }
+    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "exit 1"]
+      }
+    }
+  }
+  group "waits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "true"]
+      }
+      resources {
+        memory = 9000000
+      }
+    }
+  }
+}`, id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	failed := waitJobAlloc(t, raw, id, "failed", 60*time.Second, func(s *api.AllocationListStub) bool {
+		return s.ClientStatus == "failed"
+	})
+	blocked := blockedEvaluations(t, raw, id)
+	failed = waitJobAlloc(t, raw, id, "failed", time.Second, func(s *api.AllocationListStub) bool {
+		return s.ID == failed.ID
+	})
+	if failed.NextAllocation != "" || failed.FollowupEvalID != "" {
+		t.Errorf("failed allocation: next %q, follow-up eval %q, want neither", failed.NextAllocation, failed.FollowupEvalID)
+	}
+	if len(blocked) != 1 || blocked[0].FailedTGAllocs["waits"] == nil {
+		t.Errorf("blocked evaluations = %+v, want one for group waits", blocked)
+	}
+}

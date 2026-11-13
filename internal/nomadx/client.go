@@ -349,28 +349,37 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 	return out, nil
 }
 
-// UnfinishedEvaluation reports whether Nomad has an evaluation of the job it
-// hasn't finished: pending, or blocked until there is room to place it.
-func (c *Client) UnfinishedEvaluation(ctx context.Context, ns, jobID string) (bool, error) {
-	q, err := c.query(ctx, ns)
+// Evaluations is what a job's evaluations say about the allocations Nomad has
+// yet to place.
+type Evaluations struct {
+	// Pending: one waits for the scheduler, which may still place or
+	// reschedule an allocation.
+	Pending bool
+	// Blocked: one waits for room to place part of the job.
+	Blocked bool
+	// NoRoom says why, as Client.NoRoom does.
+	NoRoom string
+}
+
+// Evaluations reads the job's evaluations: whether one is pending, and
+// whether one is blocked until there is room to place part of the job.
+func (c *Client) Evaluations(ctx context.Context, ns, jobID string) (Evaluations, error) {
+	evals, err := c.evaluations(ctx, ns, jobID)
 	if err != nil {
-		return false, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+		return Evaluations{}, err
 	}
-	evals, _, err := c.jobs.Evaluations(jobID, q)
-	if err != nil {
-		if isNotFound(err) {
-			return false, fmt.Errorf("evaluations of job %s: %w", jobID, ErrJobNotFound)
-		}
-		return false, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
-	}
+	var out Evaluations
 	for _, e := range evals {
 		switch e.Status {
 		case api.EvalStatusComplete, api.EvalStatusFailed, api.EvalStatusCancelled:
+		case api.EvalStatusBlocked:
+			out.Blocked = true
 		default:
-			return true, nil
+			out.Pending = true
 		}
 	}
-	return false, nil
+	out.NoRoom = noRoom(evals)
+	return out, nil
 }
 
 // NoRoom says why Nomad can't place part of a job for lack of resources, from
@@ -378,21 +387,34 @@ func (c *Client) UnfinishedEvaluation(ctx context.Context, ns, jobID string) (bo
 // evaluation is blocked or none exhausted a node. A job with several groups
 // that fail names each one.
 func (c *Client) NoRoom(ctx context.Context, ns, jobID string) (string, error) {
+	evals, err := c.evaluations(ctx, ns, jobID)
+	if err != nil {
+		return "", err
+	}
+	return noRoom(evals), nil
+}
+
+func (c *Client) evaluations(ctx context.Context, ns, jobID string) ([]*api.Evaluation, error) {
 	q, err := c.query(ctx, ns)
 	if err != nil {
-		return "", fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+		return nil, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
 	}
 	evals, _, err := c.jobs.Evaluations(jobID, q)
 	if err != nil {
 		if isNotFound(err) {
-			return "", fmt.Errorf("evaluations of job %s: %w", jobID, ErrJobNotFound)
+			return nil, fmt.Errorf("evaluations of job %s: %w", jobID, ErrJobNotFound)
 		}
-		return "", fmt.Errorf("list evaluations of job %s: %w", jobID, err)
+		return nil, fmt.Errorf("list evaluations of job %s: %w", jobID, err)
 	}
+	return evals, nil
+}
+
+// noRoom is NoRoom's message for the evaluations of a job.
+func noRoom(evals []*api.Evaluation) string {
 	// The metric of each group, from its latest blocked evaluation.
 	failed := map[string]*api.AllocationMetric{}
 	for _, e := range evals {
-		if e.Status != "blocked" {
+		if e.Status != api.EvalStatusBlocked {
 			continue
 		}
 		for group, m := range e.FailedTGAllocs {
@@ -414,7 +436,7 @@ func (c *Client) NoRoom(ctx context.Context, ns, jobID string) (string, error) {
 		}
 		parts = append(parts, msg)
 	}
-	return strings.Join(parts, "; "), nil
+	return strings.Join(parts, "; ")
 }
 
 // noRoomMessage describes a metric that exhausted at least one node.

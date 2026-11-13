@@ -692,16 +692,20 @@ func TestStepHealthAllocationsPathFailedAlloc(t *testing.T) {
 
 // Without a Nomad deployment, a failed or lost allocation is what Nomad makes
 // of it: one it replaced counts through its replacement, one it will
-// reschedule is waited for, and one it gave up on fails the apply.
+// reschedule is waited for, and one it gave up on fails the apply. A blocked
+// evaluation may still place a lost allocation's replacement, never a failed
+// one's.
 func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
 	failed := nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "failed", DesiredStatus: "run", Failure: "exit code 1"}
+	lost := nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "lost", DesiredStatus: "stop", Failure: "alloc is lost since its node is down"}
+	noRoom := nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
 	for _, tc := range []struct {
-		name       string
-		allocs     []nomadx.Alloc
-		unfinished bool
-		evalErr    error
-		want       store.State
-		message    string // of the transition, when it moves
+		name    string
+		allocs  []nomadx.Alloc
+		evals   nomadx.Evaluations
+		evalErr error
+		want    store.State
+		message string // of the transition, when it moves
 	}{
 		{
 			name: "lost and replaced by a running one",
@@ -717,10 +721,10 @@ func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
 			want:   store.StateApplying,
 		},
 		{
-			name:       "failed, Nomad has yet to evaluate it",
-			allocs:     []nomadx.Alloc{failed},
-			unfinished: true,
-			want:       store.StateApplying,
+			name:   "failed, Nomad has yet to evaluate it",
+			allocs: []nomadx.Alloc{failed},
+			evals:  nomadx.Evaluations{Pending: true},
+			want:   store.StateApplying,
 		},
 		{
 			name:    "failed, the evaluations can't be read",
@@ -732,6 +736,23 @@ func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
 			name:   "failed, Nomad gave up on it",
 			allocs: []nomadx.Alloc{failed},
 			want:   store.StateFailed, message: "apply did not become healthy: exit code 1",
+		},
+		{
+			name:   "failed, Nomad gave up on it while another group waits for room",
+			allocs: []nomadx.Alloc{failed},
+			evals:  noRoom,
+			want:   store.StateFailed, message: "apply did not become healthy: exit code 1",
+		},
+		{
+			name:   "lost, its replacement waits for room",
+			allocs: []nomadx.Alloc{lost},
+			evals:  noRoom,
+			want:   store.StateApplying,
+		},
+		{
+			name:   "lost, Nomad gave up on it",
+			allocs: []nomadx.Alloc{lost},
+			want:   store.StateFailed, message: "apply did not become healthy: alloc is lost since its node is down",
 		},
 		{
 			name: "the replacement failed too, and Nomad gave up",
@@ -748,9 +769,9 @@ func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
 			d := h.applyingWithIndex("web", job, 9)
 			h.liveApplied("web", job, 9, 3)
 			h.nomad.setAllocs("web", tc.allocs...)
-			h.nomad.unfinished["web"] = tc.unfinished
+			h.nomad.evals["web"] = tc.evals
 			if tc.evalErr != nil {
-				h.nomad.unfinishedErr["web"] = tc.evalErr
+				h.nomad.evalsErr["web"] = tc.evalErr
 			}
 
 			h.step(d)
@@ -832,6 +853,36 @@ func TestStepHealthCompletesToPostHookWhenDeclared(t *testing.T) {
 	got := h.get(d.ID)
 	if got.State != store.StatePostHook {
 		t.Fatalf("state = %s, want post_hook", got.State)
+	}
+}
+
+// Without a Nomad deployment, a job Nomad placed only in part waits for the
+// rest, and the apply timeout names what no node has room for.
+func TestStepHealthAllocationsPathWaitsForRoom(t *testing.T) {
+	for jobType, placed := range map[string]string{api.JobTypeService: "running", api.JobTypeBatch: "complete"} {
+		t.Run(jobType, func(t *testing.T) {
+			h := newHarness(t)
+			h.engine.applyTimeout = time.Minute
+			job := managed("web", "auto", nil)
+			job.Type = &jobType
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, DesiredStatus: "run"})
+			h.nomad.evals["web"] = nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
+
+			h.step(d)
+			if got := h.get(d.ID); got.State != store.StateApplying {
+				t.Fatalf("state = %s (%s), want applying while part of the job is unplaced", got.State, got.Error)
+			}
+
+			h.clock.Advance(2 * time.Minute)
+			h.step(d)
+			got := h.get(d.ID)
+			const want = "apply did not become healthy within 1m0s: no room on 1 node (memory)"
+			if got.State != store.StateFailed || got.Error != want {
+				t.Fatalf("state = %s %q, want failed %q", got.State, got.Error, want)
+			}
+		})
 	}
 }
 
