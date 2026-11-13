@@ -190,6 +190,61 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name:            "a hook is not a managed job: the keys of one are ignored with a warning",
+			in:              map[string]string{KeyRole: "hook", KeyManaged: "true", KeyPolicy: "auto", KeyNotifyCompleted: "true", KeyPreHook: "backup"},
+			managed:         true,
+			policy:          PolicyAuto,
+			isHook:          true,
+			timeout:         DefaultHookTimeout,
+			pre:             []string{"backup"},
+			notifyCompleted: true,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyManaged, "set but nops_role is \"hook\": ignored"},
+				{SeverityWarn, KeyNotifyCompleted, "set but nops_role is \"hook\": ignored"},
+				{SeverityWarn, KeyPolicy, "set but nops_role is \"hook\": ignored"},
+				{SeverityWarn, KeyPreHook, "set but nops_role is \"hook\": ignored"},
+			},
+		},
+		{
+			name:    "nops_managed on a hook is ignored with a warning whatever its value",
+			in:      map[string]string{KeyRole: "hook", KeyManaged: "false"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyManaged, "set but nops_role is \"hook\": ignored"},
+			},
+		},
+		{
+			name:    "a policy on a hook names the role, not nops_managed",
+			in:      map[string]string{KeyRole: "hook", KeyPolicy: "auto"},
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyPolicy, "set but nops_role is \"hook\": ignored"},
+			},
+		},
+		{
+			name:   "hooks on a job that is not managed are ignored with a warning",
+			in:     map[string]string{KeyPreHook: "backup, migrate", KeyPostHook: "smoke"},
+			policy: PolicyNone,
+			pre:    []string{"backup", "migrate"},
+			post:   []string{"smoke"},
+			wantIssues: []Issue{
+				{SeverityWarn, KeyPostHook, "set but nops_managed is not \"true\": ignored"},
+				{SeverityWarn, KeyPreHook, "set but nops_managed is not \"true\": ignored"},
+			},
+		},
+		{
+			name:   "an invalid list of hooks on a job that is not managed is only an error",
+			in:     map[string]string{KeyManaged: "false", KeyPostHook: "smoke,"},
+			policy: PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyPostHook, "empty item in the list of hook job IDs \"smoke,\""},
+			},
+		},
+		{
 			name:    "a timeout on a job that is not a hook is ignored with a warning",
 			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyTimeout: "1m"},
 			managed: true,

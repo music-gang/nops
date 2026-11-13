@@ -89,6 +89,16 @@ func TestParseSyncWindow(t *testing.T) {
 				{SeverityWarn, KeySyncWindow, `set but nops_managed is not "true": ignored`},
 			},
 		},
+		{
+			name:       "a hook ignores it, also with nops_managed",
+			in:         map[string]string{KeyRole: "hook", KeyManaged: "true", KeyPolicy: "auto", KeySyncWindow: "0 9 * * *", KeySyncWindowDuration: "2h"},
+			wantWindow: true, wantPolicy: PolicyAuto,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyManaged, `set but nops_role is "hook": ignored`},
+				{SeverityWarn, KeyPolicy, `set but nops_role is "hook": ignored`},
+				{SeverityWarn, KeySyncWindow, `set but nops_role is "hook": ignored`},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := Parse(tc.in)
