@@ -99,7 +99,7 @@ func TestNamespaceIsPerCall(t *testing.T) {
 		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, "apps"); return err },
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "apps", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "apps", "web"); return err },
-		"evaluations": func(c *Client) error { _, err := c.UnfinishedEvaluation(ctx, "apps", "web"); return err },
+		"evaluations": func(c *Client) error { _, err := c.Evaluations(ctx, "apps", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "apps", "web") },
 		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "apps", "dep-1") },
 		"dispatch":    func(c *Client) error { _, err := c.Dispatch(ctx, "apps", "hook", nil, ""); return err },
@@ -134,7 +134,7 @@ func TestEmptyNamespaceIsRefused(t *testing.T) {
 		"list":        func(c *Client) error { _, err := c.ListJobs(ctx, ""); return err },
 		"allocations": func(c *Client) error { _, err := c.Allocations(ctx, "", "web"); return err },
 		"no room":     func(c *Client) error { _, err := c.NoRoom(ctx, "", "web"); return err },
-		"evaluations": func(c *Client) error { _, err := c.UnfinishedEvaluation(ctx, "", "web"); return err },
+		"evaluations": func(c *Client) error { _, err := c.Evaluations(ctx, "", "web"); return err },
 		"deployment":  func(c *Client) error { _, err := c.LatestDeployment(ctx, "", "web"); return err },
 		"stop":        func(c *Client) error { return c.StopJob(ctx, "", "web") },
 		"promote":     func(c *Client) error { return c.PromoteDeployment(ctx, "", "dep-1") },
@@ -496,24 +496,27 @@ func TestNoRoom(t *testing.T) {
 	}
 }
 
-func TestUnfinishedEvaluation(t *testing.T) {
+func TestEvaluations(t *testing.T) {
 	for _, tt := range []struct {
 		name, body string
-		want       bool
+		want       Evaluations
 	}{
-		{"no evaluation", `[]`, false},
-		{"all finished", `[{"Status":"complete"},{"Status":"failed"},{"Status":"canceled"}]`, false},
-		{"one pending", `[{"Status":"complete"},{"Status":"pending"}]`, true},
-		{"one blocked", `[{"Status":"blocked"}]`, true},
+		{"no evaluation", `[]`, Evaluations{}},
+		{"all finished", `[{"Status":"complete"},{"Status":"failed"},{"Status":"canceled"}]`, Evaluations{}},
+		{"one pending", `[{"Status":"complete"},{"Status":"pending"}]`, Evaluations{Pending: true}},
+		{"one blocked is not pending", `[{"Status":"blocked"}]`, Evaluations{Blocked: true}},
+		{"blocked for lack of room", `[{"Status":"pending"},
+		  {"Status":"blocked","FailedTGAllocs":{"g":{"NodesExhausted":1,"DimensionExhausted":{"memory":1}}}}]`,
+			Evaluations{Pending: true, Blocked: true, NoRoom: "no room on 1 node (memory)"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s, c := newStub(t, 200, tt.body)
-			got, err := c.UnfinishedEvaluation(context.Background(), "default", "web")
+			got, err := c.Evaluations(context.Background(), "default", "web")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != tt.want {
-				t.Errorf("UnfinishedEvaluation = %v, want %v", got, tt.want)
+				t.Errorf("Evaluations = %+v, want %+v", got, tt.want)
 			}
 			if s.path != "/v1/job/web/evaluations" || s.query["namespace"][0] != "default" {
 				t.Errorf("request = %s %v", s.path, s.query)
@@ -522,11 +525,11 @@ func TestUnfinishedEvaluation(t *testing.T) {
 	}
 
 	_, c := newStub(t, 404, "job not found")
-	if _, err := c.UnfinishedEvaluation(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Evaluations(context.Background(), "default", "x"); !errors.Is(err, ErrJobNotFound) {
 		t.Errorf("404: err = %v, want ErrJobNotFound", err)
 	}
 	_, c = newStub(t, 500, "boom")
-	if _, err := c.UnfinishedEvaluation(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
+	if _, err := c.Evaluations(context.Background(), "default", "x"); err == nil || errors.Is(err, ErrJobNotFound) {
 		t.Errorf("500: err = %v", err)
 	}
 }

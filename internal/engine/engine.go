@@ -41,9 +41,10 @@ type Nomad interface {
 	// applied job version is healthy (see docs/archive/engine-apply.md).
 	Allocations(ctx context.Context, ns, jobID string) ([]nomadx.Alloc, error)
 	LatestDeployment(ctx context.Context, ns, jobID string) (*api.Deployment, error)
-	// UnfinishedEvaluation tells apply whether Nomad may still reschedule a
-	// failed or lost allocation that names no replacement yet.
-	UnfinishedEvaluation(ctx context.Context, ns, jobID string) (bool, error)
+	// Evaluations tells apply whether Nomad may still reschedule a failed or
+	// lost allocation that names no replacement yet, and whether part of the
+	// job waits for room.
+	Evaluations(ctx context.Context, ns, jobID string) (nomadx.Evaluations, error)
 	// PromoteDeployment is used by Promote (see docs/archive/engine-apply.md,
 	// decision 11).
 	PromoteDeployment(ctx context.Context, ns, deploymentID string) error
@@ -291,6 +292,9 @@ type Engine struct {
 
 	applyMu  sync.Mutex
 	inFlight map[string]struct{}
+	// noRoom is, for each deployment waiting for room in Nomad, the cause
+	// last logged, so that each cause is logged once.
+	noRoom map[string]string
 }
 
 // Options configures New.
@@ -355,6 +359,7 @@ func New(o Options) *Engine {
 		parseCache:     map[string]parseEntry{},
 		observations:   map[jobKey]Observation{},
 		inFlight:       map[string]struct{}{},
+		noRoom:         map[string]string{},
 		kick:           make(chan struct{}, 1),
 	}
 }
