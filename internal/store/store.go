@@ -301,7 +301,14 @@ func ensureFileMode(path string, mode os.FileMode) error {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) ts() string { return s.now().UTC().Format(time.RFC3339Nano) }
+func (s *Store) ts() string { return formatTime(s.now()) }
+
+// timeLayout is RFC 3339 with all nine digits of the fraction: at a fixed
+// width, the timestamps order as text in the order of time.
+const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// formatTime is t as the store writes it.
+func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
 
 func (s *Store) migrate(ctx context.Context) error {
 	entries, err := fs.ReadDir(migrationsFS, "migrations")

@@ -484,8 +484,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 18 {
-		t.Errorf("user_version = %d, %v; want 18", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 19 {
+		t.Errorf("user_version = %d, %v; want 19", v, err)
 	}
 }
 
@@ -1171,6 +1171,131 @@ func TestLatestPerJobFromBeforeTheUpgrade(t *testing.T) {
 	completed, err = s.LatestCompletedPerJob(ctx, "default")
 	if want := []string{next.ID, "web-2"}; err != nil || !slices.Equal(ids(completed), want) {
 		t.Errorf("LatestCompletedPerJob after a new deployment = %v, %v; want %v", ids(completed), err, want)
+	}
+}
+
+// Deployments created within one second come back in time order, whatever the
+// number of digits in their timestamps.
+func TestTimestampsOrderByTimeWithinASecond(t *testing.T) {
+	ctx := context.Background()
+	now := t0
+	s, err := Open(filepath.Join(t.TempDir(), "nops.db"), WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var created []string // oldest first
+	for _, at := range []time.Duration{0, 100 * time.Millisecond, 120 * time.Millisecond} {
+		now = t0.Add(at)
+		d := newDep("web")
+		d.State, d.Error = StateFailed, "plan failed" // one active deployment per job
+		created = append(created, mustCreate(t, s, d).ID)
+	}
+	newestFirst := slices.Clone(created)
+	slices.Reverse(newestFirst)
+
+	latest, err := s.LatestDeployment(ctx, "default", "web")
+	if err != nil || latest.ID != created[2] {
+		t.Errorf("LatestDeployment = %v, %v; want %s", ids([]*Deployment{latest}), err, created[2])
+	}
+	perJob, err := s.LatestPerJob(ctx)
+	if want := created[2:]; err != nil || !slices.Equal(ids(perJob), want) {
+		t.Errorf("LatestPerJob = %v, %v; want %v", ids(perJob), err, want)
+	}
+	byJob, err := s.ListByJob(ctx, "default", "web", 10)
+	if err != nil || !slices.Equal(ids(byJob), newestFirst) {
+		t.Errorf("ListByJob = %v, %v; want %v", ids(byJob), err, newestFirst)
+	}
+	if list, _ := mustList(t, s, DeploymentQuery{}); !slices.Equal(ids(list), newestFirst) {
+		t.Errorf("ListDeployments = %v; want %v", ids(list), newestFirst)
+	}
+
+	middle := Position{CreatedAt: t0.Add(100 * time.Millisecond), ID: created[1]}
+	if list, _ := mustList(t, s, DeploymentQuery{After: &middle}); !slices.Equal(ids(list), created[:1]) {
+		t.Errorf("ListDeployments after the middle one = %v; want %v", ids(list), created[:1])
+	}
+	if list, _ := mustList(t, s, DeploymentQuery{After: &middle, Newer: true}); !slices.Equal(ids(list), created[2:]) {
+		t.Errorf("ListDeployments newer than the middle one = %v; want %v", ids(list), created[2:])
+	}
+	if list, _ := mustList(t, s, DeploymentQuery{Since: middle.CreatedAt}); !slices.Equal(ids(list), newestFirst[:2]) {
+		t.Errorf("ListDeployments since the middle one = %v; want %v", ids(list), newestFirst[:2])
+	}
+}
+
+// The timestamps written before the upgrade are rewritten to order by time,
+// and the latest deployment of each job is found again on them.
+func TestTimestampsFromBeforeTheUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names[:18] {
+		body, err := migrationsFS.ReadFile("migrations/" + name.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", name.Name(), err)
+		}
+	}
+	row := func(id, state, at string) string {
+		return fmt.Sprintf(`INSERT INTO deployments (id, job_id, namespace, commit_sha, spec_hash, job_spec, policy, state, cas_index, created_at, updated_at)
+			VALUES ('%s', 'web', 'default', 'abc1234', 'h', '{}', 'auto', '%s', 7, '%s', '%s')`, id, state, at, at)
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 18",
+		row("web-1", "completed", "2026-09-01T00:00:05Z"),
+		row("web-2", "completed", "2026-09-01T00:00:05.1Z"),
+		row("web-3", "failed", "2026-09-01T00:00:05.12Z"),
+		`UPDATE latest_deployments SET latest_id = 'web-1', completed_id = 'web-1'`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v18: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	latest, err := s.LatestPerJob(ctx)
+	if want := []string{"web-3"}; err != nil || !slices.Equal(ids(latest), want) {
+		t.Errorf("LatestPerJob after the upgrade = %v, %v; want %v", ids(latest), err, want)
+	}
+	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	if want := []string{"web-2"}; err != nil || !slices.Equal(ids(completed), want) {
+		t.Errorf("LatestCompletedPerJob after the upgrade = %v, %v; want %v", ids(completed), err, want)
+	}
+	stored := map[string]string{}
+	rows, err := s.db.Query(`SELECT id, created_at FROM deployments`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			t.Fatal(err)
+		}
+		stored[id] = at
+	}
+	rows.Close()
+	for id, want := range map[string]string{
+		"web-1": "2026-09-01T00:00:05.000000000Z",
+		"web-2": "2026-09-01T00:00:05.100000000Z",
+		"web-3": "2026-09-01T00:00:05.120000000Z",
+	} {
+		if stored[id] != want {
+			t.Errorf("created_at of %s = %q; want %q", id, stored[id], want)
+		}
+	}
+	d, err := s.GetDeployment(ctx, "web-3")
+	if want := time.Date(2026, 9, 1, 0, 0, 5, 120_000_000, time.UTC); err != nil || !d.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt of web-3 = %v, %v; want %v", d.CreatedAt, err, want)
 	}
 }
 
