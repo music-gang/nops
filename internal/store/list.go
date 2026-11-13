@@ -71,7 +71,7 @@ func (s *Store) ListDeployments(ctx context.Context, q DeploymentQuery) ([]*Depl
 			cmp, order = ">", "ASC"
 		}
 		where = append(where, "(created_at, id) "+cmp+" (?, ?)")
-		args = append(args, q.After.CreatedAt.UTC().Format(time.RFC3339Nano), q.After.ID)
+		args = append(args, formatTime(q.After.CreatedAt), q.After.ID)
 	}
 	query := `SELECT ` + deploymentCols + ` FROM deployments WHERE ` + strings.Join(where, " AND ") +
 		` ORDER BY created_at ` + order + `, id ` + order + ` LIMIT ?`
@@ -146,10 +146,10 @@ func (q DeploymentQuery) where() ([]string, []any, error) {
 		}
 	}
 	if !q.Since.IsZero() {
-		add("created_at >= ?", q.Since.UTC().Format(time.RFC3339Nano))
+		add("created_at >= ?", formatTime(q.Since))
 	}
 	if !q.Until.IsZero() {
-		add("created_at < ?", q.Until.UTC().Format(time.RFC3339Nano))
+		add("created_at < ?", formatTime(q.Until))
 	}
 	return where, args, nil
 }
