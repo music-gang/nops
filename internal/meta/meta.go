@@ -144,32 +144,6 @@ func Parse(m map[string]string) Config {
 		add(SeverityError, KeyManaged, "invalid value %q (want \"true\" or \"false\")", v)
 	}
 
-	policy := PolicyNone
-	if v, ok := m[KeyPolicy]; ok {
-		switch p := Policy(v); p {
-		case PolicyAuto, PolicyApproval, PolicyNone:
-			policy = p
-		default:
-			add(SeverityError, KeyPolicy, "invalid value %q (want auto, approval or none)", v)
-		}
-		if !c.Managed {
-			add(SeverityWarn, KeyPolicy, "set but %s is not \"true\": ignored", KeyManaged)
-		}
-	}
-
-	if v, ok := m[KeyNotifyCompleted]; ok {
-		switch v {
-		case "true":
-			c.NotifyCompleted = true
-		case "false":
-		default:
-			add(SeverityError, KeyNotifyCompleted, "invalid value %q (want \"true\" or \"false\")", v)
-		}
-		if !c.Managed {
-			add(SeverityWarn, KeyNotifyCompleted, "set but %s is not \"true\": ignored", KeyManaged)
-		}
-	}
-
 	if v, ok := m[KeyRole]; ok {
 		if v == "hook" {
 			c.IsHook = true
@@ -195,10 +169,49 @@ func Parse(m map[string]string) Config {
 		}
 	}
 
-	c.SyncWindow = parseSyncWindow(m, c.Managed, policy, add)
+	// ignored says why the keys of a managed job don't apply to this one, if
+	// they don't. A hook is never a managed job: Nops reads it as a hook only.
+	ignored := ""
+	switch {
+	case c.IsHook:
+		ignored = fmt.Sprintf("set but %s is \"hook\": ignored", KeyRole)
+		if _, ok := m[KeyManaged]; ok {
+			add(SeverityWarn, KeyManaged, "%s", ignored)
+		}
+	case !c.Managed:
+		ignored = fmt.Sprintf("set but %s is not \"true\": ignored", KeyManaged)
+	}
 
-	c.PreHooks = parseHooks(m, KeyPreHook, add)
-	c.PostHooks = parseHooks(m, KeyPostHook, add)
+	policy := PolicyNone
+	if v, ok := m[KeyPolicy]; ok {
+		switch p := Policy(v); p {
+		case PolicyAuto, PolicyApproval, PolicyNone:
+			policy = p
+		default:
+			add(SeverityError, KeyPolicy, "invalid value %q (want auto, approval or none)", v)
+		}
+		if ignored != "" {
+			add(SeverityWarn, KeyPolicy, "%s", ignored)
+		}
+	}
+
+	if v, ok := m[KeyNotifyCompleted]; ok {
+		switch v {
+		case "true":
+			c.NotifyCompleted = true
+		case "false":
+		default:
+			add(SeverityError, KeyNotifyCompleted, "invalid value %q (want \"true\" or \"false\")", v)
+		}
+		if ignored != "" {
+			add(SeverityWarn, KeyNotifyCompleted, "%s", ignored)
+		}
+	}
+
+	c.SyncWindow = parseSyncWindow(m, ignored, policy, add)
+
+	c.PreHooks = parseHooks(m, KeyPreHook, ignored, add)
+	c.PostHooks = parseHooks(m, KeyPostHook, ignored, add)
 
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Key < issues[j].Key })
 	c.Issues = issues
@@ -212,8 +225,9 @@ func Parse(m map[string]string) Config {
 
 // parseHooks reads a comma-separated list of hook job IDs, in the order they
 // run. An empty item (a stray comma, or an empty value) or the same hook twice
-// is an error for the whole key: the list is then not declared.
-func parseHooks(m map[string]string, key string, add func(Severity, string, string, ...any)) []string {
+// is an error for the whole key: the list is then not declared. A valid list
+// on a job it doesn't apply to is a Warn with the message ignored.
+func parseHooks(m map[string]string, key, ignored string, add func(Severity, string, string, ...any)) []string {
 	v, ok := m[key]
 	if !ok {
 		return nil
@@ -235,6 +249,9 @@ func parseHooks(m map[string]string, key string, add func(Severity, string, stri
 		}
 		seen[id] = true
 		ids = append(ids, id)
+	}
+	if ignored != "" {
+		add(SeverityWarn, key, "%s", ignored)
 	}
 	return ids
 }
@@ -296,10 +313,10 @@ var neverMatchesFrom = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 // are declared together or not at all. It returns nil, with an Error issue on
 // the key at fault, for any invalid value (so the job falls back to policy
 // none like any other invalid key), and, like the other keys of a managed job,
-// a Warn when the job is not managed. A window under a policy other than auto
-// is a Warn: it gates only what Nops starts on its own, and under approval the
-// person's approval is the gate.
-func parseSyncWindow(m map[string]string, managed bool, policy Policy, add func(Severity, string, string, ...any)) *SyncWindow {
+// a Warn with the message ignored when it doesn't apply to the job. A window
+// under a policy other than auto is a Warn: it gates only what Nops starts on
+// its own, and under approval the person's approval is the gate.
+func parseSyncWindow(m map[string]string, ignored string, policy Policy, add func(Severity, string, string, ...any)) *SyncWindow {
 	spec, hasSpec := m[KeySyncWindow]
 	durStr, hasDur := m[KeySyncWindowDuration]
 	switch {
@@ -333,8 +350,8 @@ func parseSyncWindow(m map[string]string, managed bool, policy Policy, add func(
 	}
 
 	switch {
-	case !managed:
-		add(SeverityWarn, KeySyncWindow, "set but %s is not \"true\": ignored", KeyManaged)
+	case ignored != "":
+		add(SeverityWarn, KeySyncWindow, "%s", ignored)
 	case policy != PolicyAuto:
 		add(SeverityWarn, KeySyncWindow, "ignored under policy %s: a window gates only what Nops starts on its own (policy auto)", policy)
 	}
