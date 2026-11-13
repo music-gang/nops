@@ -245,7 +245,7 @@ func (s *Store) CreateACLToken(ctx context.Context, t ACLToken, secretHash strin
 	t.CreatedAt = now
 	var expires any
 	if !t.ExpiresAt.IsZero() {
-		expires = t.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		expires = formatTime(t.ExpiresAt)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -257,7 +257,7 @@ func (s *Store) CreateACLToken(ctx context.Context, t ACLToken, secretHash strin
 		(accessor_id, secret_hash, name, type, acl, origin, identity, created_at, expires_at,
 		 creator_accessor_id, creator_name, creator_identity)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.AccessorID, secretHash, t.Name, t.Type, t.ACL, t.Origin, t.Identity, now.UTC().Format(time.RFC3339Nano), expires,
+		t.AccessorID, secretHash, t.Name, t.Type, t.ACL, t.Origin, t.Identity, formatTime(now), expires,
 		t.CreatorAccessorID, t.CreatorName, t.CreatorIdentity); err != nil {
 		return ACLToken{}, fmt.Errorf("create token %s: %w", t.Name, err)
 	}
@@ -321,9 +321,7 @@ func (s *Store) loadPolicies(ctx context.Context, tokens []ACLToken) error {
 	return nil
 }
 
-// expired says whether the token has expired. Expiry is compared as times, not
-// as text: RFC3339Nano drops trailing zeros, so two stamps of one moment do not
-// always sort alike.
+// expired says whether the token has expired.
 func (s *Store) expired(t ACLToken) bool {
 	return !t.ExpiresAt.IsZero() && !s.now().Before(t.ExpiresAt)
 }
@@ -592,7 +590,7 @@ func (s *Store) PutBindingRule(ctx context.Context, r BindingRule, by Audit) (Bi
 	defer tx.Rollback()
 
 	now := s.now()
-	stamp := now.UTC().Format(time.RFC3339Nano)
+	stamp := formatTime(now)
 	action := "update"
 	if r.ID == "" {
 		action = "create"
