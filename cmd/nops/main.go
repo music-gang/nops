@@ -80,7 +80,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
 	}
 	if !cfg.ACL {
-		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (-acl turns it on)")
+		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (the acl block of -config turns it on)")
 	}
 	if plainHTTP(cfg) {
 		log.Warn("the dashboard is served over plain HTTP: passwords, tokens and session cookies cross the network in clear text (the tls block of the listen block makes Nops serve HTTPS; behind a TLS proxy, set -public-url to https://)")

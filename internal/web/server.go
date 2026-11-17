@@ -125,7 +125,7 @@ type Options struct {
 	// holds behind a proxy too.
 	TLS bool
 
-	// ACL turns the access control on (-acl, docs/acl.md). Off, every token
+	// ACL turns the access control on (the acl block, docs/acl.md). Off, every token
 	// and every login can do everything.
 	ACL bool
 	// BootstrapToken is the secret of the bootstrap token, a management token

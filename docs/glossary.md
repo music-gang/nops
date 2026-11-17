@@ -56,7 +56,7 @@ See [access control](acl.md).
 | **token** | What a request to Nops carries: a public **accessor ID** and a secret. |
 | **management token** | A token that can do everything. |
 | **client token** | A token that can do what its ACL policies allow. |
-| **bootstrap token** | The management token in `-acl-bootstrap-token-file`. |
+| **bootstrap token** | The management token in the file of the `acl` block's `bootstrap_token_file`. |
 | **ACL policy** | A named set of rules that grants capabilities. Never shortened to **policy**, which is a job's. |
 | **binding rule** | What a login gets: it matches the login's claims and binds an ACL policy or management. |
 | **session token** | The token a login creates. |

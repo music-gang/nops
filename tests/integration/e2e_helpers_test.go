@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -480,6 +479,15 @@ type e2eEnv struct {
 
 func newE2E(t *testing.T, env ...string) *e2eEnv {
 	t.Helper()
+	e := newE2EWithoutLogin(t, env...)
+	e.dash.login(t, e2eUser, e2ePassword)
+	return e
+}
+
+// newE2EWithoutLogin is newE2E with the dashboard client not logged in: with
+// the ACL on, a login needs a binding rule first.
+func newE2EWithoutLogin(t *testing.T, env ...string) *e2eEnv {
+	t.Helper()
 	c, raw := newClient(t)
 	repo := newScratchRepo(t)
 	proc := startNops(t, repo.url, env...)
@@ -492,9 +500,6 @@ func newE2E(t *testing.T, env ...string) *e2eEnv {
 	t.Cleanup(func() { st.Close() })
 
 	dash := newDashboard(t, proc.baseURL)
-	if !slices.Contains(env, "NOPS_ACL=true") { // with the ACL on, a login needs a binding rule first
-		dash.login(t, e2eUser, e2ePassword)
-	}
 	return &e2eEnv{t: t, nomad: c, raw: raw, repo: repo, proc: proc, st: st, dash: dash}
 }
 

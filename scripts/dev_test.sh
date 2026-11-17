@@ -35,6 +35,10 @@ check users "$admin_user" "$(cat "$dir/users")"
 check groups 'admin: admin' "$(cat "$dir/groups")"
 check token nops_stub "$(cat "$dir/bootstrap.token")"
 check token-mode "$dir/bootstrap.token" "$(find "$dir/bootstrap.token" -perm 600)"
+check config "acl {
+  enabled              = true
+  bootstrap_token_file = \"$dir/bootstrap.token\"
+}" "$(cat "$dir/nops.hcl")"
 check jobs-files 'web.nomad.hcl
 web.vars.hcl' "$(git -C "$dir/jobs" ls-files)"
 check jobs-branch main "$(git -C "$dir/jobs" branch --show-current)"
@@ -43,9 +47,11 @@ check jobs-clean '' "$(git -C "$dir/jobs" status --porcelain)"
 # A second start keeps what is there.
 echo nops_kept >"$dir/bootstrap.token"
 echo 'admin:kept' >"$dir/users"
+echo '# kept' >"$dir/nops.hcl"
 setup_state "$dir" "$tmp/nops" "$tmp/examples" || { echo "FAIL rerun: exit $?"; failed=1; }
 check rerun-token nops_kept "$(cat "$dir/bootstrap.token")"
 check rerun-users admin:kept "$(cat "$dir/users")"
+check rerun-config '# kept' "$(cat "$dir/nops.hcl")"
 check rerun-commits 1 "$(git -C "$dir/jobs" rev-list --count HEAD)"
 
 # paint: plain text off a terminal, so logs and pipes get no escape codes.
