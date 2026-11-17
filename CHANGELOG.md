@@ -4,6 +4,23 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.15.6
+
+### Fixes
+
+- `engine`: a `system` or `sysbatch` job without a Nomad deployment no longer
+  fails at the apply timeout while a node has no room for it: it's healthy on
+  the nodes with room, as its Nomad deployment would be. With a Nomad
+  deployment or without one, the completion names the nodes without room
+  ([healthy](docs/architecture.md#healthy),
+  [#322](https://github.com/music-gang/nops/pull/322)).
+- `hooks`: a hook dispatch that Nomad answers with 429, or whose connection
+  never opens, no longer fails the hook: Nops sends it again on each poll
+  until the hook's timeout, which names the last error. After any other
+  dispatch error, a hook that Nomad didn't create fails with Nomad's error,
+  no longer with a message saying that Nops stopped
+  ([#323](https://github.com/music-gang/nops/pull/323)).
+
 ## v0.15.5
 
 ### Fixes
