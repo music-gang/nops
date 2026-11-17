@@ -196,8 +196,11 @@ func (r *Runner) finish(ctx context.Context, log *slog.Logger, run *store.HookRu
 //
 // The run is saved as running BEFORE the dispatch, so a crash after Nomad
 // accepted it is recognisable on resume (see recoverChild). Saving the child ID
-// comes right after. A dispatch Nomad refused (4xx) created nothing, so it fails
-// the run with Nomad's answer; any other error leaves the run for recoverChild.
+// comes right after. A dispatch Nomad refused created nothing, so it fails the
+// run with Nomad's answer. One Nomad did not take (a 429, a connection that
+// never opened) is sent again every poll until the timeout, which names its
+// last error. Any other error may have created the child: after a poll, the
+// token looks it up, and the run fails with that error if there is none.
 func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, run *store.HookRun, deadline time.Time) (res Result, done bool, err error) {
 	if !r.now().Before(deadline) {
 		res, err = r.finish(ctx, log, run, store.HookTimedOut, fmt.Sprintf("timed out after %s before the hook was dispatched", run.Timeout))
@@ -233,21 +236,52 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 		return fail("hook job %q: %v", run.HookJobID, err)
 	}
 
-	if err := r.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookRunning}); err != nil {
-		return Result{}, false, err
+	// notTaken is the last error of a dispatch Nomad did not take.
+	var notTaken error
+	for {
+		if notTaken != nil && !r.now().Before(deadline) {
+			res, err = r.finish(ctx, log, run, store.HookTimedOut, fmt.Sprintf(
+				"timed out after %s before the hook was dispatched: %v", run.Timeout, notTaken))
+			return res, true, err
+		}
+		if err := r.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookRunning}); err != nil {
+			return Result{}, false, err
+		}
+		run.State = store.HookRunning
+		child, err := r.nomad.Dispatch(ctx, req.Namespace, run.HookJobID, dm, run.IdempotencyToken)
+		switch {
+		case err == nil:
+			if err := r.saveChild(ctx, log, run, child.JobID); err != nil {
+				return Result{}, false, err
+			}
+			return Result{}, false, nil
+		case errors.Is(err, nomadx.ErrDispatchRefused):
+			return fail("dispatch of hook job %q: %v", run.HookJobID, err)
+		case errors.Is(err, nomadx.ErrDispatchRetryable):
+			// Nothing was created: back to dispatching, so a crash before the
+			// next attempt resumes with a dispatch, not a lookup.
+			if err := r.store.UpdateHookRun(ctx, run.ID, store.HookUpdate{State: store.HookDispatching}); err != nil {
+				return Result{}, false, err
+			}
+			run.State = store.HookDispatching
+			if notTaken == nil {
+				log.Warn("hook dispatch not taken by Nomad: sending it again until the hook's timeout", "error", err)
+			}
+			notTaken = err
+			if err := r.wait(ctx, r.poll); err != nil {
+				return Result{}, false, err
+			}
+		default:
+			// The dispatch may have gone through: look for the child after a
+			// poll, rather than dispatch blind.
+			log.Warn("hook dispatch failed: looking for its run in Nomad", "error", err)
+			if err := r.wait(ctx, r.poll); err != nil {
+				return Result{}, false, err
+			}
+			return r.findChild(ctx, log, req.Namespace, run,
+				fmt.Sprintf("the dispatch of hook job %q failed (%v) and may have reached Nomad", run.HookJobID, err))
+		}
 	}
-	run.State = store.HookRunning
-	child, err := r.nomad.Dispatch(ctx, req.Namespace, run.HookJobID, dm, run.IdempotencyToken)
-	if errors.Is(err, nomadx.ErrDispatchRefused) {
-		return fail("dispatch of hook job %q: %v", run.HookJobID, err)
-	}
-	if err != nil {
-		return Result{}, false, err
-	}
-	if err := r.saveChild(ctx, log, run, child.JobID); err != nil {
-		return Result{}, false, err
-	}
-	return Result{}, false, nil
 }
 
 func (r *Runner) saveChild(ctx context.Context, log *slog.Logger, run *store.HookRun, childID string) error {
@@ -260,21 +294,27 @@ func (r *Runner) saveChild(ctx context.Context, log *slog.Logger, run *store.Hoo
 }
 
 // recoverChild resumes a run that is running but has no child ID: the dispatch
-// may have reached Nomad before a crash (or a failed save) lost the ID. The
+// may have reached Nomad before a crash, a failed save or a failed lookup lost
+// the ID.
+func (r *Runner) recoverChild(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun) (Result, bool, error) {
+	return r.findChild(ctx, log, ns, run, fmt.Sprintf("the dispatch of hook job %q may have reached Nomad", run.HookJobID))
+}
+
+// findChild looks for the child of a dispatch whose outcome is unknown. The
 // idempotency token finds the child if it still exists, and the run carries on
 // with it, timeout included. If there is none, the outcome cannot be known: the
 // dispatch may never have been sent, or the child may have run and been
 // garbage-collected. Dispatching again could run the hook twice, so the run
-// fails instead.
-func (r *Runner) recoverChild(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun) (Result, bool, error) {
+// fails instead, with why the outcome is unknown.
+func (r *Runner) findChild(ctx context.Context, log *slog.Logger, ns string, run *store.HookRun, why string) (Result, bool, error) {
 	id, err := r.nomad.FindDispatched(ctx, ns, run.HookJobID, run.IdempotencyToken)
 	if err != nil {
 		return Result{}, false, err
 	}
 	if id == "" {
 		res, err := r.finish(ctx, log, run, store.HookFailed, fmt.Sprintf(
-			"the dispatch of hook job %q may have been sent before nops stopped, but no run with its token exists in Nomad (never created, or garbage-collected): the outcome is unknown, so it is not dispatched again; check %s/dispatch-* in Nomad",
-			run.HookJobID, run.HookJobID))
+			"%s, but no run with its token exists in Nomad (never created, or garbage-collected): the outcome is unknown, so it is not dispatched again; check %s/dispatch-* in Nomad",
+			why, run.HookJobID))
 		return res, true, err
 	}
 	if err := r.saveChild(ctx, log, run, id); err != nil {
