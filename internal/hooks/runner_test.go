@@ -55,6 +55,9 @@ type fakeNomad struct {
 
 	jobErr, dispatchErr, allocsErr, stopErr, findErr, noRoomErr error
 	noRoomCalls                                                 int
+	// lostAnswer, when set, is the error of a dispatch that created its child:
+	// the answer was lost on the way back.
+	lostAnswer error
 }
 
 type dispatchCall struct {
@@ -112,6 +115,9 @@ func (f *fakeNomad) Dispatch(_ context.Context, ns, parent string, meta map[stri
 	id := fmt.Sprintf("%s/dispatch-%d", parent, len(f.tokens)+1)
 	f.tokens[token] = id
 	f.jobs[id] = &api.Job{ID: &id, Status: ptr("pending")}
+	if f.lostAnswer != nil {
+		return nil, f.lostAnswer
+	}
 	return &nomadx.DispatchResult{JobID: id}, nil
 }
 
@@ -643,25 +649,120 @@ func TestRunStopsAdoptedChildPastDeadline(t *testing.T) {
 }
 
 // A dispatch that returns an error may or may not have reached Nomad. The run
-// is already marked, so the retry looks the child up instead of dispatching blind.
+// looks the child up instead of dispatching blind, and fails with that error
+// when there is none.
 func TestRunAfterDispatchErrorDoesNotDispatchBlind(t *testing.T) {
 	h := newHarness(t)
 	h.addHook("hook", []string{"nops_deployment_id"}, nil)
-	boom := errors.New("connection reset")
-	h.nomad.dispatchErr = boom
+	h.nomad.dispatchErr = errors.New("Unexpected response code: 500 (No cluster leader)")
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") ||
+		!strings.Contains(res.Error, "No cluster leader") || strings.Contains(res.Error, "nops stopped") {
+		t.Fatalf("result = %+v, want an unknown outcome naming the dispatch error", res)
+	}
+	if len(h.nomad.dispatches) != 1 {
+		t.Errorf("dispatches = %d, want 1: dispatched blind after an ambiguous error", len(h.nomad.dispatches))
+	}
+}
+
+// A dispatch whose answer was lost created its child: the lookup finds it and
+// the run carries on with it.
+func TestRunAdoptsChildOfAFailedDispatch(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.lostAnswer = errors.New("read: connection reset by peer")
+	h.onPoll = func(n int) {
+		if n == 2 {
+			h.nomad.finish("hook/dispatch-1", "complete", "")
+		}
+	}
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookSucceeded || res.DispatchedJobID != "hook/dispatch-1" {
+		t.Fatalf("result = %+v, want the child adopted and succeeded", res)
+	}
+	if len(h.nomad.dispatches) != 1 {
+		t.Errorf("dispatches = %d, want 1", len(h.nomad.dispatches))
+	}
+}
+
+// A dispatch Nomad did not take created nothing: it is sent again every poll,
+// with the same token, and the run carries on once Nomad takes it.
+func TestRunSendsAgainADispatchNomadDidNotTake(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.dispatchErr = fmt.Errorf("dispatch job hook: %w: Unexpected response code: 429", nomadx.ErrDispatchRetryable)
+	h.onPoll = func(n int) {
+		switch n {
+		case 1:
+			if run := h.hookRun(); run.State != store.HookDispatching {
+				t.Errorf("stored state between attempts = %s, want dispatching", run.State)
+			}
+		case 2:
+			h.nomad.dispatchErr = nil
+		case 3:
+			h.nomad.finish("hook/dispatch-1", "complete", "")
+		}
+	}
+
+	res := mustRun(t, h.runner, h.request("hook", time.Minute))
+	if res.State != store.HookSucceeded || res.Error != "" {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(h.nomad.dispatches) != 3 {
+		t.Fatalf("dispatches = %d, want 3", len(h.nomad.dispatches))
+	}
+	for _, d := range h.nomad.dispatches {
+		if d.Token != h.nomad.dispatches[0].Token {
+			t.Errorf("token = %s, want the same token on every attempt", d.Token)
+		}
+	}
+}
+
+// A dispatch Nomad never takes times out, naming the last error.
+func TestRunDispatchNomadNeverTakesTimesOut(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.dispatchErr = fmt.Errorf("dispatch job hook: %w: dial tcp 127.0.0.1:4646: connect: connection refused", nomadx.ErrDispatchRetryable)
+
+	res := mustRun(t, h.runner, h.request("hook", 5*time.Second))
+	if res.State != store.HookTimedOut || !strings.Contains(res.Error, "before the hook was dispatched") ||
+		!strings.Contains(res.Error, "connection refused") {
+		t.Fatalf("result = %+v, want timed out naming the last dispatch error", res)
+	}
+	if len(h.nomad.dispatches) != 3 {
+		t.Errorf("dispatches = %d, want one per poll within the timeout", len(h.nomad.dispatches))
+	}
+	if len(h.nomad.stopped) != 0 {
+		t.Errorf("stopped = %v, want nothing: no child exists", h.nomad.stopped)
+	}
+}
+
+// A failed dispatch whose lookup fails too leaves the run to the next call,
+// which looks again.
+func TestRunAfterDispatchErrorLookupFails(t *testing.T) {
+	h := newHarness(t)
+	h.addHook("hook", []string{"nops_deployment_id"}, nil)
+	h.nomad.dispatchErr = errors.New("Unexpected response code: 500")
+	boom := errors.New("nomad down")
+	h.nomad.findErr = boom
 
 	if _, err := h.runner.Run(context.Background(), h.request("hook", time.Minute)); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want the dispatch error", err)
+		t.Fatalf("err = %v, want the lookup error", err)
 	}
-	h.nomad.dispatchErr = nil
+	if run := h.hookRun(); run.State != store.HookRunning {
+		t.Errorf("stored state = %s, want running (nothing decided)", run.State)
+	}
+	h.nomad.findErr = nil
 	h.nomad.dispatches = nil
 
 	res := mustRun(t, h.runner, h.request("hook", time.Minute))
-	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") {
+	if res.State != store.HookFailed || !strings.Contains(res.Error, "outcome is unknown") || strings.Contains(res.Error, "nops stopped") {
 		t.Fatalf("result = %+v", res)
 	}
 	if len(h.nomad.dispatches) != 0 {
-		t.Errorf("dispatched blind after an ambiguous error: %+v", h.nomad.dispatches)
+		t.Errorf("dispatched blind on resume: %+v", h.nomad.dispatches)
 	}
 }
 
@@ -810,7 +911,7 @@ func TestRunInfrastructureErrors(t *testing.T) {
 		wantState store.HookState
 	}{
 		{"reading the hook job", func(h *harness) { h.nomad.jobErr = boom }, store.HookDispatching},
-		{"dispatch", func(h *harness) { h.nomad.dispatchErr = boom }, store.HookRunning},
+		{"dispatch, then its lookup", func(h *harness) { h.nomad.dispatchErr, h.nomad.findErr = boom, boom }, store.HookRunning},
 		{"reading the child", func(h *harness) {
 			h.onPoll = nil
 			h.nomad.jobErr = nil

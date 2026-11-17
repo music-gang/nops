@@ -385,12 +385,15 @@ func TestDispatchSendsIdempotencyToken(t *testing.T) {
 // after a 5xx the dispatch may have been created.
 func TestDispatchRefused(t *testing.T) {
 	for _, tc := range []struct {
-		status      int
-		wantRefused bool
+		status        int
+		wantRefused   bool
+		wantRetryable bool
 	}{
-		{403, true},
-		{400, true},
-		{500, false},
+		{403, true, false},
+		{400, true, false},
+		{408, true, false},
+		{429, false, true},
+		{500, false, false},
 	} {
 		_, c := newStub(t, tc.status, "Permission denied")
 		_, err := c.Dispatch(context.Background(), "default", "hook", nil, "d1:pre")
@@ -400,6 +403,21 @@ func TestDispatchRefused(t *testing.T) {
 		if got := errors.Is(err, ErrDispatchRefused); got != tc.wantRefused {
 			t.Errorf("%d: errors.Is(ErrDispatchRefused) = %v, want %v", tc.status, got, tc.wantRefused)
 		}
+		if got := errors.Is(err, ErrDispatchRetryable); got != tc.wantRetryable {
+			t.Errorf("%d: errors.Is(ErrDispatchRetryable) = %v, want %v", tc.status, got, tc.wantRetryable)
+		}
+	}
+}
+
+// A dispatch whose connection never opened reached no Nomad: it can be sent
+// again.
+func TestDispatchConnectionRefusedIsRetryable(t *testing.T) {
+	s, c := newStub(t, http.StatusOK, `{}`)
+	s.srv.Close()
+
+	_, err := c.Dispatch(context.Background(), "default", "hook", nil, "d1:pre")
+	if !errors.Is(err, ErrDispatchRetryable) || errors.Is(err, ErrDispatchRefused) {
+		t.Errorf("err = %v, want only ErrDispatchRetryable", err)
 	}
 }
 
