@@ -25,27 +25,36 @@ import (
 	"github.com/music-gang/nops/internal/store"
 )
 
-// Options configures the adapters. An adapter is on when its URL is set.
+// Options configures the adapters.
 type Options struct {
-	Webhook   Endpoint // generic JSON POST; Token is sent as Authorization: Bearer
-	Discord   Endpoint // webhook URL; the token is part of it
-	Slack     Endpoint // incoming webhook URL; the token is part of it
-	Ntfy      Endpoint // topic URL; Token is sent as Authorization: Bearer
-	Gotify    Endpoint // server URL (messages go to <URL>/message); Token is the app token
-	PublicURL string   // external URL of the dashboard; empty means no links
+	// Adapters receive every notification, in their order.
+	Adapters  []Adapter
+	PublicURL string // external URL of the dashboard; empty means no links
 	// CommitURL returns the web address of a commit of the named repository,
 	// or "" if there is none.
 	CommitURL func(repo, sha string) string
 	// NomadUIURL is the address of the Nomad UI as a browser reaches it; empty
 	// means no link to the job in Nomad.
 	NomadUIURL string
-	Timeout    time.Duration
 }
 
-// Endpoint is where an adapter sends, and with which token.
-type Endpoint struct {
-	URL   string
-	Token string
+// The types of an adapter.
+const (
+	TypeWebhook = "webhook" // generic JSON POST; Token is sent as Authorization: Bearer
+	TypeDiscord = "discord" // webhook URL; the token is part of it
+	TypeSlack   = "slack"   // incoming webhook URL; the token is part of it
+	TypeNtfy    = "ntfy"    // topic URL; Token is sent as Authorization: Bearer
+	TypeGotify  = "gotify"  // server URL (messages go to <URL>/message); Token is the app token
+)
+
+// Adapter is one place notifications go: a notify block of the configuration.
+type Adapter struct {
+	// Name labels the adapter in the log and in Failures.
+	Name    string
+	Type    string // one of the Type* constants
+	URL     string
+	Token   string
+	Timeout time.Duration // of one request
 }
 
 // Event is what a notification says. It is also the body of the generic
@@ -119,6 +128,7 @@ type sender struct {
 	name   string
 	url    string
 	format func(Event) (request, error)
+	client *http.Client   // bounded by the adapter's timeout
 	failed *atomic.Uint64 // deliveries that did not go through, for Failures
 }
 
@@ -128,32 +138,38 @@ type Notifier struct {
 	publicURL string
 	nomadUI   string
 	commitURL func(repo, sha string) string
-	client    *http.Client
 	log       *slog.Logger
 }
 
-// New builds a Notifier with one sender per adapter whose URL is set.
-func New(o Options, log *slog.Logger) *Notifier {
+// New builds a Notifier with one sender per adapter. An adapter of an unknown
+// type is an error.
+func New(o Options, log *slog.Logger) (*Notifier, error) {
 	n := &Notifier{
 		publicURL: strings.TrimRight(o.PublicURL, "/"),
 		nomadUI:   strings.TrimRight(o.NomadUIURL, "/"),
 		commitURL: o.CommitURL,
-		client:    &http.Client{Timeout: o.Timeout},
 		log:       log,
 	}
-	add := func(name, url string, format func(Event) (request, error)) {
-		if url != "" {
-			n.senders = append(n.senders, sender{name: name, url: url, format: format, failed: new(atomic.Uint64)})
+	for _, a := range o.Adapters {
+		s := sender{name: a.Name, url: a.URL, client: &http.Client{Timeout: a.Timeout}, failed: new(atomic.Uint64)}
+		switch a.Type {
+		case TypeWebhook:
+			s.format = func(e Event) (request, error) { return webhook(e, a.Token) }
+		case TypeDiscord:
+			s.format = discord
+		case TypeSlack:
+			s.format = slack
+		case TypeNtfy:
+			s.format = func(e Event) (request, error) { return ntfy(e, a.Token) }
+		case TypeGotify:
+			s.url = strings.TrimRight(a.URL, "/") + "/message"
+			s.format = func(e Event) (request, error) { return gotify(e, a.Token) }
+		default:
+			return nil, fmt.Errorf("adapter %q: unknown type %q", a.Name, a.Type)
 		}
+		n.senders = append(n.senders, s)
 	}
-	add("webhook", o.Webhook.URL, func(e Event) (request, error) { return webhook(e, o.Webhook.Token) })
-	add("discord", o.Discord.URL, discord)
-	add("slack", o.Slack.URL, slack)
-	add("ntfy", o.Ntfy.URL, func(e Event) (request, error) { return ntfy(e, o.Ntfy.Token) })
-	if o.Gotify.URL != "" {
-		add("gotify", strings.TrimRight(o.Gotify.URL, "/")+"/message", func(e Event) (request, error) { return gotify(e, o.Gotify.Token) })
-	}
-	return n
+	return n, nil
 }
 
 // Notify sends d to every configured adapter, one after the other, each
@@ -259,7 +275,7 @@ func (n *Notifier) send(ctx context.Context, s sender, e Event) error {
 		req.Header[k] = v
 	}
 	req.Header.Set("Content-Type", r.contentType)
-	resp, err := n.client.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {

@@ -4,7 +4,7 @@
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
 // variable, the variable over the default. The file holds only what a flag
-// cannot: the repository, listen, nomad and auth blocks. nops reads nothing else:
+// cannot: the repository, listen, nomad, auth and notify blocks. nops reads nothing else:
 // the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -58,6 +58,10 @@ const (
 	defaultLoginMaxFailures   = 10
 	defaultLoginFailureWindow = 15 * time.Minute
 )
+
+// defaultNotifyTimeout is how long a notification request may take, unless
+// its notify block says otherwise.
+const defaultNotifyTimeout = 10 * time.Second
 
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
@@ -148,23 +152,9 @@ type Config struct {
 	ACLBootstrapTokenFile string
 	ACLBootstrapToken     string
 
-	// Notification adapters: each one is on when its URL is set. URLs that
-	// carry a token and every token are read from files by Load.
-	NotifyWebhookURLFile   string
-	NotifyWebhookURL       string
-	NotifyWebhookTokenFile string
-	NotifyWebhookToken     string
-	NotifyDiscordURLFile   string
-	NotifyDiscordURL       string
-	NotifySlackURLFile     string
-	NotifySlackURL         string
-	NotifyNtfyURL          string
-	NotifyNtfyTokenFile    string
-	NotifyNtfyToken        string
-	NotifyGotifyURL        string
-	NotifyGotifyTokenFile  string
-	NotifyGotifyToken      string
-	NotifyTimeout          time.Duration
+	// Notify are the notification adapters, the notify blocks of the -config
+	// file in their order.
+	Notify []Notify
 
 	// PublicURL is the dashboard's external URL, without trailing slash. If
 	// not set explicitly, check() derives it from ListenAddr.
@@ -202,6 +192,15 @@ type Repository struct {
 	// Jobs are the "<namespace>/<job ID>" patterns of the jobs the repository
 	// may declare, path.Match syntax; nil is any job.
 	Jobs []string
+}
+
+// Notify is one notification adapter, a notify block of the -config file.
+type Notify struct {
+	Name    string
+	Type    string // webhook, discord, slack, ntfy or gotify
+	URL     string // read from url_file for webhook, discord and slack: it may hold a token
+	Token   string // content of token_file
+	Timeout time.Duration
 }
 
 type option struct {
@@ -318,48 +317,6 @@ var options = []option{
 			return
 		}},
 
-	{name: "notify-webhook-url-file", usage: "`file` holding the URL that receives notifications as a generic JSON POST (empty: off)",
-		set: func(c *Config, v string) (err error) {
-			c.NotifyWebhookURLFile = v
-			c.NotifyWebhookURL, err = urlFile(v)
-			return
-		}},
-	{name: "notify-webhook-token-file", usage: "`file` holding a token sent to the webhook as Authorization: Bearer",
-		set: func(c *Config, v string) (err error) {
-			c.NotifyWebhookTokenFile = v
-			c.NotifyWebhookToken, err = secretFile(v)
-			return
-		}},
-	{name: "notify-discord-url-file", usage: "`file` holding the Discord webhook URL (empty: off)",
-		set: func(c *Config, v string) (err error) {
-			c.NotifyDiscordURLFile = v
-			c.NotifyDiscordURL, err = urlFile(v)
-			return
-		}},
-	{name: "notify-slack-url-file", usage: "`file` holding the Slack incoming webhook URL (empty: off)",
-		set: func(c *Config, v string) (err error) {
-			c.NotifySlackURLFile = v
-			c.NotifySlackURL, err = urlFile(v)
-			return
-		}},
-	{name: "notify-ntfy-url", usage: "ntfy topic URL, e.g. https://ntfy.example.com/nops (empty: off)",
-		set: func(c *Config, v string) (err error) { c.NotifyNtfyURL, err = optionalURL(v); return }},
-	{name: "notify-ntfy-token-file", usage: "`file` holding the ntfy access token",
-		set: func(c *Config, v string) (err error) {
-			c.NotifyNtfyTokenFile = v
-			c.NotifyNtfyToken, err = secretFile(v)
-			return
-		}},
-	{name: "notify-gotify-url", usage: "Gotify server URL; messages go to <url>/message (empty: off)",
-		set: func(c *Config, v string) (err error) { c.NotifyGotifyURL, err = optionalURL(v); return }},
-	{name: "notify-gotify-token-file", usage: "`file` holding the Gotify application token (required with -notify-gotify-url)",
-		set: func(c *Config, v string) (err error) {
-			c.NotifyGotifyTokenFile = v
-			c.NotifyGotifyToken, err = secretFile(v)
-			return
-		}},
-	{name: "notify-timeout", def: "10s", usage: "timeout of a notification request",
-		set: func(c *Config, v string) (err error) { c.NotifyTimeout, err = positiveDuration(v); return }},
 	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr)",
 		set: func(c *Config, v string) (err error) {
 			c.PublicURL, err = optionalURL(v)
@@ -399,6 +356,21 @@ var removedOptions = []removedOption{
 	{name: "oidc-allowed-users", replacedBy: "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
 	{name: "oidc-allowed-groups", replacedBy: "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
 	{name: "metrics-token-file", valueEnv: "NOPS_METRICS_TOKEN", replacedBy: "give Prometheus a token with the metrics capability (docs/metrics.md#scraping)"},
+	{name: "notify-webhook-url-file", valueEnv: "NOPS_NOTIFY_WEBHOOK_URL", replacedBy: notifyReplacement("url_file", "webhook")},
+	{name: "notify-webhook-token-file", valueEnv: "NOPS_NOTIFY_WEBHOOK_TOKEN", replacedBy: notifyReplacement("token_file", "webhook")},
+	{name: "notify-discord-url-file", valueEnv: "NOPS_NOTIFY_DISCORD_URL", replacedBy: notifyReplacement("url_file", "discord")},
+	{name: "notify-slack-url-file", valueEnv: "NOPS_NOTIFY_SLACK_URL", replacedBy: notifyReplacement("url_file", "slack")},
+	{name: "notify-ntfy-url", replacedBy: notifyReplacement("url", "ntfy")},
+	{name: "notify-ntfy-token-file", valueEnv: "NOPS_NOTIFY_NTFY_TOKEN", replacedBy: notifyReplacement("token_file", "ntfy")},
+	{name: "notify-gotify-url", replacedBy: notifyReplacement("url", "gotify")},
+	{name: "notify-gotify-token-file", valueEnv: "NOPS_NOTIFY_GOTIFY_TOKEN", replacedBy: notifyReplacement("token_file", "gotify")},
+	{name: "notify-timeout", replacedBy: "timeout in each notify block of -config (docs/configuration.md#notifications)"},
+}
+
+// notifyReplacement says which attribute of a notify block replaces a removed
+// -notify-* option.
+func notifyReplacement(attr, typ string) string {
+	return fmt.Sprintf("%s in a notify block of type %q in -config (docs/configuration.md#notifications)", attr, typ)
 }
 
 // value is the flag.Value of every option: it only records the raw string,
@@ -495,6 +467,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.loadNomad(fc)...)
 	errs = append(errs, c.loadAuth(fc)...)
+	errs = append(errs, c.loadNotify(fc)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -510,7 +483,6 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 // (see docs/configuration.md#secrets).
 type secretValue struct {
 	envVar string // always the _FILE option's variable with _FILE dropped
-	isURL  bool   // Discord/Slack/webhook URLs are validated, but never echoed
 	get    func(*Config) string
 	set    func(*Config, string)
 }
@@ -526,18 +498,6 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
 	{envVar: "NOPS_ACL_BOOTSTRAP_TOKEN",
 		get: func(c *Config) string { return c.ACLBootstrapToken }, set: func(c *Config, v string) { c.ACLBootstrapToken = v }},
-	{envVar: "NOPS_NOTIFY_WEBHOOK_URL", isURL: true,
-		get: func(c *Config) string { return c.NotifyWebhookURL }, set: func(c *Config, v string) { c.NotifyWebhookURL = v }},
-	{envVar: "NOPS_NOTIFY_WEBHOOK_TOKEN",
-		get: func(c *Config) string { return c.NotifyWebhookToken }, set: func(c *Config, v string) { c.NotifyWebhookToken = v }},
-	{envVar: "NOPS_NOTIFY_DISCORD_URL", isURL: true,
-		get: func(c *Config) string { return c.NotifyDiscordURL }, set: func(c *Config, v string) { c.NotifyDiscordURL = v }},
-	{envVar: "NOPS_NOTIFY_SLACK_URL", isURL: true,
-		get: func(c *Config) string { return c.NotifySlackURL }, set: func(c *Config, v string) { c.NotifySlackURL = v }},
-	{envVar: "NOPS_NOTIFY_NTFY_TOKEN",
-		get: func(c *Config) string { return c.NotifyNtfyToken }, set: func(c *Config, v string) { c.NotifyNtfyToken = v }},
-	{envVar: "NOPS_NOTIFY_GOTIFY_TOKEN",
-		get: func(c *Config) string { return c.NotifyGotifyToken }, set: func(c *Config, v string) { c.NotifyGotifyToken = v }},
 }
 
 // resolveSecretValues fills every secret still empty after the flag/env-file
@@ -556,12 +516,6 @@ func resolveSecretValues(c *Config, getenv func(string) string) []error {
 		if v == "" {
 			errs = append(errs, fmt.Errorf("%s: is empty", sv.envVar))
 			continue
-		}
-		if sv.isURL {
-			if _, err := httpURL(v); err != nil {
-				errs = append(errs, fmt.Errorf("%s: does not hold an http:// or https:// URL with a host", sv.envVar))
-				continue
-			}
 		}
 		sv.set(c, v)
 	}
@@ -591,18 +545,6 @@ func (c *Config) check() []error {
 		if r.Username == "" {
 			errs = append(errs, fmt.Errorf("a git token needs a non-empty %s", username))
 		}
-	}
-	for _, t := range []struct{ token, url, name, urlOpt string }{
-		{c.NotifyWebhookToken, c.NotifyWebhookURL, "webhook", "-notify-webhook-url-file"},
-		{c.NotifyNtfyToken, c.NotifyNtfyURL, "ntfy", "-notify-ntfy-url"},
-		{c.NotifyGotifyToken, c.NotifyGotifyURL, "gotify", "-notify-gotify-url"},
-	} {
-		if t.token != "" && t.url == "" {
-			errs = append(errs, fmt.Errorf("a %s token is set without a %s URL (%s)", t.name, t.name, t.urlOpt))
-		}
-	}
-	if c.NotifyGotifyURL != "" && c.NotifyGotifyToken == "" {
-		errs = append(errs, errors.New("a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"))
 	}
 	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != ""
 	switch c.AuthMode {
@@ -654,6 +596,16 @@ type fileConfig struct {
 	Listen       *fileListen      `hcl:"listen,block"`
 	Nomad        *fileNomad       `hcl:"nomad,block"`
 	Auth         []fileAuth       `hcl:"auth,block"`
+	Notify       []fileNotify     `hcl:"notify,block"`
+}
+
+type fileNotify struct {
+	Name      string  `hcl:"name,label"`
+	Type      string  `hcl:"type"`
+	URLFile   *string `hcl:"url_file,optional"`
+	URL       *string `hcl:"url,optional"`
+	TokenFile *string `hcl:"token_file,optional"`
+	Timeout   *string `hcl:"timeout,optional"`
 }
 
 type fileAuth struct {
@@ -860,6 +812,89 @@ func (c *Config) loadAuth(fc *fileConfig) []error {
 			errs = append(errs, fmt.Errorf("-config %s: auth: failure_window: %w", c.ConfigFile, err))
 		} else {
 			c.LoginFailureWindow = d
+		}
+	}
+	return errs
+}
+
+// notifyAttributes are the attributes each type of notify block takes besides
+// type and timeout, and whether each is required.
+var notifyAttributes = map[string]map[string]bool{
+	"webhook": {"url_file": true, "token_file": false},
+	"discord": {"url_file": true},
+	"slack":   {"url_file": true},
+	"ntfy":    {"url": true, "token_file": false},
+	"gotify":  {"url": true, "token_file": true},
+}
+
+// loadNotify reads the notify blocks of fc into c.Notify, in their order. A
+// name used twice, an unknown type, a missing attribute or one the type
+// doesn't take is an error that names the file and the block.
+func (c *Config) loadNotify(fc *fileConfig) []error {
+	if fc == nil {
+		return nil
+	}
+	var errs []error
+	seen := make(map[string]bool, len(fc.Notify))
+	for _, b := range fc.Notify {
+		fail := func(format string, a ...any) {
+			errs = append(errs, fmt.Errorf("-config %s: notify %q: %s", c.ConfigFile, b.Name, fmt.Sprintf(format, a...)))
+		}
+		if !repositoryName.MatchString(b.Name) {
+			fail("the name may hold only letters, digits, - and _")
+		}
+		if seen[b.Name] {
+			fail("is declared twice")
+		}
+		seen[b.Name] = true
+		takes, ok := notifyAttributes[b.Type]
+		if !ok {
+			fail("type: is %q, must be webhook, discord, slack, ntfy, or gotify", b.Type)
+			continue
+		}
+		n := Notify{Name: b.Name, Type: b.Type, Timeout: defaultNotifyTimeout}
+		var blockErr bool
+		for _, a := range []struct {
+			name string
+			in   *string
+			read func(string) (string, error)
+			out  *string
+		}{
+			{"url_file", b.URLFile, urlFile, &n.URL},
+			{"url", b.URL, func(v string) (string, error) { return optionalURL(v) }, &n.URL},
+			{"token_file", b.TokenFile, secretFile, &n.Token},
+		} {
+			required, taken := takes[a.name]
+			switch {
+			case a.in != nil && !taken:
+				fail("%s: is not used by type %q", a.name, b.Type)
+				blockErr = true
+				continue
+			case a.in == nil || *a.in == "":
+				if required {
+					fail("%s: required", a.name)
+					blockErr = true
+				}
+				continue
+			}
+			v, err := a.read(*a.in)
+			if err != nil {
+				fail("%s: %v", a.name, err)
+				blockErr = true
+				continue
+			}
+			*a.out = v
+		}
+		if b.Timeout != nil {
+			d, err := positiveDuration(*b.Timeout)
+			if err != nil {
+				fail("timeout: %v", err)
+				blockErr = true
+			}
+			n.Timeout = d
+		}
+		if !blockErr {
+			c.Notify = append(c.Notify, n)
 		}
 	}
 	return errs

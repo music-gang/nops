@@ -56,7 +56,7 @@ at the bare path.
 | `nops_job_paused` | `namespace`, `job` | 1 if someone paused the job. |
 | `nops_job_blocked` | `namespace`, `job` | 1 if a failed or rejected deployment blocks the job. No series while the job is in Nomad error. |
 | `nops_job_invalid_meta` | `namespace`, `job` | 1 if a `nops_*` key has an invalid value. |
-| `nops_notifications_failed_total` | `adapter` | Notifications that failed to deliver. |
+| `nops_notifications_failed_total` | `adapter` | Notifications that failed to deliver. `adapter` is the name of the [`notify` block](configuration.md#notifications). |
 | `nops_acl_token_expires_timestamp_seconds` | `accessor_id`, `name`, `type` | When a created token that works in the current ACL mode expires. Session tokens and tokens that never expire have no series. |
 
 Go runtime (`go_*`) and process (`process_*`) metrics come too.
