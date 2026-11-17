@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -27,10 +28,16 @@ var (
 	// not the expected one (or the job exists/does not exist against
 	// expectations). The caller must re-detect the current state.
 	ErrCASConflict = errors.New("job modify index conflict")
-	// ErrDispatchRefused is returned by Dispatch when Nomad answered with a 4xx:
-	// it did not accept the dispatch, so nothing was created. A 5xx or a
-	// transport error is not this: the dispatch may have gone through.
+	// ErrDispatchRefused is returned by Dispatch when Nomad answered with a 4xx
+	// other than 429: it did not accept the dispatch, so nothing was created,
+	// and sending it again gets the same answer.
 	ErrDispatchRefused = errors.New("dispatch refused")
+	// ErrDispatchRetryable is returned by Dispatch when nothing was created and
+	// the same dispatch can be sent again: Nomad answered 429 (too many
+	// connections from one address, answered before the request is read), or
+	// the connection never opened. A 5xx or any other transport error is
+	// neither this nor ErrDispatchRefused: the dispatch may have gone through.
+	ErrDispatchRetryable = errors.New("dispatch not taken, retryable")
 )
 
 // casConflictMarker is the prefix Nomad puts on every enforce-index failure.
@@ -269,7 +276,8 @@ type DispatchResult struct {
 // Dispatch dispatches a parameterized job. A non-empty idempotencyToken makes
 // Nomad return the existing child if a child with the same token already
 // exists, also after the child has finished (TestDispatch). Nomad rejects meta
-// keys the job does not declare. A 4xx answer wraps ErrDispatchRefused.
+// keys the job does not declare. A 429 or a connection that never opened wraps
+// ErrDispatchRetryable, any other 4xx answer ErrDispatchRefused.
 func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[string]string, idempotencyToken string) (*DispatchResult, error) {
 	wq, err := c.write(ctx, ns)
 	if err != nil {
@@ -277,6 +285,9 @@ func (c *Client) Dispatch(ctx context.Context, ns, parentID string, meta map[str
 	}
 	wq.IdempotencyToken = idempotencyToken
 	resp, _, err := c.jobs.DispatchOpts(&api.DispatchOptions{JobID: parentID, Meta: meta}, wq)
+	if isNotSent(err) {
+		return nil, fmt.Errorf("dispatch job %s: %w: %w", parentID, ErrDispatchRetryable, err)
+	}
 	if isRefused(err) {
 		return nil, fmt.Errorf("dispatch job %s: %w: %w", parentID, ErrDispatchRefused, err)
 	}
@@ -591,6 +602,18 @@ func isCASConflict(err error) bool {
 func isNotFound(err error) bool {
 	var ue api.UnexpectedResponseError
 	return errors.As(err, &ue) && ue.StatusCode() == http.StatusNotFound
+}
+
+// isNotSent reports whether a write certainly did nothing in Nomad: a 429,
+// which Nomad answers before it reads the request (and a proxy instead of
+// forwarding it), or a connection that never opened.
+func isNotSent(err error) bool {
+	var ue api.UnexpectedResponseError
+	if errors.As(err, &ue) {
+		return ue.StatusCode() == http.StatusTooManyRequests
+	}
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 func isRefused(err error) bool {
