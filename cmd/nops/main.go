@@ -121,17 +121,19 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	repos := gitwatch.NewGroup(watchers...)
 
-	notifier := notify.New(notify.Options{
-		Webhook:    notify.Endpoint{URL: cfg.NotifyWebhookURL, Token: cfg.NotifyWebhookToken},
-		Discord:    notify.Endpoint{URL: cfg.NotifyDiscordURL},
-		Slack:      notify.Endpoint{URL: cfg.NotifySlackURL},
-		Ntfy:       notify.Endpoint{URL: cfg.NotifyNtfyURL, Token: cfg.NotifyNtfyToken},
-		Gotify:     notify.Endpoint{URL: cfg.NotifyGotifyURL, Token: cfg.NotifyGotifyToken},
+	adapters := make([]notify.Adapter, len(cfg.Notify))
+	for i, n := range cfg.Notify {
+		adapters[i] = notify.Adapter{Name: n.Name, Type: n.Type, URL: n.URL, Token: n.Token, Timeout: n.Timeout}
+	}
+	notifier, err := notify.New(notify.Options{
+		Adapters:   adapters,
 		PublicURL:  cfg.PublicURL,
 		CommitURL:  repos.CommitURL,
 		NomadUIURL: cfg.NomadUIURL,
-		Timeout:    cfg.NotifyTimeout,
 	}, log)
+	if err != nil {
+		return fmt.Errorf("notifications: %w", err)
+	}
 
 	if err := repos.Start(ctx); err != nil {
 		return fmt.Errorf("git watcher: %w", err)

@@ -33,12 +33,9 @@ inject secrets into the environment. These variables have no flag.
 | `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` (`-acl-bootstrap-token-file`) | `NOPS_ACL_BOOTSTRAP_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
-| `NOPS_NOTIFY_WEBHOOK_URL_FILE` (`-notify-webhook-url-file`) | `NOPS_NOTIFY_WEBHOOK_URL` |
-| `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` (`-notify-webhook-token-file`) | `NOPS_NOTIFY_WEBHOOK_TOKEN` |
-| `NOPS_NOTIFY_DISCORD_URL_FILE` (`-notify-discord-url-file`) | `NOPS_NOTIFY_DISCORD_URL` |
-| `NOPS_NOTIFY_SLACK_URL_FILE` (`-notify-slack-url-file`) | `NOPS_NOTIFY_SLACK_URL` |
-| `NOPS_NOTIFY_NTFY_TOKEN_FILE` (`-notify-ntfy-token-file`) | `NOPS_NOTIFY_NTFY_TOKEN` |
-| `NOPS_NOTIFY_GOTIFY_TOKEN_FILE` (`-notify-gotify-token-file`) | `NOPS_NOTIFY_GOTIFY_TOKEN` |
+
+A secret of the [configuration file](#configuration-file) is read only from
+the file its `*_file` attribute names.
 
 ## Nomad
 
@@ -233,20 +230,36 @@ auth "basic" {
 
 ## Notifications
 
-Each [notification adapter](logs-and-notifications.md#notifications) turns on
-when you set its URL. You can turn on several.
+Each `notify` block of the [configuration file](#configuration-file) turns
+on a [notification adapter](logs-and-notifications.md#notifications). It has
+no flag or variable. You can turn on several, of the same type too:
 
-| Flag | Variable | Default | Meaning |
+```hcl
+notify "slack" {
+  type     = "slack"
+  url_file = "/secrets/slack-url"
+}
+
+notify "alerts" {
+  type       = "ntfy"
+  url        = "https://ntfy.example.com/nops"
+  token_file = "/secrets/ntfy-token"
+}
+```
+
+| Attribute | Types | Default | Meaning |
 |---|---|---|---|
-| `-notify-webhook-url-file` | `NOPS_NOTIFY_WEBHOOK_URL_FILE` | none | File holding the URL that receives the generic JSON. |
-| `-notify-webhook-token-file` | `NOPS_NOTIFY_WEBHOOK_TOKEN_FILE` | none | File holding a bearer token for the generic webhook. |
-| `-notify-discord-url-file` | `NOPS_NOTIFY_DISCORD_URL_FILE` | none | File holding the Discord webhook URL. |
-| `-notify-slack-url-file` | `NOPS_NOTIFY_SLACK_URL_FILE` | none | File holding the Slack incoming webhook URL. |
-| `-notify-ntfy-url` | `NOPS_NOTIFY_NTFY_URL` | none | ntfy topic URL. |
-| `-notify-ntfy-token-file` | `NOPS_NOTIFY_NTFY_TOKEN_FILE` | none | File holding an ntfy access token. |
-| `-notify-gotify-url` | `NOPS_NOTIFY_GOTIFY_URL` | none | Gotify server URL. |
-| `-notify-gotify-token-file` | `NOPS_NOTIFY_GOTIFY_TOKEN_FILE` | none | File holding the Gotify app token. Required with the URL. |
-| `-notify-timeout` | `NOPS_NOTIFY_TIMEOUT` | `10s` | Timeout of one notification request. |
+| `type` | all | none, **required** | `webhook`, `discord`, `slack`, `ntfy`, or `gotify`. |
+| `url_file` | `webhook`, `discord`, `slack` | none, **required** | File holding the URL: the receiver of the generic JSON, the Discord webhook, or the Slack incoming webhook. |
+| `url` | `ntfy`, `gotify` | none, **required** | ntfy topic URL, or Gotify server URL. |
+| `token_file` | `webhook`, `ntfy`, `gotify` | none, **required** for `gotify` | File holding the token: a bearer token for the webhook and ntfy, the app token for Gotify. |
+| `timeout` | all | `10s` | Timeout of one notification request. |
+
+- The name, made of letters, digits, `-` and `_`, labels the adapter in the
+  log and in [metrics](metrics.md).
+- A name used twice, or an attribute of another type, stops Nops.
+- Nops refuses to start with a `-notify-*` flag or a `NOPS_NOTIFY_*`
+  variable, and names the attribute that replaces it.
 
 ## Storage, intervals, and timeouts
 

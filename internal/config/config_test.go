@@ -77,7 +77,6 @@ func TestLoadDefaults(t *testing.T) {
 		OIDCClientID:     "nops",
 		OIDCClientSecret: "client-secret",
 		PublicURL:        "https://nops.example.com",
-		NotifyTimeout:    10 * time.Second,
 		GitPollInterval:  time.Minute,
 		DriftInterval:    5 * time.Minute,
 		EngineInterval:   5 * time.Second,
@@ -150,12 +149,6 @@ repository "apps" {
   token_file = "`+appsTok+`"
 }
 `)
-	webhookURL := writeFile(t, "webhook-url", "https://n8n.example.com/webhook/abc\n")
-	webhookTok := writeFile(t, "webhook-token", "webhook-secret")
-	discordURL := writeFile(t, "discord-url", "https://discord.com/api/webhooks/1/abc\n")
-	slackURL := writeFile(t, "slack-url", "https://hooks.slack.com/services/T/B/abc")
-	ntfyTok := writeFile(t, "ntfy-token", "ntfy-secret")
-	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
 	bootstrap := secret.New()
@@ -170,43 +163,34 @@ repository "apps" {
 
 	// Every option shared by both auth modes.
 	common := map[string]string{
-		"nomad-addr":                "https://nomad.example.com:4646",
-		"nomad-ui-url":              "https://infra.example.com/nomad/",
-		"nomad-namespaces":          "apps,infra, apps",
-		"nomad-token-file":          nomadTok,
-		"nomad-ca-cert":             ca,
-		"nomad-client-cert":         cert,
-		"nomad-client-key":          key,
-		"nomad-tls-skip-verify":     "true",
-		"git-url":                   repo,
-		"git-branch":                "prod",
-		"git-path":                  "jobs/apps",
-		"git-username":              "oauth2",
-		"git-token-file":            gitTok,
-		"git-timeout":               "45s",
-		"config":                    configFile,
-		"db-path":                   "/var/lib/nops/nops.db",
-		"listen-addr":               "127.0.0.1:9000",
-		"webhook-secret-file":       webhookSecret,
-		"acl":                       "true",
-		"acl-bootstrap-token-file":  bootstrapTok,
-		"notify-webhook-url-file":   webhookURL,
-		"notify-webhook-token-file": webhookTok,
-		"notify-discord-url-file":   discordURL,
-		"notify-slack-url-file":     slackURL,
-		"notify-ntfy-url":           "https://ntfy.example.com/nops",
-		"notify-ntfy-token-file":    ntfyTok,
-		"notify-gotify-url":         "https://gotify.example.com/",
-		"notify-gotify-token-file":  gotifyTok,
-		"notify-timeout":            "3s",
-		"public-url":                "https://nops.example.com/",
-		"git-poll-interval":         "2m",
-		"drift-interval":            "15m",
-		"engine-interval":           "7s",
-		"hook-poll-interval":        "3s",
-		"apply-timeout":             "1h",
-		"sync-window-time-zone":     "Asia/Tokyo", // no daylight saving: two loads of it are equal
-		"log-level":                 "debug",
+		"nomad-addr":               "https://nomad.example.com:4646",
+		"nomad-ui-url":             "https://infra.example.com/nomad/",
+		"nomad-namespaces":         "apps,infra, apps",
+		"nomad-token-file":         nomadTok,
+		"nomad-ca-cert":            ca,
+		"nomad-client-cert":        cert,
+		"nomad-client-key":         key,
+		"nomad-tls-skip-verify":    "true",
+		"git-url":                  repo,
+		"git-branch":               "prod",
+		"git-path":                 "jobs/apps",
+		"git-username":             "oauth2",
+		"git-token-file":           gitTok,
+		"git-timeout":              "45s",
+		"config":                   configFile,
+		"db-path":                  "/var/lib/nops/nops.db",
+		"listen-addr":              "127.0.0.1:9000",
+		"webhook-secret-file":      webhookSecret,
+		"acl":                      "true",
+		"acl-bootstrap-token-file": bootstrapTok,
+		"public-url":               "https://nops.example.com/",
+		"git-poll-interval":        "2m",
+		"drift-interval":           "15m",
+		"engine-interval":          "7s",
+		"hook-poll-interval":       "3s",
+		"apply-timeout":            "1h",
+		"sync-window-time-zone":    "Asia/Tokyo", // no daylight saving: two loads of it are equal
+		"log-level":                "debug",
 	}
 	commonWant := Config{
 		NomadAddr:          "https://nomad.example.com:4646",
@@ -239,36 +223,21 @@ repository "apps" {
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
 		// The auth block is the file's too.
-		LoginMaxFailures:       10,
-		LoginFailureWindow:     15 * time.Minute,
-		WebhookSecretFile:      webhookSecret,
-		WebhookSecret:          "webhook-shared-secret",
-		ACL:                    true,
-		ACLBootstrapTokenFile:  bootstrapTok,
-		ACLBootstrapToken:      bootstrap,
-		NotifyWebhookURLFile:   webhookURL,
-		NotifyWebhookURL:       "https://n8n.example.com/webhook/abc",
-		NotifyWebhookTokenFile: webhookTok,
-		NotifyWebhookToken:     "webhook-secret",
-		NotifyDiscordURLFile:   discordURL,
-		NotifyDiscordURL:       "https://discord.com/api/webhooks/1/abc",
-		NotifySlackURLFile:     slackURL,
-		NotifySlackURL:         "https://hooks.slack.com/services/T/B/abc",
-		NotifyNtfyURL:          "https://ntfy.example.com/nops",
-		NotifyNtfyTokenFile:    ntfyTok,
-		NotifyNtfyToken:        "ntfy-secret",
-		NotifyGotifyURL:        "https://gotify.example.com",
-		NotifyGotifyTokenFile:  gotifyTok,
-		NotifyGotifyToken:      "gotify-secret",
-		NotifyTimeout:          3 * time.Second,
-		PublicURL:              "https://nops.example.com",
-		GitPollInterval:        2 * time.Minute,
-		DriftInterval:          15 * time.Minute,
-		EngineInterval:         7 * time.Second,
-		HookPollInterval:       3 * time.Second,
-		ApplyTimeout:           time.Hour,
-		SyncWindowLocation:     tokyo,
-		LogLevel:               slog.LevelDebug,
+		LoginMaxFailures:      10,
+		LoginFailureWindow:    15 * time.Minute,
+		WebhookSecretFile:     webhookSecret,
+		WebhookSecret:         "webhook-shared-secret",
+		ACL:                   true,
+		ACLBootstrapTokenFile: bootstrapTok,
+		ACLBootstrapToken:     bootstrap,
+		PublicURL:             "https://nops.example.com",
+		GitPollInterval:       2 * time.Minute,
+		DriftInterval:         15 * time.Minute,
+		EngineInterval:        7 * time.Second,
+		HookPollInterval:      3 * time.Second,
+		ApplyTimeout:          time.Hour,
+		SyncWindowLocation:    tokyo,
+		LogLevel:              slog.LevelDebug,
 	}
 
 	oidcWant := commonWant
@@ -366,7 +335,6 @@ func TestLoadInvalid(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "missing")
 	empty := writeFile(t, "empty", " \n")
-	notURL := writeFile(t, "not-url", "discord.com/api/webhooks/1/secret-in-url")
 	tests := []struct {
 		option string
 		value  string
@@ -402,21 +370,9 @@ func TestLoadInvalid(t *testing.T) {
 		{"oidc-issuer-url", "idp.example.com", "not an http"},
 		{"oidc-client-secret-file", missing, "no such file"},
 		{"oidc-client-secret-file", empty, "is empty"},
-		{"notify-webhook-url-file", missing, "no such file"},
-		{"notify-webhook-url-file", empty, "is empty"},
-		{"notify-webhook-url-file", notURL, "does not hold an http"},
-		{"notify-webhook-token-file", missing, "no such file"},
-		{"notify-discord-url-file", notURL, "does not hold an http"},
-		{"notify-slack-url-file", notURL, "does not hold an http"},
-		{"notify-ntfy-url", "ntfy.example.com/nops", "not an http"},
-		{"notify-ntfy-token-file", empty, "is empty"},
-		{"notify-gotify-url", "gotify", "not an http"},
-		{"notify-gotify-token-file", missing, "no such file"},
 		{"public-url", "nops.example.com", "not an http"},
 		{"nomad-ui-url", "nomad.example.com", "not an http"},
 		{"nomad-ui-url", "/ui", "not an http"},
-		{"notify-timeout", "10", "missing unit"},
-		{"notify-timeout", "0s", "must be positive"},
 		{"git-poll-interval", "-1m", "must be positive"},
 		{"drift-interval", "soon", "invalid duration"},
 		{"engine-interval", "0", "must be positive"},
@@ -629,13 +585,9 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"token without username", []string{"-git-url", repo, "-git-token-file", tok, "-git-username="}, "needs a non-empty -git-username"},
 		{"cert without key", []string{"-git-url", repo, "-nomad-client-cert", cert}, "must be set together"},
 		{"key without cert", []string{"-git-url", repo, "-nomad-client-key", cert}, "must be set together"},
-		{"webhook token without url", []string{"-git-url", repo, "-notify-webhook-token-file", tok}, "a webhook token is set without a webhook URL (-notify-webhook-url-file)"},
-		{"ntfy token without url", []string{"-git-url", repo, "-notify-ntfy-token-file", tok}, "a ntfy token is set without a ntfy URL (-notify-ntfy-url)"},
-		{"gotify token without url", []string{"-git-url", repo, "-notify-gotify-token-file", tok}, "a gotify token is set without a gotify URL (-notify-gotify-url)"},
 		{"acl without a bootstrap token", []string{"-git-url", repo, "-acl"}, "-acl needs a bootstrap token"},
 		{"a bootstrap token without acl", []string{"-git-url", repo, "-acl-bootstrap-token-file", boot}, "a bootstrap token is set without -acl"},
 		{"a bootstrap token that is not generated", []string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", tok}, "not a secret made by"},
-		{"gotify url without token", []string{"-git-url", repo, "-notify-gotify-url", "https://gotify.example.com"}, "a gotify URL needs a token (-notify-gotify-token-file or NOPS_NOTIFY_GOTIFY_TOKEN)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -644,12 +596,6 @@ func TestLoadCrossChecks(t *testing.T) {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}
 		})
-	}
-
-	// A URL read from a file never shows up in an error: it may hold a token.
-	secretURL := writeFile(t, "discord-url", "discord.com/api/webhooks/1/do-not-print")
-	if _, err := Load([]string{"-git-url", repo, "-notify-discord-url-file", secretURL}, envOf(nil), io.Discard); err == nil || strings.Contains(err.Error(), "do-not-print") {
-		t.Errorf("err = %v: missing, or it prints the URL", err)
 	}
 
 	// A bootstrap token made by nops secret generate turns the ACL on.
@@ -1016,15 +962,6 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
 		{"NOPS_ACL_BOOTSTRAP_TOKEN", secret.New(), func(c *Config) string { return c.ACLBootstrapToken },
 			map[string]string{"NOPS_ACL": "true"}},
-		{"NOPS_NOTIFY_WEBHOOK_URL", "https://n8n.example.com/webhook/plain", func(c *Config) string { return c.NotifyWebhookURL }, nil},
-		{"NOPS_NOTIFY_WEBHOOK_TOKEN", "plain-webhook-token", func(c *Config) string { return c.NotifyWebhookToken },
-			map[string]string{"NOPS_NOTIFY_WEBHOOK_URL": "https://n8n.example.com/webhook/plain"}},
-		{"NOPS_NOTIFY_DISCORD_URL", "https://discord.com/api/webhooks/1/plain", func(c *Config) string { return c.NotifyDiscordURL }, nil},
-		{"NOPS_NOTIFY_SLACK_URL", "https://hooks.slack.com/services/plain", func(c *Config) string { return c.NotifySlackURL }, nil},
-		{"NOPS_NOTIFY_NTFY_TOKEN", "plain-ntfy-token", func(c *Config) string { return c.NotifyNtfyToken },
-			map[string]string{"NOPS_NOTIFY_NTFY_URL": "https://ntfy.example.com/nops"}},
-		{"NOPS_NOTIFY_GOTIFY_TOKEN", "plain-gotify-token", func(c *Config) string { return c.NotifyGotifyToken },
-			map[string]string{"NOPS_NOTIFY_GOTIFY_URL": "https://gotify.example.com"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.envVar, func(t *testing.T) {
@@ -1071,7 +1008,6 @@ func TestSecretValueFallbackInvalid(t *testing.T) {
 		want string
 	}{
 		{"whitespace only", map[string]string{"NOPS_GIT_TOKEN": "   "}, "NOPS_GIT_TOKEN: is empty"},
-		{"not a url", map[string]string{"NOPS_NOTIFY_DISCORD_URL": "discord.com/api/webhooks/1/secret"}, "NOPS_NOTIFY_DISCORD_URL: does not hold an http"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1593,5 +1529,177 @@ auth "basic" {
 	_, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), `the "basic" block is only used with -auth-mode=basic`) {
 		t.Errorf("err = %v, want the block refused with -auth-mode=oidc", err)
+	}
+}
+
+func TestLoadNotifyFromTheFile(t *testing.T) {
+	webhookURL := writeFile(t, "webhook-url", "https://n8n.example.com/webhook/abc\n")
+	webhookTok := writeFile(t, "webhook-token", "webhook-secret")
+	discordURL := writeFile(t, "discord-url", "https://discord.com/api/webhooks/1/abc\n")
+	teamURL := writeFile(t, "team-url", "https://hooks.slack.com/services/T/B/team")
+	alertsURL := writeFile(t, "alerts-url", "https://hooks.slack.com/services/T/B/alerts")
+	ntfyTok := writeFile(t, "ntfy-token", "ntfy-secret")
+	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+notify "webhook" {
+  type       = "webhook"
+  url_file   = "`+webhookURL+`"
+  token_file = "`+webhookTok+`"
+  timeout    = "3s"
+}
+
+notify "discord" {
+  type     = "discord"
+  url_file = "`+discordURL+`"
+}
+
+notify "team" {
+  type     = "slack"
+  url_file = "`+teamURL+`"
+}
+
+notify "alerts" {
+  type     = "slack"
+  url_file = "`+alertsURL+`"
+}
+
+notify "ntfy" {
+  type       = "ntfy"
+  url        = "https://ntfy.example.com/nops"
+  token_file = "`+ntfyTok+`"
+}
+
+notify "gotify" {
+  type       = "gotify"
+  url        = "https://gotify.example.com/"
+  token_file = "`+gotifyTok+`"
+}
+`)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Notify{
+		{Name: "webhook", Type: "webhook", URL: "https://n8n.example.com/webhook/abc", Token: "webhook-secret", Timeout: 3 * time.Second},
+		{Name: "discord", Type: "discord", URL: "https://discord.com/api/webhooks/1/abc", Timeout: 10 * time.Second},
+		{Name: "team", Type: "slack", URL: "https://hooks.slack.com/services/T/B/team", Timeout: 10 * time.Second},
+		{Name: "alerts", Type: "slack", URL: "https://hooks.slack.com/services/T/B/alerts", Timeout: 10 * time.Second},
+		{Name: "ntfy", Type: "ntfy", URL: "https://ntfy.example.com/nops", Token: "ntfy-secret", Timeout: 10 * time.Second},
+		{Name: "gotify", Type: "gotify", URL: "https://gotify.example.com", Token: "gotify-secret", Timeout: 10 * time.Second},
+	}
+	if !reflect.DeepEqual(c.Notify, want) {
+		t.Errorf("Notify\n got %+v\nwant %+v", c.Notify, want)
+	}
+
+	// Without a block, no adapter is on.
+	c, err = Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	if err != nil || len(c.Notify) != 0 {
+		t.Errorf("without a block: Notify = %v, %v", c.Notify, err)
+	}
+}
+
+func TestLoadNotifyInvalid(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	empty := writeFile(t, "empty", " \n")
+	notURL := writeFile(t, "not-url", "discord.com/api/webhooks/1/do-not-print")
+	tok := writeFile(t, "token", "secret")
+	urlFile := writeFile(t, "url", "https://hooks.slack.com/services/T/B/abc")
+	apps := `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+`
+	notify := func(label, body string) string { return "notify \"" + label + "\" {\n" + body + "\n}\n" }
+	slack := notify("slack", `type = "slack"
+url_file = "`+urlFile+`"`)
+	tests := []struct {
+		name, file, want string
+	}{
+		{"no type", notify("slack", `url_file = "`+urlFile+`"`), `Missing required argument`},
+		{"unknown type", notify("pager", `type = "pagerduty"`), `notify "pager": type: is "pagerduty", must be webhook, discord, slack, ntfy, or gotify`},
+		{"a bad name", notify("my slack", `type = "slack"
+url_file = "`+urlFile+`"`), `notify "my slack": the name may hold only letters, digits, - and _`},
+		{"a name used twice", slack + slack, `notify "slack": is declared twice`},
+		{"no url_file", notify("slack", `type = "slack"`), `notify "slack": url_file: required`},
+		{"no url", notify("ntfy", `type = "ntfy"`), `notify "ntfy": url: required`},
+		{"gotify without a token", notify("gotify", `type = "gotify"
+url = "https://gotify.example.com"`), `notify "gotify": token_file: required`},
+		{"a url for a url_file type", notify("slack", `type = "slack"
+url = "https://hooks.slack.com/services/T/B/abc"`), `notify "slack": url: is not used by type "slack"`},
+		{"a url_file for a url type", notify("ntfy", `type = "ntfy"
+url_file = "`+urlFile+`"`), `notify "ntfy": url_file: is not used by type "ntfy"`},
+		{"a token for discord", notify("discord", `type = "discord"
+url_file = "`+urlFile+`"
+token_file = "`+tok+`"`), `notify "discord": token_file: is not used by type "discord"`},
+		{"a missing url_file", notify("slack", `type = "slack"
+url_file = "`+missing+`"`), `notify "slack": url_file: open ` + missing},
+		{"an empty url_file", notify("slack", `type = "slack"
+url_file = "`+empty+`"`), `notify "slack": url_file: ` + empty + ` is empty`},
+		{"a url_file without a URL", notify("discord", `type = "discord"
+url_file = "`+notURL+`"`), `notify "discord": url_file: ` + notURL + ` does not hold an http`},
+		{"a url that is not one", notify("ntfy", `type = "ntfy"
+url = "ntfy.example.com/nops"`), `notify "ntfy": url: "ntfy.example.com/nops" is not an http`},
+		{"a missing token_file", notify("ntfy", `type = "ntfy"
+url = "https://ntfy.example.com/nops"
+token_file = "`+missing+`"`), `notify "ntfy": token_file: open ` + missing},
+		{"a timeout without a unit", notify("slack", `type = "slack"
+url_file = "`+urlFile+`"
+timeout = "10"`), `notify "slack": timeout: time: missing unit`},
+		{"a zero timeout", notify("slack", `type = "slack"
+url_file = "`+urlFile+`"
+timeout = "0s"`), `notify "slack": timeout: duration "0s" must be positive`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", apps+tt.file)}, envOf(nil), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+			// A URL read from a file never shows up in an error: it may hold a token.
+			if err != nil && strings.Contains(err.Error(), "do-not-print") {
+				t.Errorf("err = %v, it prints the URL", err)
+			}
+		})
+	}
+}
+
+// The -notify-* options moved into the notify block: each one, its variable,
+// and the variable that held its secret's value stop Nops, naming the
+// attribute that replaces it.
+func TestLoadNotifyOptionsRemoved(t *testing.T) {
+	tests := []struct {
+		flag, valueEnv, want string
+	}{
+		{"notify-webhook-url-file", "NOPS_NOTIFY_WEBHOOK_URL", `url_file in a notify block of type "webhook"`},
+		{"notify-webhook-token-file", "NOPS_NOTIFY_WEBHOOK_TOKEN", `token_file in a notify block of type "webhook"`},
+		{"notify-discord-url-file", "NOPS_NOTIFY_DISCORD_URL", `url_file in a notify block of type "discord"`},
+		{"notify-slack-url-file", "NOPS_NOTIFY_SLACK_URL", `url_file in a notify block of type "slack"`},
+		{"notify-ntfy-url", "", `url in a notify block of type "ntfy"`},
+		{"notify-ntfy-token-file", "NOPS_NOTIFY_NTFY_TOKEN", `token_file in a notify block of type "ntfy"`},
+		{"notify-gotify-url", "", `url in a notify block of type "gotify"`},
+		{"notify-gotify-token-file", "NOPS_NOTIFY_GOTIFY_TOKEN", `token_file in a notify block of type "gotify"`},
+		{"notify-timeout", "", "timeout in each notify block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			vars := []string{removedOption{name: tt.flag}.env()}
+			if tt.valueEnv != "" {
+				vars = append(vars, tt.valueEnv)
+			}
+			_, err := Load([]string{"-git-url", repo, "-" + tt.flag, "x"}, envOf(nil), io.Discard)
+			errs := map[string]error{"flag -" + tt.flag: err}
+			for _, v := range vars {
+				_, errs[v] = Load([]string{"-git-url", repo}, envOf(map[string]string{v: "x"}), io.Discard)
+			}
+			for source, err := range errs {
+				if err == nil || !strings.Contains(err.Error(), source+" was removed") || !strings.Contains(err.Error(), tt.want) {
+					t.Errorf("%s: err = %v, want it removed, replaced by %s", source, err, tt.want)
+				}
+			}
+		})
 	}
 }

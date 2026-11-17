@@ -122,6 +122,20 @@ func twoGroupsThreeTasks(t *testing.T) string {
 	return string(b)
 }
 
+// adapter is an adapter of type typ named after it, with a timeout of a second.
+func adapter(typ, url, token string) Adapter {
+	return Adapter{Name: typ, Type: typ, URL: url, Token: token, Timeout: time.Second}
+}
+
+func mustNew(t *testing.T, o Options, log *slog.Logger) *Notifier {
+	t.Helper()
+	n, err := New(o, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // allAdapters is an Options with every adapter pointing at its own receiver
 // and every link configured.
 func allAdapters(t *testing.T) (Options, map[string]*server) {
@@ -131,20 +145,29 @@ func allAdapters(t *testing.T) (Options, map[string]*server) {
 		PublicURL:  publicURL + "/",
 		CommitURL:  func(_, sha string) string { return commitBase + sha },
 		NomadUIURL: nomadUI + "/",
-		Timeout:    time.Second,
 	}
-	for name, dst := range map[string]*Endpoint{"webhook": &o.Webhook, "discord": &o.Discord, "slack": &o.Slack, "ntfy": &o.Ntfy, "gotify": &o.Gotify} {
-		srvs[name] = newServer(t, http.StatusOK)
-		dst.URL = srvs[name].URL
+	for _, typ := range []string{TypeWebhook, TypeDiscord, TypeSlack, TypeNtfy, TypeGotify} {
+		srvs[typ] = newServer(t, http.StatusOK)
+		o.Adapters = append(o.Adapters, adapter(typ, srvs[typ].URL, ""))
 	}
 	return o, srvs
+}
+
+// ofType is the adapter of type typ in o, made by allAdapters.
+func ofType(o Options, typ string) *Adapter {
+	for i := range o.Adapters {
+		if o.Adapters[i].Type == typ {
+			return &o.Adapters[i]
+		}
+	}
+	panic("no adapter of type " + typ)
 }
 
 // notifyAll sends d to every adapter and returns what each received.
 func notifyAll(t *testing.T, o Options, srvs map[string]*server, d *store.Deployment, phase string) map[string]received {
 	t.Helper()
 	log, buf := logger()
-	New(o, log).Notify(context.Background(), d, phase)
+	mustNew(t, o, log).Notify(context.Background(), d, phase)
 	if buf.Len() > 0 {
 		t.Fatalf("log = %s", buf)
 	}
@@ -191,8 +214,8 @@ func decodeDiscord(t *testing.T, b []byte) discordBody {
 func TestWebhook(t *testing.T) {
 	srv := newServer(t, http.StatusOK)
 	log, buf := logger()
-	New(Options{
-		Webhook: Endpoint{URL: srv.URL + "/hook", Token: "tok"}, PublicURL: publicURL + "/", Timeout: time.Second,
+	mustNew(t, Options{
+		Adapters: []Adapter{adapter(TypeWebhook, srv.URL+"/hook", "tok")}, PublicURL: publicURL + "/",
 		CommitURL: func(repo, sha string) string {
 			if repo != "apps" {
 				return ""
@@ -236,7 +259,7 @@ func TestWebhook(t *testing.T) {
 func TestWebhookWithoutTokenAndLinks(t *testing.T) {
 	srv := newServer(t, http.StatusNoContent)
 	log, _ := logger()
-	New(Options{Webhook: Endpoint{URL: srv.URL}, Timeout: time.Second}, log).Notify(context.Background(), pending, "")
+	mustNew(t, Options{Adapters: []Adapter{adapter(TypeWebhook, srv.URL, "")}}, log).Notify(context.Background(), pending, "")
 	r := srv.requests()[0]
 	if r.header.Get("Authorization") != "" {
 		t.Error("Authorization sent without a token")
@@ -499,7 +522,7 @@ func TestSlackLimits(t *testing.T) {
 
 func TestNtfy(t *testing.T) {
 	o, srvs := allAdapters(t)
-	o.Ntfy.Token = "tk"
+	ofType(o, TypeNtfy).Token = "tk"
 	d := withState(failed, store.StateFailed, func(d *store.Deployment) { d.RetryOf, d.WindowLiftedBy = "01J8ZW", "bob" })
 	r := notifyAll(t, o, srvs, d, "pre")["ntfy"]
 	h := r.header
@@ -538,8 +561,8 @@ func TestNtfy(t *testing.T) {
 
 func TestGotify(t *testing.T) {
 	o, srvs := allAdapters(t)
-	o.Gotify.URL += "/"
-	o.Gotify.Token = "app"
+	ofType(o, TypeGotify).URL += "/"
+	ofType(o, TypeGotify).Token = "app"
 	p := withState(failed, store.StatePendingApproval, func(d *store.Deployment) { d.Error, d.DecidedBy, d.PlanDiff = "", "", twoGroupsThreeTasks(t) })
 	r := notifyAll(t, o, srvs, p, "")["gotify"]
 	if r.path != "/message" || r.header.Get("X-Gotify-Key") != "app" || r.header.Get("Content-Type") != "application/json" {
@@ -628,7 +651,7 @@ func TestChanges(t *testing.T) {
 	srv := newServer(t, http.StatusOK)
 	log, buf := logger()
 	corrupt := withState(failed, store.StatePendingApproval, func(d *store.Deployment) { d.PlanDiff = "{" })
-	New(Options{Webhook: Endpoint{URL: srv.URL}, Timeout: time.Second}, log).Notify(context.Background(), corrupt, "")
+	mustNew(t, Options{Adapters: []Adapter{adapter(TypeWebhook, srv.URL, "")}}, log).Notify(context.Background(), corrupt, "")
 	reqs := srv.requests()
 	if len(reqs) != 1 || decode(t, reqs[0].body)["changes"] != nil {
 		t.Errorf("a corrupt plan diff: %d requests, body %s", len(reqs), reqs[0].body)
@@ -642,14 +665,13 @@ func TestEveryAdapterReceives(t *testing.T) {
 	ok := newServer(t, http.StatusOK)
 	broken := newServer(t, http.StatusInternalServerError)
 	log, buf := logger()
-	New(Options{
-		Webhook: Endpoint{URL: broken.URL + "/webhook"},
-		Discord: Endpoint{URL: ok.URL + "/discord"},
-		Slack:   Endpoint{URL: ok.URL + "/slack"},
-		Ntfy:    Endpoint{URL: ok.URL + "/ntfy"},
-		Gotify:  Endpoint{URL: ok.URL + "/gotify", Token: "t"},
-		Timeout: time.Second,
-	}, log).Notify(context.Background(), pending, "")
+	mustNew(t, Options{Adapters: []Adapter{
+		adapter(TypeWebhook, broken.URL+"/webhook", ""),
+		adapter(TypeDiscord, ok.URL+"/discord", ""),
+		adapter(TypeSlack, ok.URL+"/slack", ""),
+		adapter(TypeNtfy, ok.URL+"/ntfy", ""),
+		adapter(TypeGotify, ok.URL+"/gotify", "t"),
+	}}, log).Notify(context.Background(), pending, "")
 
 	var paths []string
 	for _, r := range ok.requests() {
@@ -673,11 +695,10 @@ func TestFailuresCountsEachAdapter(t *testing.T) {
 	ok := newServer(t, http.StatusOK)
 	broken := newServer(t, http.StatusInternalServerError)
 	log, _ := logger()
-	n := New(Options{
-		Webhook: Endpoint{URL: broken.URL + "/webhook"},
-		Ntfy:    Endpoint{URL: ok.URL + "/ntfy"},
-		Timeout: time.Second,
-	}, log)
+	n := mustNew(t, Options{Adapters: []Adapter{
+		adapter(TypeWebhook, broken.URL+"/webhook", ""),
+		adapter(TypeNtfy, ok.URL+"/ntfy", ""),
+	}}, log)
 	want := map[string]uint64{"webhook": 0, "ntfy": 0}
 	if got := n.Failures(); !maps.Equal(got, want) {
 		t.Fatalf("Failures before any notification = %v, want %v", got, want)
@@ -688,8 +709,38 @@ func TestFailuresCountsEachAdapter(t *testing.T) {
 	if got := n.Failures(); !maps.Equal(got, want) {
 		t.Errorf("Failures = %v, want %v", got, want)
 	}
-	if got := New(Options{Timeout: time.Second}, log).Failures(); len(got) != 0 {
+	if got := mustNew(t, Options{}, log).Failures(); len(got) != 0 {
 		t.Errorf("Failures without an adapter = %v, want none", got)
+	}
+}
+
+// Two adapters of the same type are two places to send to, each counted and
+// logged under its own name.
+func TestAdaptersOfTheSameType(t *testing.T) {
+	ok := newServer(t, http.StatusOK)
+	broken := newServer(t, http.StatusInternalServerError)
+	log, buf := logger()
+	team, alerts := adapter(TypeSlack, ok.URL+"/team", ""), adapter(TypeSlack, broken.URL+"/alerts", "")
+	team.Name, alerts.Name = "team", "alerts"
+	n := mustNew(t, Options{Adapters: []Adapter{team, alerts}}, log)
+	n.Notify(context.Background(), failed, "")
+
+	if len(ok.requests()) != 1 || len(broken.requests()) != 1 {
+		t.Errorf("requests = %d and %d, want one each", len(ok.requests()), len(broken.requests()))
+	}
+	if want := map[string]uint64{"team": 0, "alerts": 1}; !maps.Equal(n.Failures(), want) {
+		t.Errorf("Failures = %v, want %v", n.Failures(), want)
+	}
+	if !strings.Contains(buf.String(), "adapter=alerts") {
+		t.Errorf("log = %s, want the failure under the adapter's name", buf)
+	}
+}
+
+func TestUnknownType(t *testing.T) {
+	log, _ := logger()
+	_, err := New(Options{Adapters: []Adapter{{Name: "pager", Type: "pagerduty", URL: "https://example.com"}}}, log)
+	if err == nil || !strings.Contains(err.Error(), `adapter "pager": unknown type "pagerduty"`) {
+		t.Errorf("err = %v, want the unknown type named", err)
 	}
 }
 
@@ -728,7 +779,9 @@ func TestFailuresAreLoggedNotReturned(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			log, buf := logger()
 			start := time.Now()
-			New(Options{Discord: Endpoint{URL: tt.url + secret}, Timeout: 50 * time.Millisecond}, log).Notify(tt.ctx, failed, "")
+			a := adapter(TypeDiscord, tt.url+secret, "")
+			a.Timeout = 50 * time.Millisecond
+			mustNew(t, Options{Adapters: []Adapter{a}}, log).Notify(tt.ctx, failed, "")
 			if time.Since(start) > 5*time.Second {
 				t.Error("Notify did not respect the timeout")
 			}
@@ -750,7 +803,7 @@ func TestFailuresAreLoggedNotReturned(t *testing.T) {
 
 func TestNoAdapter(t *testing.T) {
 	log, buf := logger()
-	New(Options{Timeout: time.Second}, log).Notify(context.Background(), failed, "")
+	mustNew(t, Options{}, log).Notify(context.Background(), failed, "")
 	if buf.Len() > 0 {
 		t.Errorf("log = %s", buf)
 	}
@@ -758,7 +811,7 @@ func TestNoAdapter(t *testing.T) {
 
 func TestInvalidURLIsNotLogged(t *testing.T) {
 	log, buf := logger()
-	New(Options{Slack: Endpoint{URL: "http://bad host/secret-token"}, Timeout: time.Second}, log).Notify(context.Background(), failed, "")
+	mustNew(t, Options{Adapters: []Adapter{adapter(TypeSlack, "http://bad host/secret-token", "")}}, log).Notify(context.Background(), failed, "")
 	if !strings.Contains(buf.String(), "invalid URL") || strings.Contains(buf.String(), "secret-token") {
 		t.Errorf("log = %s", buf)
 	}
@@ -788,7 +841,7 @@ func TestWaitingForCanaryPromotion(t *testing.T) {
 		"failed after": {ID: "c", JobID: "web", State: store.StateFailed, PromotionWaitSince: updated},
 	} {
 		srv := newServer(t, http.StatusOK)
-		New(Options{Webhook: Endpoint{URL: srv.URL}, Timeout: time.Second}, log).Notify(context.Background(), d, "")
+		mustNew(t, Options{Adapters: []Adapter{adapter(TypeWebhook, srv.URL, "")}}, log).Notify(context.Background(), d, "")
 		if m := decode(t, srv.requests()[0].body); m["waiting"] != nil {
 			t.Errorf("%s: payload = %v, want no waiting key", name, m)
 		}
@@ -800,7 +853,7 @@ func TestWaitingForCanaryPromotion(t *testing.T) {
 func notifyPauseAll(t *testing.T, o Options, srvs map[string]*server, resumed bool, actor, reason string) map[string]received {
 	t.Helper()
 	log, buf := logger()
-	New(o, log).NotifyPause(context.Background(), resumed, actor, reason)
+	mustNew(t, o, log).NotifyPause(context.Background(), resumed, actor, reason)
 	if buf.Len() > 0 {
 		t.Fatalf("log = %s", buf)
 	}
@@ -838,7 +891,7 @@ func TestPauseOfEveryJobInTheWebhook(t *testing.T) {
 
 func TestPauseOfEveryJobInEachAdapter(t *testing.T) {
 	o, srvs := allAdapters(t)
-	o.Ntfy.Token = "tk"
+	ofType(o, TypeNtfy).Token = "tk"
 	got := notifyPauseAll(t, o, srvs, false, "alice", "nomad upgrade")
 
 	d := decodeDiscord(t, got["discord"].body)
@@ -885,7 +938,7 @@ func TestResumeOfEveryJobIsGreenAndSaysSo(t *testing.T) {
 
 func TestPauseOfEveryJobWithoutAnAdapterSendsNothing(t *testing.T) {
 	log, buf := logger()
-	New(Options{Timeout: time.Second}, log).NotifyPause(context.Background(), false, "alice", "")
+	mustNew(t, Options{}, log).NotifyPause(context.Background(), false, "alice", "")
 	if buf.Len() > 0 {
 		t.Errorf("log = %s", buf)
 	}
