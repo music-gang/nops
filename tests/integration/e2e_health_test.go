@@ -565,6 +565,95 @@ job %q {
 	}
 }
 
+// A system or sysbatch job is healthy on the nodes with room for it: Nomad
+// keeps an evaluation blocked for a group no node has room for, and the
+// deployment completes without it, saying which, with a Nomad deployment or
+// without one.
+func TestEngineApplyPerNodeJobCompletesWithoutTheFullNode(t *testing.T) {
+	for name, fits := range map[string]string{
+		"system with a Nomad deployment": `
+  type = "system"
+  update {
+    min_healthy_time = "1s"
+  }
+  group "fits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }`,
+		"sysbatch": `
+  type = "sysbatch"
+  group "fits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "true"]
+      }
+    }
+  }`,
+		"system": `
+  type = "system"
+  update {
+    max_parallel = 0
+  }
+  group "fits" {
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 600"]
+      }
+    }
+  }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			_, raw := newClient(t)
+			jobID := uniqueID(t, raw, "pernode")
+			hcl := fmt.Sprintf(`
+job %q {
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+  }%s%s
+}`, jobID, fits, waitsForRoomGroup)
+
+			snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+				Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: hcl}},
+			}}
+			e, st := newEngineWithApplyTimeout(t, snap, time.Minute)
+			if err := e.Detect(ctx); err != nil {
+				t.Fatalf("Detect: %v", err)
+			}
+			d, err := st.ActiveDeployment(ctx, "default", jobID)
+			if err != nil {
+				t.Fatalf("ActiveDeployment: %v", err)
+			}
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go e.RunApply(runCtx)
+
+			got := waitDeploymentEnds(t, st, d.ID, 30*time.Second)
+			if got.State != store.StateCompleted {
+				t.Fatalf("deployment %s (%s), want completed without the group no node has room for", got.State, got.Error)
+			}
+			evs, err := st.Events(ctx, d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const want = "healthy, but no room on 1 node (memory)"
+			if last := evs[len(evs)-1]; last.Message != want {
+				t.Errorf("last event message = %q, want %q", last.Message, want)
+			}
+		})
+	}
+}
+
 // An allocation Nomad gave up on fails the deployment with its own failure,
 // though another group waits for room: the blocked evaluation can't
 // reschedule it.
