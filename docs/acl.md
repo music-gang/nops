@@ -17,8 +17,8 @@ To turn it on:
 
 1. Generate the bootstrap secret into a file:
    `nops secret generate > bootstrap-token`.
-2. Start Nops with `-acl` and `-acl-bootstrap-token-file`
-   ([options](configuration.md#access-control)).
+2. Start Nops with an [`acl` block](configuration.md#access-control) that
+   sets `enabled` and names that file.
 3. Paste the bootstrap token into the dashboard's login page, or use it from
    the [command line](cli.md) or the API. Create an ACL policy and a
    [binding rule](#binding-rules) for your login.
@@ -39,7 +39,7 @@ it creates the token, and keeps only its hash. There are two types:
   policies it carries.
 
 The **bootstrap token** is a management token read from
-`-acl-bootstrap-token-file` at every start. To rotate it, change the file and
+the file of `bootstrap_token_file` at every start. To rotate it, change the file and
 restart Nops. The tokens it created stay: if it leaked, [revoke them](api.md#tokens) in
 one action before you create new ones.
 

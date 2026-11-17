@@ -34,6 +34,14 @@ setup_state() {
   if [ ! -f "$dir/bootstrap.token" ]; then
     (umask 077 && "$nops" secret generate >"$dir/bootstrap.token")
   fi
+  if [ ! -f "$dir/nops.hcl" ]; then
+    cat >"$dir/nops.hcl" <<EOF
+acl {
+  enabled              = true
+  bootstrap_token_file = "$dir/bootstrap.token"
+}
+EOF
+  fi
   if [ ! -d "$dir/jobs/.git" ]; then
     mkdir -p "$dir/jobs"
     cp "$examples"/* "$dir/jobs/"
@@ -200,8 +208,7 @@ EOF
     -auth-mode=basic \
     -users-file="$dir/users" \
     -groups-file="$dir/groups" \
-    -acl \
-    -acl-bootstrap-token-file="$dir/bootstrap.token" \
+    -config="$dir/nops.hcl" \
     -db-path="$dir/nops.db" \
     "$@" &
   nops_pid=$!

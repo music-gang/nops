@@ -4,7 +4,7 @@
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
 // variable, the variable over the default. The file holds only what a flag
-// cannot: the repository, listen, nomad, auth and notify blocks. nops reads nothing else:
+// cannot: the repository, listen, nomad, auth, acl and notify blocks. nops reads nothing else:
 // the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -146,8 +146,9 @@ type Config struct {
 	WebhookSecretFile string
 	WebhookSecret     string
 
-	// ACL turns the access control on (docs/acl.md). The bootstrap token is
-	// its management token, read from a file at every start.
+	// ACL turns the access control on (docs/acl.md), from the acl block of the
+	// -config file. The bootstrap token is its management token, read from a
+	// file at every start.
 	ACL                   bool
 	ACLBootstrapTokenFile string
 	ACLBootstrapToken     string
@@ -308,15 +309,6 @@ var options = []option{
 			return
 		}},
 
-	{name: "acl", def: "false", boolean: true, usage: "turn on the access control: tokens and ACL policies decide what each request may do (needs -acl-bootstrap-token-file)",
-		set: func(c *Config, v string) (err error) { c.ACL, err = strconv.ParseBool(v); return }},
-	{name: "acl-bootstrap-token-file", usage: "`file` holding the bootstrap token, a management token made by \"nops secret generate\" (required with -acl)",
-		set: func(c *Config, v string) (err error) {
-			c.ACLBootstrapTokenFile = v
-			c.ACLBootstrapToken, err = secretFile(v)
-			return
-		}},
-
 	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr)",
 		set: func(c *Config, v string) (err error) {
 			c.PublicURL, err = optionalURL(v)
@@ -345,6 +337,7 @@ var options = []option{
 // bare "flag provided but not defined".
 type removedOption struct {
 	name, replacedBy string
+	boolean          bool // parsed as a boolean flag, so it needs no value
 	// valueEnv is the plain variable that held the secret of a -<name>-file
 	// option, removed with it.
 	valueEnv string
@@ -353,8 +346,8 @@ type removedOption struct {
 func (o removedOption) env() string { return option{name: o.name}.env() }
 
 var removedOptions = []removedOption{
-	{name: "oidc-allowed-users", replacedBy: "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
-	{name: "oidc-allowed-groups", replacedBy: "limit who can log in at the identity provider, or with binding rules and -acl (docs/acl.md#binding-rules)"},
+	{name: "oidc-allowed-users", replacedBy: "limit who can log in at the identity provider, or with binding rules and the ACL on (docs/acl.md#binding-rules)"},
+	{name: "oidc-allowed-groups", replacedBy: "limit who can log in at the identity provider, or with binding rules and the ACL on (docs/acl.md#binding-rules)"},
 	{name: "metrics-token-file", valueEnv: "NOPS_METRICS_TOKEN", replacedBy: "give Prometheus a token with the metrics capability (docs/metrics.md#scraping)"},
 	{name: "notify-webhook-url-file", valueEnv: "NOPS_NOTIFY_WEBHOOK_URL", replacedBy: notifyReplacement("url_file", "webhook")},
 	{name: "notify-webhook-token-file", valueEnv: "NOPS_NOTIFY_WEBHOOK_TOKEN", replacedBy: notifyReplacement("token_file", "webhook")},
@@ -365,6 +358,8 @@ var removedOptions = []removedOption{
 	{name: "notify-gotify-url", replacedBy: notifyReplacement("url", "gotify")},
 	{name: "notify-gotify-token-file", valueEnv: "NOPS_NOTIFY_GOTIFY_TOKEN", replacedBy: notifyReplacement("token_file", "gotify")},
 	{name: "notify-timeout", replacedBy: "timeout in each notify block of -config (docs/configuration.md#notifications)"},
+	{name: "acl", boolean: true, replacedBy: "enabled in the acl block of -config (docs/configuration.md#access-control)"},
+	{name: "acl-bootstrap-token-file", valueEnv: "NOPS_ACL_BOOTSTRAP_TOKEN", replacedBy: "bootstrap_token_file in the acl block of -config (docs/configuration.md#access-control)"},
 }
 
 // notifyReplacement says which attribute of a notify block replaces a removed
@@ -412,7 +407,7 @@ func newFlagSet(out io.Writer) (*flag.FlagSet, []*value) {
 func Load(args []string, getenv func(string) string, out io.Writer) (*Config, error) {
 	fs, vals := newFlagSet(out)
 	for _, o := range removedOptions {
-		fs.Var(&value{}, o.name, "removed")
+		fs.Var(&value{boolean: o.boolean}, o.name, "removed")
 	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -467,6 +462,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.loadNomad(fc)...)
 	errs = append(errs, c.loadAuth(fc)...)
+	errs = append(errs, c.loadACL(fc)...)
 	errs = append(errs, c.loadNotify(fc)...)
 	errs = append(errs, c.check()...)
 	if err := errors.Join(errs...); err != nil {
@@ -496,8 +492,6 @@ var secretValues = []secretValue{
 		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
-	{envVar: "NOPS_ACL_BOOTSTRAP_TOKEN",
-		get: func(c *Config) string { return c.ACLBootstrapToken }, set: func(c *Config, v string) { c.ACLBootstrapToken = v }},
 }
 
 // resolveSecretValues fills every secret still empty after the flag/env-file
@@ -572,14 +566,6 @@ func (c *Config) check() []error {
 			errs = append(errs, errors.New("the -oidc-* options are only used with -auth-mode=oidc"))
 		}
 	}
-	switch {
-	case c.ACL && c.ACLBootstrapToken == "":
-		errs = append(errs, errors.New("-acl needs a bootstrap token (-acl-bootstrap-token-file or NOPS_ACL_BOOTSTRAP_TOKEN), made by \"nops secret generate\""))
-	case !c.ACL && c.ACLBootstrapToken != "":
-		errs = append(errs, errors.New("a bootstrap token is set without -acl"))
-	case c.ACL && !secret.Valid(c.ACLBootstrapToken):
-		errs = append(errs, errors.New("the bootstrap token is not a secret made by \"nops secret generate\""))
-	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
 	}
@@ -596,6 +582,7 @@ type fileConfig struct {
 	Listen       *fileListen      `hcl:"listen,block"`
 	Nomad        *fileNomad       `hcl:"nomad,block"`
 	Auth         []fileAuth       `hcl:"auth,block"`
+	ACL          *fileACL         `hcl:"acl,block"`
 	Notify       []fileNotify     `hcl:"notify,block"`
 }
 
@@ -606,6 +593,11 @@ type fileNotify struct {
 	URL       *string `hcl:"url,optional"`
 	TokenFile *string `hcl:"token_file,optional"`
 	Timeout   *string `hcl:"timeout,optional"`
+}
+
+type fileACL struct {
+	Enabled            bool   `hcl:"enabled,optional"`
+	BootstrapTokenFile string `hcl:"bootstrap_token_file,optional"`
 }
 
 type fileAuth struct {
@@ -815,6 +807,32 @@ func (c *Config) loadAuth(fc *fileConfig) []error {
 		}
 	}
 	return errs
+}
+
+// loadACL turns the ACL on from the acl block of fc, when it has one, and reads
+// its bootstrap token. The token is required with enabled and refused without
+// it, so the ACL is never half on. An error names the file and the attribute.
+func (c *Config) loadACL(fc *fileConfig) []error {
+	if fc == nil || fc.ACL == nil {
+		return nil
+	}
+	b := fc.ACL
+	fail := func(format string, a ...any) []error {
+		return []error{fmt.Errorf("-config %s: acl: bootstrap_token_file: %s", c.ConfigFile, fmt.Sprintf(format, a...))}
+	}
+	tok, err := secretFile(b.BootstrapTokenFile)
+	switch {
+	case err != nil:
+		return fail("%v", err)
+	case b.Enabled && tok == "":
+		return fail(`required with enabled = true: make the token with "nops secret generate"`)
+	case !b.Enabled && tok != "":
+		return fail("is set without enabled = true")
+	case b.Enabled && !secret.Valid(tok):
+		return fail(`the token is not a secret made by "nops secret generate"`)
+	}
+	c.ACL, c.ACLBootstrapTokenFile, c.ACLBootstrapToken = b.Enabled, b.BootstrapTokenFile, tok
+	return nil
 }
 
 // notifyAttributes are the attributes each type of notify block takes besides

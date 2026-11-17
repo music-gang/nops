@@ -143,16 +143,21 @@ func TestLoadEveryOption(t *testing.T) {
 	nomadTok := writeFile(t, "nomad-token", "nomad-secret\n")
 	gitTok := writeFile(t, "git-token", "  git-secret\n")
 	appsTok := writeFile(t, "apps-token", "apps-secret\n")
+	bootstrap := secret.New()
+	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	configFile := writeFile(t, "nops.hcl", `
 repository "apps" {
   url        = "https://git.example.com/ops/apps.git"
   token_file = "`+appsTok+`"
 }
+
+acl {
+  enabled              = true
+  bootstrap_token_file = "`+bootstrapTok+`"
+}
 `)
 	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
-	bootstrap := secret.New()
-	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
 	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
 	groupsFile := writeFile(t, "groups", "ops: alice\n")
 
@@ -163,34 +168,32 @@ repository "apps" {
 
 	// Every option shared by both auth modes.
 	common := map[string]string{
-		"nomad-addr":               "https://nomad.example.com:4646",
-		"nomad-ui-url":             "https://infra.example.com/nomad/",
-		"nomad-namespaces":         "apps,infra, apps",
-		"nomad-token-file":         nomadTok,
-		"nomad-ca-cert":            ca,
-		"nomad-client-cert":        cert,
-		"nomad-client-key":         key,
-		"nomad-tls-skip-verify":    "true",
-		"git-url":                  repo,
-		"git-branch":               "prod",
-		"git-path":                 "jobs/apps",
-		"git-username":             "oauth2",
-		"git-token-file":           gitTok,
-		"git-timeout":              "45s",
-		"config":                   configFile,
-		"db-path":                  "/var/lib/nops/nops.db",
-		"listen-addr":              "127.0.0.1:9000",
-		"webhook-secret-file":      webhookSecret,
-		"acl":                      "true",
-		"acl-bootstrap-token-file": bootstrapTok,
-		"public-url":               "https://nops.example.com/",
-		"git-poll-interval":        "2m",
-		"drift-interval":           "15m",
-		"engine-interval":          "7s",
-		"hook-poll-interval":       "3s",
-		"apply-timeout":            "1h",
-		"sync-window-time-zone":    "Asia/Tokyo", // no daylight saving: two loads of it are equal
-		"log-level":                "debug",
+		"nomad-addr":            "https://nomad.example.com:4646",
+		"nomad-ui-url":          "https://infra.example.com/nomad/",
+		"nomad-namespaces":      "apps,infra, apps",
+		"nomad-token-file":      nomadTok,
+		"nomad-ca-cert":         ca,
+		"nomad-client-cert":     cert,
+		"nomad-client-key":      key,
+		"nomad-tls-skip-verify": "true",
+		"git-url":               repo,
+		"git-branch":            "prod",
+		"git-path":              "jobs/apps",
+		"git-username":          "oauth2",
+		"git-token-file":        gitTok,
+		"git-timeout":           "45s",
+		"config":                configFile,
+		"db-path":               "/var/lib/nops/nops.db",
+		"listen-addr":           "127.0.0.1:9000",
+		"webhook-secret-file":   webhookSecret,
+		"public-url":            "https://nops.example.com/",
+		"git-poll-interval":     "2m",
+		"drift-interval":        "15m",
+		"engine-interval":       "7s",
+		"hook-poll-interval":    "3s",
+		"apply-timeout":         "1h",
+		"sync-window-time-zone": "Asia/Tokyo", // no daylight saving: two loads of it are equal
+		"log-level":             "debug",
 	}
 	commonWant := Config{
 		NomadAddr:          "https://nomad.example.com:4646",
@@ -222,7 +225,7 @@ repository "apps" {
 		ReadTimeout:       time.Minute,
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
-		// The auth block is the file's too.
+		// The auth and acl blocks are the file's too.
 		LoginMaxFailures:      10,
 		LoginFailureWindow:    15 * time.Minute,
 		WebhookSecretFile:     webhookSecret,
@@ -574,7 +577,6 @@ func checkErr(t *testing.T, err error, prefix, want string) {
 func TestLoadCrossChecks(t *testing.T) {
 	tok := writeFile(t, "token", "secret")
 	cert := writeFile(t, "cert.pem", "cert")
-	boot := writeFile(t, "bootstrap", secret.New())
 	tests := []struct {
 		name string
 		args []string
@@ -585,9 +587,6 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"token without username", []string{"-git-url", repo, "-git-token-file", tok, "-git-username="}, "needs a non-empty -git-username"},
 		{"cert without key", []string{"-git-url", repo, "-nomad-client-cert", cert}, "must be set together"},
 		{"key without cert", []string{"-git-url", repo, "-nomad-client-key", cert}, "must be set together"},
-		{"acl without a bootstrap token", []string{"-git-url", repo, "-acl"}, "-acl needs a bootstrap token"},
-		{"a bootstrap token without acl", []string{"-git-url", repo, "-acl-bootstrap-token-file", boot}, "a bootstrap token is set without -acl"},
-		{"a bootstrap token that is not generated", []string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", tok}, "not a secret made by"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -596,11 +595,6 @@ func TestLoadCrossChecks(t *testing.T) {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}
 		})
-	}
-
-	// A bootstrap token made by nops secret generate turns the ACL on.
-	if c, err := Load([]string{"-git-url", repo, "-acl", "-acl-bootstrap-token-file", boot}, envOf(nil), io.Discard); err != nil || !c.ACL {
-		t.Errorf("acl with a bootstrap token: ACL = %v, %v", c != nil && c.ACL, err)
 	}
 
 	// Without a token, an ssh URL is accepted: a public repo needs no auth.
@@ -960,8 +954,6 @@ func TestSecretValueFallback(t *testing.T) {
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
 		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
-		{"NOPS_ACL_BOOTSTRAP_TOKEN", secret.New(), func(c *Config) string { return c.ACLBootstrapToken },
-			map[string]string{"NOPS_ACL": "true"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.envVar, func(t *testing.T) {
@@ -1699,6 +1691,98 @@ func TestLoadNotifyOptionsRemoved(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), source+" was removed") || !strings.Contains(err.Error(), tt.want) {
 					t.Errorf("%s: err = %v, want it removed, replaced by %s", source, err, tt.want)
 				}
+			}
+		})
+	}
+}
+
+func TestLoadACLFromTheFile(t *testing.T) {
+	bootstrap := secret.New()
+	boot := writeFile(t, "bootstrap", bootstrap+"\n")
+	file := writeFile(t, "nops.hcl", `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+acl {
+  enabled              = true
+  bootstrap_token_file = "`+boot+`"
+}
+`)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ACL || c.ACLBootstrapTokenFile != boot || c.ACLBootstrapToken != bootstrap {
+		t.Errorf("ACL = %v, file %q, token %q; want on, %q, the generated token", c.ACL, c.ACLBootstrapTokenFile, c.ACLBootstrapToken, boot)
+	}
+
+	// Without a block, or with an empty one, the ACL is off.
+	for _, args := range [][]string{
+		{"-git-url", repo},
+		{"-git-url", repo, "-config", writeFile(t, "empty.hcl", "acl {}\n")},
+	} {
+		c, err := Load(args, envOf(nil), io.Discard)
+		if err != nil || c.ACL || c.ACLBootstrapToken != "" {
+			t.Errorf("%v: ACL = %v, token %q, %v; want it off", args, c != nil && c.ACL, c.ACLBootstrapToken, err)
+		}
+	}
+}
+
+func TestLoadACLInvalid(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	empty := writeFile(t, "empty", " \n")
+	boot := writeFile(t, "bootstrap", secret.New())
+	notGenerated := writeFile(t, "not-generated", "chosen-by-hand")
+	acl := func(body string) string { return "acl {\n" + body + "\n}\n" }
+	tests := []struct {
+		name, file, want string
+	}{
+		{"enabled without a bootstrap token", acl(`enabled = true`), "acl: bootstrap_token_file: required with enabled = true"},
+		{"a bootstrap token without enabled", acl(`bootstrap_token_file = "` + boot + `"`), "acl: bootstrap_token_file: is set without enabled = true"},
+		{"a bootstrap token not generated", acl(`enabled = true
+bootstrap_token_file = "` + notGenerated + `"`), `acl: bootstrap_token_file: the token is not a secret made by "nops secret generate"`},
+		{"a missing file", acl(`enabled = true
+bootstrap_token_file = "` + missing + `"`), "acl: bootstrap_token_file: open " + missing},
+		{"an empty file", acl(`enabled = true
+bootstrap_token_file = "` + empty + `"`), "acl: bootstrap_token_file: " + empty + " is empty"},
+		{"enabled is a string", acl(`enabled = "yes"`), "enabled"},
+		{"an unknown attribute", acl(`bootstrap_token = "x"`), "Unsupported argument"},
+		{"two blocks", acl("") + acl(""), "Duplicate acl block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load([]string{"-git-url", repo, "-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The -acl options moved into the acl block: each one, its variable, and the
+// variable that held the bootstrap token stop Nops, naming the attribute that
+// replaces it.
+func TestLoadACLOptionsRemoved(t *testing.T) {
+	boot := writeFile(t, "bootstrap", secret.New())
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{"flag -acl", []string{"-acl"}, nil, "enabled in the acl block"},
+		{"flag -acl", []string{"-acl=false"}, nil, "enabled in the acl block"},
+		{"NOPS_ACL", nil, map[string]string{"NOPS_ACL": "true"}, "enabled in the acl block"},
+		{"flag -acl-bootstrap-token-file", []string{"-acl-bootstrap-token-file", boot}, nil, "bootstrap_token_file in the acl block"},
+		{"NOPS_ACL_BOOTSTRAP_TOKEN_FILE", nil, map[string]string{"NOPS_ACL_BOOTSTRAP_TOKEN_FILE": boot}, "bootstrap_token_file in the acl block"},
+		{"NOPS_ACL_BOOTSTRAP_TOKEN", nil, map[string]string{"NOPS_ACL_BOOTSTRAP_TOKEN": secret.New()}, "bootstrap_token_file in the acl block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(append([]string{"-git-url", repo}, tt.args...), envOf(tt.env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.name+" was removed") || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %s removed, replaced by %s", err, tt.name, tt.want)
 			}
 		})
 	}

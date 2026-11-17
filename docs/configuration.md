@@ -30,7 +30,6 @@ inject secrets into the environment. These variables have no flag.
 |---|---|
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
-| `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` (`-acl-bootstrap-token-file`) | `NOPS_ACL_BOOTSTRAP_TOKEN` |
 | `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 
@@ -194,7 +193,7 @@ Give Prometheus a [token with the `metrics` capability](metrics.md#scraping).
 
 Nops refuses to start with `-oidc-allowed-users` or `-oidc-allowed-groups`.
 Limit who can log in at the identity provider, or with
-[binding rules](acl.md#binding-rules) and `-acl`.
+[binding rules](acl.md#binding-rules) and the [ACL](#access-control) on.
 
 ### Local users (`-auth-mode=basic`)
 
@@ -223,10 +222,23 @@ auth "basic" {
 
 ## Access control
 
-| Flag | Variable | Default | Meaning |
-|---|---|---|---|
-| `-acl` | `NOPS_ACL` | `false` | Turn on the [ACL](acl.md). Off, every token can do everything. |
-| `-acl-bootstrap-token-file` | `NOPS_ACL_BOOTSTRAP_TOKEN_FILE` | none, **required** with `-acl` | File holding the [bootstrap token](acl.md#tokens), made by `nops secret generate`. |
+The `acl` block of the [configuration file](#configuration-file) turns on
+the [ACL](acl.md). It has no flag or variable, and one block at most:
+
+```hcl
+acl {
+  enabled              = true
+  bootstrap_token_file = "/secrets/bootstrap-token"
+}
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Turn on the ACL. Off, every token can do everything. |
+| `bootstrap_token_file` | none, **required** with `enabled` | File holding the [bootstrap token](acl.md#tokens), made by `nops secret generate`. |
+
+Nops refuses to start with `-acl`, `-acl-bootstrap-token-file`, or a
+`NOPS_ACL*` variable, and names the attribute that replaces it.
 
 ## Notifications
 
