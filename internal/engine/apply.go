@@ -632,10 +632,11 @@ const (
 // via the allocations of that job version (a batch job, or an update stanza
 // that produces no Nomad deployment): every one complete for a batch or
 // sysbatch job, running or complete for any other, once Nomad has placed the
-// whole version. healthWaiting means neither healthy nor failed; reason says
-// why for healthFailed, for healthHealthy how many allocations Nomad replaced
-// on the way, if any, and for healthWaiting what no node has room for, if
-// that is what it waits for.
+// whole version (for a system or sysbatch job, on the nodes with room for
+// it). healthWaiting means neither healthy nor failed; reason says why for
+// healthFailed, for healthHealthy how many allocations Nomad replaced on the
+// way and which nodes had no room, if any, and for healthWaiting what no node
+// has room for, if that is what it waits for.
 //
 // A live index that moved after the register while a fresh plan of the
 // deployment's spec, with the live counts of the groups with a scaling block,
@@ -651,7 +652,7 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	if dep != nil && dep.JobModifyIndex == d.AppliedIndex {
 		switch dep.Status {
 		case api.DeploymentStatusSuccessful:
-			return healthHealthy, "", nil
+			return e.perNodeHealthy(ctx, d)
 		case api.DeploymentStatusFailed, api.DeploymentStatusCancelled:
 			return healthFailed, fmt.Sprintf("nomad deployment %s: %s", dep.Status, dep.StatusDescription), nil
 		case api.DeploymentStatusRunning:
@@ -717,6 +718,12 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	// could still reschedule it. A blocked evaluation can place the
 	// replacement of a lost allocation, but never reschedules a failed one:
 	// Nomad does that through a follow-up evaluation.
+	//
+	// A system or sysbatch job runs on every node with room for it, as its
+	// Nomad deployment counts it: a node with no room blocks an evaluation
+	// for as long as it stays full, and the version is whole without it.
+	perNode := runsPerNode(live)
+	blocked := evals.Blocked && !perNode
 	var replaced, rescheduling int
 	var failed, lost *nomadx.Alloc
 	for i, a := range ours {
@@ -737,11 +744,11 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	switch {
 	case failed != nil && !evals.Pending:
 		return healthFailed, failed.Failure, nil
-	case lost != nil && !evals.Pending && !evals.Blocked:
+	case lost != nil && !evals.Pending && !blocked:
 		return healthFailed, lost.Failure, nil
 	case failed != nil || lost != nil || rescheduling > 0:
 		return healthWaiting, evals.NoRoom, nil // Nomad has yet to decide on it
-	case evals.Blocked:
+	case blocked:
 		return healthWaiting, evals.NoRoom, nil // part of the version waits for room
 	}
 	toCompletion := runsToCompletion(live)
@@ -753,13 +760,41 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 			return healthWaiting, evals.NoRoom, nil // still starting, or still running a batch
 		}
 	}
+	reason := ""
 	switch {
 	case replaced == 1:
-		return healthHealthy, "healthy after Nomad replaced 1 failed or lost allocation", nil
+		reason = "healthy after Nomad replaced 1 failed or lost allocation"
 	case replaced > 1:
-		return healthHealthy, fmt.Sprintf("healthy after Nomad replaced %d failed or lost allocations", replaced), nil
+		reason = fmt.Sprintf("healthy after Nomad replaced %d failed or lost allocations", replaced)
 	}
-	return healthHealthy, "", nil
+	if perNode && evals.NoRoom != "" {
+		if reason == "" {
+			reason = "healthy"
+		}
+		reason += ", but " + evals.NoRoom
+	}
+	return healthHealthy, reason, nil
+}
+
+// perNodeHealthy is the health of d once its Nomad deployment is successful.
+// A system job's deployment leaves out the nodes with no room for it: the
+// reason names them, as the allocations path does.
+func (e *Engine) perNodeHealthy(ctx context.Context, d *store.Deployment) (health, string, error) {
+	job, err := parseJobSpec(d)
+	if err != nil {
+		return healthWaiting, "", err
+	}
+	if !runsPerNode(job) {
+		return healthHealthy, "", nil
+	}
+	evals, err := e.nomad.Evaluations(ctx, d.Namespace, d.JobID)
+	if err != nil {
+		return healthWaiting, "", err
+	}
+	if evals.NoRoom == "" {
+		return healthHealthy, "", nil
+	}
+	return healthHealthy, "healthy, but " + evals.NoRoom, nil
 }
 
 // scaledSinceRegister reports whether the live job, whose index moved since
@@ -859,6 +894,15 @@ func runsToCompletion(job *api.Job) bool {
 		return false
 	}
 	return *job.Type == api.JobTypeBatch || *job.Type == api.JobTypeSysbatch
+}
+
+// runsPerNode reports whether a job places one allocation on each eligible
+// node (system, sysbatch) rather than a count of them.
+func runsPerNode(job *api.Job) bool {
+	if job.Type == nil {
+		return false
+	}
+	return *job.Type == api.JobTypeSystem || *job.Type == api.JobTypeSysbatch
 }
 
 // neverHasAllocations reports whether a job has no allocation of its own to
