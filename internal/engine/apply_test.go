@@ -886,6 +886,65 @@ func TestStepHealthAllocationsPathWaitsForRoom(t *testing.T) {
 	}
 }
 
+// A system or sysbatch job runs on the nodes with room for it, as its Nomad
+// deployment counts it: a node that stays full doesn't keep the deployment
+// waiting, and the completion says which nodes had no room.
+func TestStepHealthAllocationsPathPerNodeJobSkipsFullNodes(t *testing.T) {
+	for jobType, placed := range map[string]string{api.JobTypeSystem: "running", api.JobTypeSysbatch: "complete"} {
+		t.Run(jobType, func(t *testing.T) {
+			h := newHarness(t)
+			job := managed("web", "auto", nil)
+			job.Type = &jobType
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, DesiredStatus: "run"})
+			h.nomad.evals["web"] = nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
+
+			h.step(d)
+
+			got := h.get(d.ID)
+			if got.State != store.StateCompleted {
+				t.Fatalf("state = %s (%s), want completed", got.State, got.Error)
+			}
+			evs, err := h.store.Events(context.Background(), d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const want = "healthy, but no room on 1 node (memory)"
+			if last := evs[len(evs)-1]; last.Message != want {
+				t.Errorf("last event message = %q, want %q", last.Message, want)
+			}
+		})
+	}
+}
+
+// A system job's Nomad deployment succeeds without the nodes that have no
+// room for it: the completion names them, as it does without a deployment.
+func TestStepHealthSystemDeploymentNamesFullNodes(t *testing.T) {
+	h := newHarness(t)
+	job := managed("web", "auto", nil)
+	system := api.JobTypeSystem
+	job.Type = &system
+	d := h.applyingWithIndex("web", job, 9)
+	h.nomad.setDeployment("web", &api.Deployment{ID: "dep-1", JobModifyIndex: 9, Status: api.DeploymentStatusSuccessful})
+	h.nomad.evals["web"] = nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
+
+	h.step(d)
+
+	got := h.get(d.ID)
+	if got.State != store.StateCompleted {
+		t.Fatalf("state = %s (%s), want completed", got.State, got.Error)
+	}
+	evs, err := h.store.Events(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "healthy, but no room on 1 node (memory)"
+	if last := evs[len(evs)-1]; last.Message != want {
+		t.Errorf("last event message = %q, want %q", last.Message, want)
+	}
+}
+
 func TestStepHealthTimeoutFails(t *testing.T) {
 	h := newHarness(t)
 	h.engine.applyTimeout = time.Minute

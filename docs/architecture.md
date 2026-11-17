@@ -114,8 +114,10 @@ doesn't become healthy fails; Nops doesn't roll back.
 - Without one: healthy when Nomad has placed the whole new version and every
   allocation of it is `complete` for a `batch` or `sysbatch` job, so the
   [apply timeout](#the-apply-timeout) covers its whole run, and `running` or
-  `complete` for any other job. While no node has room for part of it, the
-  deployment waits. A failed or lost allocation that Nomad reschedules counts
+  `complete` for any other job. While no node has room for part of a
+  `service` or `batch` job, the deployment waits. A `system` or `sysbatch`
+  job is healthy without the nodes that have no room, as its Nomad
+  deployment would be. A failed or lost allocation that Nomad reschedules counts
   as its replacement does, and one Nomad gives up on fails the deployment.
 - A job with no allocations, like a periodic or parameterized job: healthy
   once registered.
