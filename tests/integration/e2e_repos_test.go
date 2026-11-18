@@ -19,16 +19,12 @@ import (
 func TestE2EJobFromASecondRepository(t *testing.T) {
 	apps := newScratchRepo(t)
 	apps.commit(t, "the jobs directory", map[string]string{"nomad/README.md": "jobs\n"})
-	config := filepath.Join(t.TempDir(), "nops.hcl")
-	if err := os.WriteFile(config, []byte(`
+	e := newE2E(t, nopsConfig(t, `
 repository "apps" {
   url  = "`+apps.url+`"
   path = "nomad"
 }
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	e := newE2E(t, "NOPS_CONFIG="+config)
+`))
 	dir := t.TempDir()
 	jobID := uniqueID(t, e.raw, "repos")
 	hookID := uniqueID(t, e.raw, "reposhook")
@@ -67,19 +63,15 @@ repository "apps" {
 func TestE2ERepositoryMayDeclareOnlyItsJobs(t *testing.T) {
 	apps := newScratchRepo(t)
 	apps.commit(t, "the jobs directory", map[string]string{"nomad/README.md": "jobs\n"})
-	config := filepath.Join(t.TempDir(), "nops.hcl")
 	_, raw := newClient(t)
 	allowed, refused := uniqueID(t, raw, "mine"), uniqueID(t, raw, "theirs")
-	if err := os.WriteFile(config, []byte(`
+	e := newE2E(t, nopsConfig(t, `
 repository "apps" {
   url  = "`+apps.url+`"
   path = "nomad"
   jobs = ["`+allowed+`"]
 }
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	e := newE2E(t, "NOPS_CONFIG="+config)
+`))
 
 	apps.commit(t, "two jobs", map[string]string{
 		"nomad/" + file(allowed): e2eJob{id: allowed, policy: "auto", version: "1"}.hcl(),

@@ -30,9 +30,12 @@ const timingSafetyPassword = "nops-unknown-user-timing-safety"
 
 // BasicAuthOptions configures NewBasicAuth.
 type BasicAuthOptions struct {
+	// Name is the method's name, the label of its auth block: binding rules
+	// name it.
+	Name string
 	// UsersFile holds one "username:bcrypt-hash" per line (blank lines and
 	// lines starting with "#" are ignored). Generate a line with, for
-	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users--auth-modebasic).
+	// example, `htpasswd -nB <user>` (docs/dashboard.md#local-users).
 	UsersFile string
 	// GroupsFile, optional, holds one "group: user1 user2" per line, in
 	// Apache's AuthGroupFile format. Every member must be in UsersFile.
@@ -46,8 +49,9 @@ type BasicAuthOptions struct {
 
 // BasicAuth is the local-users auth method: no external identity provider, an
 // operator-maintained file of usernames and bcrypt hashes instead. It
-// implements Authenticator. See docs/dashboard.md#local-users--auth-modebasic.
+// implements Authenticator. See docs/dashboard.md#local-users.
 type BasicAuth struct {
+	name    string
 	users   map[string]string   // username -> bcrypt hash
 	groups  map[string][]string // username -> sorted groups
 	dummy   string              // see timingSafetyPassword
@@ -63,8 +67,8 @@ type BasicAuth struct {
 // line, a hash that does not parse as bcrypt or a group member that is not a
 // user is a startup error naming the line.
 func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
-	if o.UsersFile == "" {
-		return nil, errors.New("web: UsersFile is required")
+	if o.Name == "" || o.UsersFile == "" {
+		return nil, errors.New("web: Name and UsersFile are required")
 	}
 	users, err := parseUsersFile(o.UsersFile)
 	if err != nil {
@@ -88,7 +92,7 @@ func NewBasicAuth(o BasicAuthOptions) (*BasicAuth, error) {
 		log = slog.Default()
 	}
 	return &BasicAuth{
-		users: users, groups: groups, dummy: string(dummy),
+		name: o.Name, users: users, groups: groups, dummy: string(dummy),
 		limit: newFailureLimit(o.MaxFailures, o.FailureWindow), slots: make(chan struct{}, loginSlots()),
 		xorigin: http.NewCrossOriginProtection(), log: log,
 	}, nil
@@ -177,7 +181,10 @@ func parseGroupsFile(path string, users map[string]string) (map[string][]string,
 }
 
 // Method implements Authenticator.
-func (b *BasicAuth) Method() string { return "basic" }
+func (b *BasicAuth) Method() string { return b.name }
+
+// Type implements Authenticator.
+func (b *BasicAuth) Type() string { return "basic" }
 
 // Register adds the local-users route to mux: POST /auth/basic, which the form
 // of the login page posts to.

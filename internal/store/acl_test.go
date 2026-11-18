@@ -326,12 +326,11 @@ func TestPutBindingRuleRequiresWhatItNeeds(t *testing.T) {
 		r  BindingRule
 		by Audit
 	}{
-		"who":                         {BindingRule{AuthMethod: "oidc", BindType: "management"}, Audit{}},
-		"an auth method":              {BindingRule{BindType: "management"}, admin},
-		"a known bind type":           {BindingRule{AuthMethod: "oidc", BindType: "root"}, admin},
-		"a policy to bind":            {BindingRule{AuthMethod: "oidc", BindType: "policy"}, admin},
-		"no policy on management":     {BindingRule{AuthMethod: "oidc", BindType: "management", BindName: "x"}, admin},
-		"a known auth method (CHECK)": {BindingRule{AuthMethod: "ldap", BindType: "management"}, admin},
+		"who":                     {BindingRule{AuthMethod: "oidc", BindType: "management"}, Audit{}},
+		"an auth method":          {BindingRule{BindType: "management"}, admin},
+		"a known bind type":       {BindingRule{AuthMethod: "oidc", BindType: "root"}, admin},
+		"a policy to bind":        {BindingRule{AuthMethod: "oidc", BindType: "policy"}, admin},
+		"no policy on management": {BindingRule{AuthMethod: "oidc", BindType: "management", BindName: "x"}, admin},
 	} {
 		if _, err := s.PutBindingRule(context.Background(), tc.r, tc.by); err == nil {
 			t.Errorf("without %s: no error", name)

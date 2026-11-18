@@ -146,6 +146,27 @@ func TestGroupsFromUserinfoReachTheRules(t *testing.T) {
 	}
 }
 
+// A binding rule names the auth method by the label of its auth block, not by
+// its type.
+func TestRulesNameTheAuthMethodByItsName(t *testing.T) {
+	a := newACLApp(t, func(o *AuthOptions) { o.Name = "authentik" })
+	a.policy("operator", `namespace "*" { policy = "read" }`)
+	if _, err := a.store.PutBindingRule(t.Context(), store.BindingRule{AuthMethod: "oidc", BindType: acl.BindManagement}, store.Audit{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.PutBindingRule(t.Context(), store.BindingRule{AuthMethod: "authentik", BindType: acl.BindPolicy, BindName: "operator"}, store.Audit{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok := a.tokenBehind(a.loggedIn(olga()))
+	if tok.Type != store.TokenClient || !slices.Equal(tok.Policies, []string{"operator"}) {
+		t.Errorf("token = %+v, want only what the rule on authentik binds", tok)
+	}
+	if !strings.HasPrefix(tok.Identity, "oidc:") {
+		t.Errorf("identity = %q, want it keyed on the type", tok.Identity)
+	}
+}
+
 func TestABrokenBindingRuleBindsNothingAndOthersApply(t *testing.T) {
 	a := newACLApp(t)
 	a.policy("operator", `namespace "*" { policy = "read" }`)

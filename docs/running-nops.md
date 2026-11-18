@@ -68,16 +68,26 @@ group "nops" {
       change_mode = "restart"
     }
 
+    template {
+      destination = "local/nops.hcl"
+      change_mode = "restart"
+      data        = <<EOF
+auth "oidc" {
+  type               = "oidc"
+  issuer_url         = "https://auth.example.com/application/o/nops/"
+  client_id          = "nops"
+  client_secret_file = "/secrets/oidc-secret"
+}
+EOF
+    }
+
     env {
-      NOPS_GIT_URL                 = "https://git.example.com/ops/jobs.git"
-      NOPS_GIT_TOKEN_FILE          = "${NOMAD_SECRETS_DIR}/git-token"
-      NOPS_PUBLIC_URL              = "https://nops.example.com"
-      NOPS_AUTH_MODE               = "oidc"
-      NOPS_OIDC_ISSUER_URL         = "https://auth.example.com/application/o/nops/"
-      NOPS_OIDC_CLIENT_ID          = "nops"
-      NOPS_OIDC_CLIENT_SECRET_FILE = "${NOMAD_SECRETS_DIR}/oidc-secret"
-      NOPS_NOMAD_ADDR              = "https://nomad.service.consul:4646"
-      NOPS_DB_PATH                 = "/data/nops.db"
+      NOPS_CONFIG         = "${NOMAD_TASK_DIR}/nops.hcl"
+      NOPS_GIT_URL        = "https://git.example.com/ops/jobs.git"
+      NOPS_GIT_TOKEN_FILE = "${NOMAD_SECRETS_DIR}/git-token"
+      NOPS_PUBLIC_URL     = "https://nops.example.com"
+      NOPS_NOMAD_ADDR     = "https://nomad.service.consul:4646"
+      NOPS_DB_PATH        = "/data/nops.db"
     }
   }
 }

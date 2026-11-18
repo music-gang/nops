@@ -26,7 +26,7 @@ func TestE2EACLBootstrapTokenAdministersAndClientTokenIsLimited(t *testing.T) {
 	if err := os.WriteFile(bootFile, []byte(bootstrap+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e := newE2EWithoutLogin(t, "NOPS_CONFIG="+writeACLConfig(t, `
+	e := newE2EWithoutLogin(t, nopsConfig(t, `
 acl {
   enabled              = true
   bootstrap_token_file = "`+bootFile+`"
@@ -178,19 +178,9 @@ acl {
 // flip without the token that administers it.
 func TestE2EACLRefusesToStartWithoutABootstrapToken(t *testing.T) {
 	cmd := exec.Command(buildNopsBinary(t), "serve")
-	cmd.Env = append(os.Environ(), "NOPS_CONFIG="+writeACLConfig(t, "acl {\n  enabled = true\n}\n"), "NOPS_GIT_URL=https://git.example.com/x.git", "NOPS_AUTH_MODE=basic", "NOPS_USERS_FILE="+writeUsersFile(t, e2eUser, e2ePassword))
+	cmd.Env = append(os.Environ(), nopsConfig(t, "acl {\n  enabled = true\n}\n"), "NOPS_GIT_URL=https://git.example.com/x.git")
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "acl: bootstrap_token_file: required with enabled = true") {
 		t.Errorf("err %v, output %q, want a refusal that names the bootstrap token", err, out)
 	}
-}
-
-// writeACLConfig writes the -config file of a test with the ACL, its acl block.
-func writeACLConfig(t *testing.T, block string) string {
-	t.Helper()
-	file := filepath.Join(t.TempDir(), "nops.hcl")
-	if err := os.WriteFile(file, []byte(block), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return file
 }

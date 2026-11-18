@@ -273,7 +273,8 @@ func startupAttrs(cfg *config.Config) []any {
 		"namespaces", cfg.NomadNamespaces,
 		"config", cfg.ConfigFile,
 		"repositories", repos,
-		"auth_mode", cfg.AuthMode,
+		"auth_method", cfg.Auth.Name,
+		"auth_type", cfg.Auth.Type,
 		"acl", cfg.ACL,
 		"db_path", cfg.DBPath,
 		"base_path", cfg.BasePath,
@@ -281,25 +282,26 @@ func startupAttrs(cfg *config.Config) []any {
 	}
 }
 
-// newAuthenticator builds the login backend config.check() approved:
-// exactly one of cfg.AuthMode's two sets of options is set.
+// newAuthenticator builds the auth method of the auth block config.Load
+// approved: only the fields of its type are set.
 func newAuthenticator(cfg *config.Config, log *slog.Logger) (web.Authenticator, error) {
-	switch cfg.AuthMode {
+	a := cfg.Auth
+	switch a.Type {
 	case "oidc":
 		return web.NewAuth(web.AuthOptions{
-			Issuer: cfg.OIDCIssuerURL, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
+			Name: a.Name, Issuer: a.IssuerURL, ClientID: a.ClientID, ClientSecret: a.ClientSecret,
 			RedirectURL: cfg.PublicURL + "/auth/callback",
 			BasePath:    cfg.BasePath,
 			Log:         log,
 		})
 	case "basic":
 		return web.NewBasicAuth(web.BasicAuthOptions{
-			UsersFile: cfg.UsersFile, GroupsFile: cfg.GroupsFile,
-			MaxFailures: cfg.LoginMaxFailures, FailureWindow: cfg.LoginFailureWindow, Log: log,
+			Name: a.Name, UsersFile: a.UsersFile, GroupsFile: a.GroupsFile,
+			MaxFailures: a.MaxFailures, FailureWindow: a.FailureWindow, Log: log,
 		})
 	default:
-		// config.Load's check() already refuses any other value.
-		return nil, fmt.Errorf("unknown -auth-mode %q", cfg.AuthMode)
+		// config.Load already refuses any other type.
+		return nil, fmt.Errorf("unknown auth method type %q", a.Type)
 	}
 }
 

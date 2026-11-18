@@ -30,7 +30,6 @@ inject secrets into the environment. These variables have no flag.
 |---|---|
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
-| `NOPS_OIDC_CLIENT_SECRET_FILE` (`-oidc-client-secret-file`) | `NOPS_OIDC_CLIENT_SECRET` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 
 A secret of the [configuration file](#configuration-file) is read only from
@@ -177,48 +176,47 @@ listen {
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and the git webhook. |
 | `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | URL people use to reach the dashboard, with its [sub path](running-nops.md#under-a-sub-path) if any. Set it behind a proxy or with OIDC. |
-| `-auth-mode` | `NOPS_AUTH_MODE` | none, **required** | `oidc` or `basic`: see [authentication](dashboard.md#authentication). |
 | `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the [git webhook](running-nops.md#the-git-webhook) secret. Unset: no webhook. |
 
 Nops refuses to start with `-metrics-token-file` or `NOPS_METRICS_TOKEN`.
 Give Prometheus a [token with the `metrics` capability](metrics.md#scraping).
 
-### OIDC (`-auth-mode=oidc`)
+## Authentication
 
-| Flag | Variable | Default | Meaning |
+The `auth` block of the [configuration file](#configuration-file) picks how
+the dashboard logs people in ([authentication](dashboard.md#authentication)).
+It has no flag or variable, and Nops needs exactly one:
+
+```hcl
+auth "authentik" {
+  type               = "oidc"
+  issuer_url         = "https://auth.example.com/application/o/nops/"
+  client_id          = "nops"
+  client_secret_file = "/secrets/oidc-secret"
+}
+```
+
+| Attribute | Types | Default | Meaning |
 |---|---|---|---|
-| `-oidc-issuer-url` | `NOPS_OIDC_ISSUER_URL` | none, **required** | Issuer URL, exactly as the provider announces it, trailing slash included. |
-| `-oidc-client-id` | `NOPS_OIDC_CLIENT_ID` | none, **required** | Client ID of Nops at the provider. |
-| `-oidc-client-secret-file` | `NOPS_OIDC_CLIENT_SECRET_FILE` | none, **required** | File holding the client secret. |
+| `type` | all | none, **required** | `oidc` or `basic`. |
+| `issuer_url` | `oidc` | none, **required** | Issuer URL, exactly as the provider announces it, trailing slash included. |
+| `client_id` | `oidc` | none, **required** | Client ID of Nops at the provider. |
+| `client_secret_file` | `oidc` | none, **required** | File holding the client secret. |
+| `users_file` | `basic` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users). |
+| `groups_file` | `basic` | none | File of [`group: user1 user2` lines](dashboard.md#local-users). |
+| `max_failures` | `basic` | `10` | Failed logins of a username before it's locked. `0`: no limit. |
+| `failure_window` | `basic` | `15m` | How long a username stays locked, counted from its first failure. `0`: no limit. |
+
+- The name, made of letters, digits, `-` and `_`, is how
+  [binding rules](acl.md#binding-rules) name the auth method.
+- A second block, or an attribute of the other type, stops Nops.
+- Nops refuses to start with `-auth-mode`, an `-oidc-*` flag, `-users-file`,
+  `-groups-file`, or their variables, and names the attribute that replaces
+  it.
 
 Nops refuses to start with `-oidc-allowed-users` or `-oidc-allowed-groups`.
 Limit who can log in at the identity provider, or with
 [binding rules](acl.md#binding-rules) and the [ACL](#access-control) on.
-
-### Local users (`-auth-mode=basic`)
-
-| Flag | Variable | Default | Meaning |
-|---|---|---|---|
-| `-users-file` | `NOPS_USERS_FILE` | none, **required** | File of [`username:bcrypt-hash` lines](dashboard.md#local-users--auth-modebasic). |
-| `-groups-file` | `NOPS_GROUPS_FILE` | none | File of [`group: user1 user2` lines](dashboard.md#local-users--auth-modebasic). |
-
-The `auth "basic"` block of the [configuration file](#configuration-file)
-limits failed logins per username. It has no flag or variable, and one block
-at most:
-
-```hcl
-auth "basic" {
-  type           = "basic"
-  max_failures   = 10
-  failure_window = "15m"
-}
-```
-
-| Attribute | Default | Meaning |
-|---|---|---|
-| `type` | none, **required** | `basic`. |
-| `max_failures` | `10` | Failed logins of a username before it's locked. `0`: no limit. |
-| `failure_window` | `15m` | How long a username stays locked, counted from its first failure. `0`: no limit. |
 
 ## Access control
 

@@ -22,15 +22,64 @@ import (
 
 const repo = "https://git.example.com/ops/jobs.git"
 
-// authEnv is what a valid configuration needs besides -git-url: the OIDC
-// login and the public URL are required. envOf adds it under every test
-// environment, unless the test sets (or blanks) the variable itself.
+// authEnv is what a valid configuration needs besides -git-url: the -config
+// file with the auth block, and the public URL. envOf adds it under every test
+// environment, unless the test sets (or blanks) the variable itself. TestMain
+// sets NOPS_CONFIG.
 var authEnv = map[string]string{
-	"NOPS_PUBLIC_URL":         "https://nops.example.com",
-	"NOPS_AUTH_MODE":          "oidc",
-	"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/application/o/nops/",
-	"NOPS_OIDC_CLIENT_ID":     "nops",
-	"NOPS_OIDC_CLIENT_SECRET": "client-secret",
+	"NOPS_PUBLIC_URL": "https://nops.example.com",
+}
+
+// authConfig is the -config file of authEnv: authBlock alone. authSecretFile
+// holds its client secret.
+var authConfig, authSecretFile string
+
+// authBlock is the auth block of a valid configuration, which authWant reads.
+func authBlock() string {
+	return `auth "oidc" {
+  type               = "oidc"
+  issuer_url         = "https://idp.example.com/application/o/nops/"
+  client_id          = "nops"
+  client_secret_file = "` + authSecretFile + `"
+}
+`
+}
+
+// authWant is c.Auth from authBlock.
+func authWant() Auth {
+	return Auth{
+		Name: "oidc", Type: "oidc", IssuerURL: "https://idp.example.com/application/o/nops/",
+		ClientID: "nops", ClientSecretFile: authSecretFile, ClientSecret: "client-secret",
+	}
+}
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nops-config-test")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	authSecretFile = filepath.Join(dir, "oidc-secret")
+	authConfig = filepath.Join(dir, "auth.hcl")
+	err = os.WriteFile(authSecretFile, []byte("client-secret\n"), 0o600)
+	if err == nil {
+		err = os.WriteFile(authConfig, []byte(authBlock()), 0o600)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	authEnv["NOPS_CONFIG"] = authConfig
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// writeConfig writes a -config file of content after authBlock, so that the
+// configuration it is part of is valid.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	return writeFile(t, "nops.hcl", authBlock()+content)
 }
 
 func envOf(m map[string]string) func(string) string {
@@ -70,12 +119,10 @@ func TestLoadDefaults(t *testing.T) {
 		GitTimeout:       2 * time.Minute,
 		NomadTimeout:     30 * time.Second,
 		Repositories:     []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git", Timeout: 2 * time.Minute}},
+		ConfigFile:       authConfig,
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
-		AuthMode:         "oidc",
-		OIDCIssuerURL:    "https://idp.example.com/application/o/nops/",
-		OIDCClientID:     "nops",
-		OIDCClientSecret: "client-secret",
+		Auth:             authWant(),
 		PublicURL:        "https://nops.example.com",
 		GitPollInterval:  time.Minute,
 		DriftInterval:    5 * time.Minute,
@@ -87,9 +134,6 @@ func TestLoadDefaults(t *testing.T) {
 		ReadTimeout:       time.Minute,
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
-		// The limit on failed logins, with no auth block.
-		LoginMaxFailures:   10,
-		LoginFailureWindow: 15 * time.Minute,
 		// A sync window is read in UTC unless the operator says otherwise.
 		SyncWindowLocation: time.UTC,
 		LogLevel:           slog.LevelInfo,
@@ -129,13 +173,9 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 }
 
-// TestLoadEveryOption sets every option once through its flag and once through
-// its variable, so a typo in a set function or in the env name shows up.
 // TestLoadEveryOption sets every option once through its flag and once
 // through its variable, so a typo in a set function or in the env name
-// shows up. -auth-mode and -users-file are mutually exclusive with the
-// -oidc-* options (check()), so it runs once per auth mode: each variant
-// covers every option in the table, only the auth-specific ones differ.
+// shows up.
 func TestLoadEveryOption(t *testing.T) {
 	ca := writeFile(t, "ca.pem", "ca")
 	cert := writeFile(t, "cert.pem", "cert")
@@ -145,7 +185,7 @@ func TestLoadEveryOption(t *testing.T) {
 	appsTok := writeFile(t, "apps-token", "apps-secret\n")
 	bootstrap := secret.New()
 	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
-	configFile := writeFile(t, "nops.hcl", `
+	configFile := writeConfig(t, `
 repository "apps" {
   url        = "https://git.example.com/ops/apps.git"
   token_file = "`+appsTok+`"
@@ -156,18 +196,14 @@ acl {
   bootstrap_token_file = "`+bootstrapTok+`"
 }
 `)
-	oidcSecret := writeFile(t, "oidc-secret", "oidc-client-secret\n")
 	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
-	usersFile := writeFile(t, "users", "alice:$2a$10$not-checked-by-config\n")
-	groupsFile := writeFile(t, "groups", "ops: alice\n")
 
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
 		t.Skipf("no tz database: %v", err)
 	}
 
-	// Every option shared by both auth modes.
-	common := map[string]string{
+	values := map[string]string{
 		"nomad-addr":            "https://nomad.example.com:4646",
 		"nomad-ui-url":          "https://infra.example.com/nomad/",
 		"nomad-namespaces":      "apps,infra, apps",
@@ -195,7 +231,7 @@ acl {
 		"sync-window-time-zone": "Asia/Tokyo", // no daylight saving: two loads of it are equal
 		"log-level":             "debug",
 	}
-	commonWant := Config{
+	want := Config{
 		NomadAddr:          "https://nomad.example.com:4646",
 		NomadUIURL:         "https://infra.example.com/nomad",
 		NomadNamespaces:    []string{"apps", "infra"},
@@ -226,8 +262,7 @@ acl {
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
 		// The auth and acl blocks are the file's too.
-		LoginMaxFailures:      10,
-		LoginFailureWindow:    15 * time.Minute,
+		Auth:                  authWant(),
 		WebhookSecretFile:     webhookSecret,
 		WebhookSecret:         "webhook-shared-secret",
 		ACL:                   true,
@@ -243,92 +278,32 @@ acl {
 		LogLevel:              slog.LevelDebug,
 	}
 
-	oidcWant := commonWant
-	oidcWant.AuthMode = "oidc"
-	oidcWant.OIDCIssuerURL = "https://auth.example.com/application/o/nops/"
-	oidcWant.OIDCClientID = "nops-dashboard"
-	oidcWant.OIDCClientSecretFile = oidcSecret
-	oidcWant.OIDCClientSecret = "oidc-client-secret"
-
-	basicWant := commonWant
-	basicWant.AuthMode = "basic"
-	basicWant.UsersFile = usersFile
-	basicWant.GroupsFile = groupsFile
-
-	variants := []struct {
-		name   string
-		values map[string]string // auth-specific overlay on top of common
-		want   Config
-	}{
-		{
-			name: "oidc",
-			values: map[string]string{
-				"auth-mode":               "oidc",
-				"oidc-issuer-url":         "https://auth.example.com/application/o/nops/",
-				"oidc-client-id":          "nops-dashboard",
-				"oidc-client-secret-file": oidcSecret,
-				"users-file":              "",
-				"groups-file":             "",
-			},
-			want: oidcWant,
-		},
-		{
-			name: "basic",
-			values: map[string]string{
-				"auth-mode":               "basic",
-				"oidc-issuer-url":         "",
-				"oidc-client-id":          "",
-				"oidc-client-secret-file": "",
-				"users-file":              usersFile,
-				"groups-file":             groupsFile,
-			},
-			want: basicWant,
-		},
+	if len(values) != len(options) {
+		t.Fatalf("test covers %d options, the table has %d", len(values), len(options))
 	}
-
-	for _, variant := range variants {
-		t.Run(variant.name, func(t *testing.T) {
-			values := make(map[string]string, len(common)+len(variant.values))
-			for k, v := range common {
-				values[k] = v
+	var args []string
+	env := map[string]string{}
+	for _, o := range options {
+		v, ok := values[o.name]
+		if !ok {
+			t.Fatalf("no test value for option %s", o.name)
+		}
+		args = append(args, "-"+o.name+"="+v)
+		env[o.env()] = v
+	}
+	// rawEnvOf, not envOf: every option is set explicitly above, the point of
+	// this test.
+	for name, run := range map[string]func() (*Config, error){
+		"flags": func() (*Config, error) { return Load(args, rawEnvOf(nil), io.Discard) },
+		"env":   func() (*Config, error) { return Load(nil, rawEnvOf(env), io.Discard) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := run()
+			if err != nil {
+				t.Fatal(err)
 			}
-			for k, v := range variant.values {
-				values[k] = v
-			}
-			if len(values) != len(options) {
-				t.Fatalf("test covers %d options, the table has %d", len(values), len(options))
-			}
-			want := variant.want
-
-			var args []string
-			env := map[string]string{}
-			for _, o := range options {
-				v, ok := values[o.name]
-				if !ok {
-					t.Fatalf("no test value for option %s", o.name)
-				}
-				args = append(args, "-"+o.name+"="+v)
-				env[o.env()] = v
-			}
-			// rawEnvOf, not envOf: every option is set explicitly above
-			// (that is the point of this test), and envOf's fallback to
-			// the shared authEnv fixture would leak its
-			// NOPS_OIDC_CLIENT_SECRET (an env-only value with no flag,
-			// resolveSecretValues) into the basic variant, where every
-			// OIDC field must actually end up empty.
-			for name, run := range map[string]func() (*Config, error){
-				"flags": func() (*Config, error) { return Load(args, rawEnvOf(nil), io.Discard) },
-				"env":   func() (*Config, error) { return Load(nil, rawEnvOf(env), io.Discard) },
-			} {
-				t.Run(name, func(t *testing.T) {
-					c, err := run()
-					if err != nil {
-						t.Fatal(err)
-					}
-					if !reflect.DeepEqual(c, &want) {
-						t.Errorf("\n got %+v\nwant %+v", c, &want)
-					}
-				})
+			if !reflect.DeepEqual(c, &want) {
+				t.Errorf("\n got %+v\nwant %+v", c, &want)
 			}
 		})
 	}
@@ -370,9 +345,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"db-path", "", "required"},
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
-		{"oidc-issuer-url", "idp.example.com", "not an http"},
-		{"oidc-client-secret-file", missing, "no such file"},
-		{"oidc-client-secret-file", empty, "is empty"},
 		{"public-url", "nops.example.com", "not an http"},
 		{"nomad-ui-url", "nomad.example.com", "not an http"},
 		{"nomad-ui-url", "/ui", "not an http"},
@@ -423,14 +395,13 @@ func TestLoadInvalid(t *testing.T) {
 
 // TestLoadPublicURLDefault covers -public-url's default, derived from
 // -listen-addr when not set explicitly: an operator with no reverse proxy
-// (typically -auth-mode=basic on a personal machine) no longer has to type
-// something there just to satisfy a required flag. The default applies to
-// -auth-mode=oidc too (see publicURLDefault's doc comment on why that is
+// (typically local users on a personal machine) no longer has to type
+// something there just to satisfy a required flag. The default applies to an
+// OIDC login too, as here (see publicURLDefault's doc comment on why that is
 // still the operator's call to override for a real provider).
 func TestLoadPublicURLDefault(t *testing.T) {
-	usersFile := writeFile(t, "users", "alice:hash\n")
-	basicArgs := func(extra ...string) []string {
-		return append([]string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile}, extra...)
+	loginArgs := func(extra ...string) []string {
+		return append([]string{"-git-url", repo, "-config", authConfig}, extra...)
 	}
 
 	tests := []struct {
@@ -447,7 +418,7 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := basicArgs()
+			args := loginArgs()
 			if tt.listenAddr != "" {
 				args = append(args, "-listen-addr", tt.listenAddr)
 			}
@@ -462,27 +433,12 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	}
 
 	// An explicit -public-url always wins, whatever -listen-addr is.
-	c, err := Load(basicArgs("-listen-addr", "0.0.0.0:9090", "-public-url", "https://nops.example.com"), rawEnvOf(nil), io.Discard)
+	c, err := Load(loginArgs("-listen-addr", "0.0.0.0:9090", "-public-url", "https://nops.example.com"), rawEnvOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.PublicURL != "https://nops.example.com" {
 		t.Errorf("public URL = %q, want the explicit value kept", c.PublicURL)
-	}
-
-	// -auth-mode=oidc gets the same default: -public-url is no longer
-	// required by either mode.
-	oidc := map[string]string{
-		"NOPS_GIT_URL": repo, "NOPS_AUTH_MODE": "oidc",
-		"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-	}
-	c, err = Load(nil, rawEnvOf(oidc), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.PublicURL != "http://localhost:8080" {
-		t.Errorf("oidc public URL = %q, want the derived default", c.PublicURL)
 	}
 }
 
@@ -525,9 +481,8 @@ func TestLoadNomadUIURL(t *testing.T) {
 // TestLoadBasePath covers BasePath, derived from -public-url's own path
 // component: there is no separate flag (docs/running-nops.md#under-a-sub-path).
 func TestLoadBasePath(t *testing.T) {
-	usersFile := writeFile(t, "users", "alice:hash\n")
 	args := func(publicURL string) []string {
-		return []string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile, "-public-url", publicURL}
+		return []string{"-git-url", repo, "-config", authConfig, "-public-url", publicURL}
 	}
 	tests := []struct {
 		publicURL string
@@ -552,7 +507,7 @@ func TestLoadBasePath(t *testing.T) {
 	}
 
 	// No -public-url at all: the derived default has no path either.
-	c, err := Load([]string{"-git-url", repo, "-auth-mode", "basic", "-users-file", usersFile}, rawEnvOf(nil), io.Discard)
+	c, err := Load([]string{"-git-url", repo, "-config", authConfig}, rawEnvOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,42 +562,9 @@ func TestLoadCrossChecks(t *testing.T) {
 	}
 }
 
-func TestLoadOIDCRequired(t *testing.T) {
-	full := map[string]string{
-		"NOPS_GIT_URL":            repo,
-		"NOPS_PUBLIC_URL":         "https://nops.example.com",
-		"NOPS_AUTH_MODE":          "oidc",
-		"NOPS_OIDC_ISSUER_URL":    "https://idp.example.com/",
-		"NOPS_OIDC_CLIENT_ID":     "nops",
-		"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-	}
-	if _, err := Load(nil, rawEnvOf(full), io.Discard); err != nil {
-		t.Fatalf("full OIDC configuration: %v", err)
-	}
-
-	tests := []struct {
-		name string
-		drop string
-		want string
-	}{
-		{"issuer", "NOPS_OIDC_ISSUER_URL", "-oidc-issuer-url is required with -auth-mode=oidc"},
-		{"client id", "NOPS_OIDC_CLIENT_ID", "-oidc-client-id is required with -auth-mode=oidc"},
-		{"client secret", "NOPS_OIDC_CLIENT_SECRET", "the OIDC client secret is required with -auth-mode=oidc"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{}
-			for k, v := range full {
-				if k != tt.drop {
-					env[k] = v
-				}
-			}
-			_, err := Load(nil, rawEnvOf(env), io.Discard)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want %q", err, tt.want)
-			}
-		})
-	}
+// The options that are gone stop Nops, and say what replaces them.
+func TestLoadRemovedOptions(t *testing.T) {
+	full := map[string]string{"NOPS_GIT_URL": repo}
 
 	// The allowlist options are gone: Nops refuses them and says what replaces them.
 	for name, set := range map[string]func(env map[string]string, args *[]string){
@@ -657,7 +579,7 @@ func TestLoadOIDCRequired(t *testing.T) {
 		}
 		var args []string
 		set(env, &args)
-		_, err := Load(args, rawEnvOf(env), io.Discard)
+		_, err := Load(args, envOf(env), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "was removed") || !strings.Contains(err.Error(), "binding rules") {
 			t.Errorf("%s: err = %v, want it removed, with what replaces it", name, err)
 		}
@@ -677,78 +599,12 @@ func TestLoadOIDCRequired(t *testing.T) {
 		}
 		var args []string
 		set(env, &args)
-		_, err := Load(args, rawEnvOf(env), io.Discard)
+		_, err := Load(args, envOf(env), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "was removed") || !strings.Contains(err.Error(), "metrics capability") {
 			t.Errorf("%s: err = %v, want it removed, with what replaces it", name, err)
 		}
 	}
 
-	// The issuer is kept exactly as given: providers such as Authentik
-	// announce it with a trailing slash and the check compares the strings.
-	c, err := Load(nil, rawEnvOf(full), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.OIDCIssuerURL != "https://idp.example.com/" {
-		t.Errorf("issuer = %q, want it untouched", c.OIDCIssuerURL)
-	}
-}
-
-// TestLoadAuthMode covers -auth-mode itself: required, one of exactly two
-// values, and the two backends' options are mutually exclusive.
-func TestLoadAuthMode(t *testing.T) {
-	usersFile := writeFile(t, "users", "alice:hash\n")
-	base := map[string]string{"NOPS_GIT_URL": repo, "NOPS_PUBLIC_URL": "https://nops.example.com"}
-
-	tests := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{"missing", map[string]string{}, "-auth-mode / NOPS_AUTH_MODE: required"},
-		{"invalid value", map[string]string{"NOPS_AUTH_MODE": "header"}, `must be "oidc" or "basic"`},
-		{"basic without users-file", map[string]string{"NOPS_AUTH_MODE": "basic"}, "-users-file is required with -auth-mode=basic"},
-		{"oidc without its options", map[string]string{"NOPS_AUTH_MODE": "oidc"}, "-oidc-issuer-url is required with -auth-mode=oidc"},
-		{"basic with an OIDC option set", map[string]string{
-			"NOPS_AUTH_MODE": "basic", "NOPS_USERS_FILE": usersFile, "NOPS_OIDC_CLIENT_ID": "nops",
-		}, "the -oidc-* options are only used with -auth-mode=oidc"},
-		{"oidc with users-file set", map[string]string{
-			"NOPS_AUTH_MODE": "oidc", "NOPS_USERS_FILE": usersFile,
-			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-		}, "-users-file is only used with -auth-mode=basic"},
-		{"oidc with groups-file set", map[string]string{
-			"NOPS_AUTH_MODE": "oidc", "NOPS_GROUPS_FILE": usersFile,
-			"NOPS_OIDC_ISSUER_URL": "https://idp.example.com/", "NOPS_OIDC_CLIENT_ID": "nops",
-			"NOPS_OIDC_CLIENT_SECRET": "s3cret",
-		}, "-groups-file is only used with -auth-mode=basic"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{}
-			for k, v := range base {
-				env[k] = v
-			}
-			for k, v := range tt.env {
-				env[k] = v
-			}
-			_, err := Load(nil, rawEnvOf(env), io.Discard)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want it to contain %q", err, tt.want)
-			}
-		})
-	}
-
-	// A minimal, valid basic configuration works.
-	env := map[string]string{}
-	for k, v := range base {
-		env[k] = v
-	}
-	env["NOPS_AUTH_MODE"] = "basic"
-	env["NOPS_USERS_FILE"] = usersFile
-	if _, err := Load(nil, rawEnvOf(env), io.Discard); err != nil {
-		t.Errorf("minimal basic configuration: %v", err)
-	}
 }
 
 func TestLoadReportsEveryError(t *testing.T) {
@@ -953,7 +809,6 @@ func TestSecretValueFallback(t *testing.T) {
 	}{
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
 		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
-		{"NOPS_OIDC_CLIENT_SECRET", "plain-oidc-secret", func(c *Config) string { return c.OIDCClientSecret }, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.envVar, func(t *testing.T) {
@@ -1178,7 +1033,7 @@ func TestLoadSyncWindowTimeZone(t *testing.T) {
 
 func TestLoadRepositoriesFromTheFile(t *testing.T) {
 	tok := writeFile(t, "apps-token", "apps-secret\n")
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url        = "https://git.example.com/ops/apps.git"
   branch     = "prod"
@@ -1206,7 +1061,7 @@ repository "default" {
 }
 
 func TestLoadRepositoryJobs(t *testing.T) {
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url  = "https://git.example.com/ops/apps.git"
   jobs = ["labs/billing-api", "lab*/billing-api-*", "crm"]
@@ -1274,7 +1129,7 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := tt.args
 			if tt.file != "" {
-				args = append([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, args...)
+				args = append([]string{"-config", writeConfig(t, tt.file)}, args...)
 			}
 			_, err := Load(args, envOf(tt.env), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -1285,7 +1140,7 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 }
 
 func TestLoadListenFromTheFile(t *testing.T) {
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1333,7 +1188,7 @@ func TestLoadListenInvalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-config", writeConfig(t, tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
@@ -1344,7 +1199,7 @@ func TestLoadListenInvalid(t *testing.T) {
 func TestLoadListenTLS(t *testing.T) {
 	noPublicURL := envOf(map[string]string{"NOPS_PUBLIC_URL": ""}) // so the URL is derived
 	cert, key := writeFile(t, "nops.crt", "cert"), writeFile(t, "nops.key", "key")
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1368,7 +1223,7 @@ listen {
 	}
 
 	// Without the block, Nops serves plain HTTP and the URL says so.
-	plain, err := Load([]string{"-config", writeFile(t, "plain.hcl", "repository \"apps\" {\n  url = \"https://git.example.com/ops/apps.git\"\n}\n")}, noPublicURL, io.Discard)
+	plain, err := Load([]string{"-config", writeConfig(t, "repository \"apps\" {\n  url = \"https://git.example.com/ops/apps.git\"\n}\n")}, noPublicURL, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1378,7 +1233,7 @@ listen {
 }
 
 func TestLoadNomadFromTheFile(t *testing.T) {
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1414,7 +1269,7 @@ func TestLoadNomadInvalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-config", writeConfig(t, tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
@@ -1422,105 +1277,149 @@ func TestLoadNomadInvalid(t *testing.T) {
 	}
 }
 
-// basicAuthArgs is the command line of a basic login, besides the -config file.
-func basicAuthArgs(t *testing.T, file string) []string {
-	t.Helper()
-	usersFile := writeFile(t, "users", "alice:hash\n")
-	return []string{"-config", file, "-auth-mode", "basic", "-users-file", usersFile}
-}
-
-func TestLoginLimitDefaults(t *testing.T) {
-	file := writeFile(t, "nops.hcl", `
-repository "apps" {
-  url = "https://git.example.com/ops/apps.git"
-}
-`)
-	c, err := Load(basicAuthArgs(t, file), rawEnvOf(nil), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.LoginMaxFailures != 10 || c.LoginFailureWindow != 15*time.Minute {
-		t.Errorf("limit = %d in %v, want 10 in 15m", c.LoginMaxFailures, c.LoginFailureWindow)
-	}
-}
-
-func TestLoadAuthFromTheFile(t *testing.T) {
-	apps := `repository "apps" {
+// authApps is the repository of the auth block tests, whose files hold no
+// other auth block than the test's.
+const authApps = `repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
 `
+
+func TestLoadAuthFromTheFile(t *testing.T) {
+	secretFile := writeFile(t, "oidc-secret", "  s3cret\n")
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	groupsFile := writeFile(t, "groups", "ops: alice\n")
 	tests := []struct {
 		name, block string
-		wantMax     int
-		wantWindow  time.Duration
+		want        Auth
 	}{
-		{"both", `max_failures = 3
-  failure_window = "1h"`, 3, time.Hour},
-		{"only the window", `failure_window = "5m"`, 10, 5 * time.Minute},
-		{"only the count", `max_failures = 20`, 20, 15 * time.Minute},
-		{"neither", ``, 10, 15 * time.Minute},
-		{"a zero count turns the limit off", `max_failures = 0`, 0, 15 * time.Minute},
-		{"a zero window turns the limit off", `failure_window = "0s"`, 10, 0},
+		{"oidc, the issuer kept as given", `auth "authentik" {
+  type               = "oidc"
+  issuer_url         = "https://idp.example.com/application/o/nops/"
+  client_id          = "nops"
+  client_secret_file = "` + secretFile + `"
+}`, Auth{Name: "authentik", Type: "oidc", IssuerURL: "https://idp.example.com/application/o/nops/", ClientID: "nops", ClientSecretFile: secretFile, ClientSecret: "s3cret"}},
+		{"basic, with the defaults", `auth "local" {
+  type       = "basic"
+  users_file = "` + usersFile + `"
+}`, Auth{Name: "local", Type: "basic", UsersFile: usersFile, MaxFailures: 10, FailureWindow: 15 * time.Minute}},
+		{"basic, every attribute", `auth "basic" {
+  type           = "basic"
+  users_file     = "` + usersFile + `"
+  groups_file    = "` + groupsFile + `"
+  max_failures   = 3
+  failure_window = "1h"
+}`, Auth{Name: "basic", Type: "basic", UsersFile: usersFile, GroupsFile: groupsFile, MaxFailures: 3, FailureWindow: time.Hour}},
+		{"a zero count and window turn the limit off", `auth "basic" {
+  type           = "basic"
+  users_file     = "` + usersFile + `"
+  max_failures   = 0
+  failure_window = "0s"
+}`, Auth{Name: "basic", Type: "basic", UsersFile: usersFile}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			file := writeFile(t, "nops.hcl", apps+"auth \"basic\" {\n  type = \"basic\"\n  "+tt.block+"\n}\n")
-			c, err := Load(basicAuthArgs(t, file), rawEnvOf(nil), io.Discard)
+			file := writeFile(t, "nops.hcl", authApps+tt.block+"\n")
+			c, err := Load([]string{"-config", file}, rawEnvOf(nil), io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.LoginMaxFailures != tt.wantMax || c.LoginFailureWindow != tt.wantWindow {
-				t.Errorf("limit = %d in %v, want %d in %v", c.LoginMaxFailures, c.LoginFailureWindow, tt.wantMax, tt.wantWindow)
+			if !reflect.DeepEqual(c.Auth, tt.want) {
+				t.Errorf("auth:\n got %+v\nwant %+v", c.Auth, tt.want)
 			}
 		})
 	}
 }
 
 func TestLoadAuthInvalid(t *testing.T) {
-	apps := `repository "apps" {
-  url = "https://git.example.com/ops/apps.git"
-}
-`
-	auth := func(label, body string) string { return apps + "auth \"" + label + "\" {\n" + body + "\n}\n" }
-	basic := func(body string) string { return auth("basic", "type = \"basic\"\n"+body) }
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	empty := writeFile(t, "empty", " \n")
+	secretFile := writeFile(t, "oidc-secret", "s3cret")
+	usersFile := writeFile(t, "users", "alice:hash\n")
+	auth := func(label, body string) string { return "auth \"" + label + "\" {\n" + body + "\n}\n" }
+	oidc := func(body string) string {
+		return auth("oidc", `type = "oidc"
+issuer_url = "https://idp.example.com/"
+client_id = "nops"
+client_secret_file = "`+secretFile+`"
+`+body)
+	}
+	basic := func(body string) string {
+		return auth("basic", "type = \"basic\"\nusers_file = \""+usersFile+"\"\n"+body)
+	}
 	tests := []struct {
 		name, file, want string
 	}{
+		{"no auth block", "", "an auth block in -config is required"},
+		{"two blocks", basic("") + oidc(""), "only one auth block is allowed"},
+		{"a bad name", auth("my login", `type = "basic"`+"\n"+`users_file = "`+usersFile+`"`), `auth "my login": the name may hold only letters, digits, - and _`},
 		{"no type", auth("basic", ""), "type"},
-		{"another type", auth("basic", `type = "oidc"`), `auth: type: is "oidc"`},
-		{"another label", auth("oidc", `type = "basic"`), `auth: the label is "oidc"`},
-		{"two blocks", basic("") + basic(""), "only one auth block is allowed"},
-		{"negative count", basic(`max_failures = -1`), "auth: max_failures: -1 must not be negative"},
+		{"an unknown type", auth("ldap", `type = "ldap"`), `auth "ldap": type: is "ldap", must be oidc or basic`},
+		{"oidc without an issuer", auth("oidc", `type = "oidc"`+"\n"+`client_id = "nops"`+"\n"+`client_secret_file = "`+secretFile+`"`), `auth "oidc": issuer_url: required`},
+		{"oidc without a client ID", auth("oidc", `type = "oidc"`+"\n"+`issuer_url = "https://idp.example.com/"`+"\n"+`client_secret_file = "`+secretFile+`"`), `auth "oidc": client_id: required`},
+		{"oidc without a client secret", auth("oidc", `type = "oidc"`+"\n"+`issuer_url = "https://idp.example.com/"`+"\n"+`client_id = "nops"`), `auth "oidc": client_secret_file: required`},
+		{"an issuer that is not a URL", auth("oidc", `type = "oidc"`+"\n"+`issuer_url = "idp.example.com"`+"\n"+`client_id = "nops"`+"\n"+`client_secret_file = "`+secretFile+`"`), `auth "oidc": issuer_url: "idp.example.com" is not an http`},
+		{"a missing client secret file", auth("oidc", `type = "oidc"`+"\n"+`issuer_url = "https://idp.example.com/"`+"\n"+`client_id = "nops"`+"\n"+`client_secret_file = "`+missing+`"`), `auth "oidc": client_secret_file: open`},
+		{"an empty client secret file", auth("oidc", `type = "oidc"`+"\n"+`issuer_url = "https://idp.example.com/"`+"\n"+`client_id = "nops"`+"\n"+`client_secret_file = "`+empty+`"`), `auth "oidc": client_secret_file: ` + empty + ` is empty`},
+		{"oidc with a users file", oidc(`users_file = "` + usersFile + `"`), `auth "oidc": users_file: is not used by type "oidc"`},
+		{"oidc with a limit", oidc(`max_failures = 3`), `auth "oidc": max_failures: is not used by type "oidc"`},
+		{"oidc with a window", oidc(`failure_window = "1h"`), `auth "oidc": failure_window: is not used by type "oidc"`},
+		{"basic without a users file", auth("basic", `type = "basic"`), `auth "basic": users_file: required`},
+		{"a missing users file", auth("basic", `type = "basic"`+"\n"+`users_file = "`+missing+`"`), `auth "basic": users_file: open`},
+		{"a groups file that is a directory", basic(`groups_file = "` + dir + `"`), `auth "basic": groups_file: ` + dir + ` is a directory`},
+		{"basic with a client ID", basic(`client_id = "nops"`), `auth "basic": client_id: is not used by type "basic"`},
+		{"negative count", basic(`max_failures = -1`), `auth "basic": max_failures: -1 must not be negative`},
 		{"a count that is not a number", basic(`max_failures = "many"`), "a number is required"},
-		{"not a duration", basic(`failure_window = "soon"`), "auth: failure_window:"},
-		{"negative window", basic(`failure_window = "-1m"`), `auth: failure_window: duration "-1m" must not be negative`},
-		{"the users file is a flag", basic(`users_file = "/secrets/users"`), "Unsupported argument"},
+		{"not a duration", basic(`failure_window = "soon"`), `auth "basic": failure_window:`},
+		{"negative window", basic(`failure_window = "-1m"`), `auth "basic": failure_window: duration "-1m" must not be negative`},
+		{"an unknown attribute", basic(`password = "x"`), "Unsupported argument"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(basicAuthArgs(t, writeFile(t, "nops.hcl", tt.file)), rawEnvOf(nil), io.Discard)
+			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", authApps+tt.file)}, rawEnvOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
 		})
 	}
+
+	// Without -config at all, the error says where the block goes.
+	_, err := Load([]string{"-git-url", repo}, rawEnvOf(nil), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "an auth block in -config is required") {
+		t.Errorf("no -config: err = %v, want the auth block required", err)
+	}
+	// A -config that cannot be read is reported once, not as a missing block.
+	_, err = Load([]string{"-config", writeFile(t, "bad.hcl", "auth {")}, rawEnvOf(nil), io.Discard)
+	if err == nil || strings.Contains(err.Error(), "an auth block in -config is required") {
+		t.Errorf("unreadable -config: err = %v, want only the parse error", err)
+	}
 }
 
-// The block belongs to the basic login: with OIDC it stops Nops, rather than
-// sitting in the file with no effect.
-func TestLoadAuthBlockWithOIDC(t *testing.T) {
-	file := writeFile(t, "nops.hcl", `
-repository "apps" {
-  url = "https://git.example.com/ops/apps.git"
-}
-
-auth "basic" {
-  type = "basic"
-}
-`)
-	_, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), `the "basic" block is only used with -auth-mode=basic`) {
-		t.Errorf("err = %v, want the block refused with -auth-mode=oidc", err)
+// The login options are gone: Nops refuses them and names the attribute of
+// the auth block that replaces each.
+func TestLoadAuthOptionsRemoved(t *testing.T) {
+	for _, tt := range []struct {
+		flag, value, env, want string
+	}{
+		{"auth-mode", "basic", "NOPS_AUTH_MODE", "type in the auth block"},
+		{"oidc-issuer-url", "https://idp.example.com/", "NOPS_OIDC_ISSUER_URL", `issuer_url in an auth block of type "oidc"`},
+		{"oidc-client-id", "nops", "NOPS_OIDC_CLIENT_ID", `client_id in an auth block of type "oidc"`},
+		{"oidc-client-secret-file", "/secrets/oidc", "NOPS_OIDC_CLIENT_SECRET_FILE", `client_secret_file in an auth block of type "oidc"`},
+		{"users-file", "/secrets/users", "NOPS_USERS_FILE", `users_file in an auth block of type "basic"`},
+		{"groups-file", "/secrets/groups", "NOPS_GROUPS_FILE", `groups_file in an auth block of type "basic"`},
+	} {
+		_, err := Load([]string{"-git-url", repo, "-" + tt.flag, tt.value}, envOf(nil), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "flag -"+tt.flag+" was removed: "+tt.want) {
+			t.Errorf("-%s: err = %v, want it removed for %q", tt.flag, err, tt.want)
+		}
+		_, err = Load([]string{"-git-url", repo}, envOf(map[string]string{tt.env: tt.value}), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), tt.env+" was removed: "+tt.want) {
+			t.Errorf("%s: err = %v, want it removed for %q", tt.env, err, tt.want)
+		}
+	}
+	_, err := Load([]string{"-git-url", repo}, envOf(map[string]string{"NOPS_OIDC_CLIENT_SECRET": "s3cret"}), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), `NOPS_OIDC_CLIENT_SECRET was removed: client_secret_file in an auth block of type "oidc"`) {
+		t.Errorf("NOPS_OIDC_CLIENT_SECRET: err = %v, want it removed", err)
 	}
 }
 
@@ -1532,7 +1431,7 @@ func TestLoadNotifyFromTheFile(t *testing.T) {
 	alertsURL := writeFile(t, "alerts-url", "https://hooks.slack.com/services/T/B/alerts")
 	ntfyTok := writeFile(t, "ntfy-token", "ntfy-secret")
 	gotifyTok := writeFile(t, "gotify-token", "gotify-secret")
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1647,7 +1546,7 @@ timeout = "0s"`), `notify "slack": timeout: duration "0s" must be positive`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load([]string{"-config", writeFile(t, "nops.hcl", apps+tt.file)}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-config", writeConfig(t, apps+tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
@@ -1699,7 +1598,7 @@ func TestLoadNotifyOptionsRemoved(t *testing.T) {
 func TestLoadACLFromTheFile(t *testing.T) {
 	bootstrap := secret.New()
 	boot := writeFile(t, "bootstrap", bootstrap+"\n")
-	file := writeFile(t, "nops.hcl", `
+	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1720,7 +1619,7 @@ acl {
 	// Without a block, or with an empty one, the ACL is off.
 	for _, args := range [][]string{
 		{"-git-url", repo},
-		{"-git-url", repo, "-config", writeFile(t, "empty.hcl", "acl {}\n")},
+		{"-git-url", repo, "-config", writeConfig(t, "acl {}\n")},
 	} {
 		c, err := Load(args, envOf(nil), io.Discard)
 		if err != nil || c.ACL || c.ACLBootstrapToken != "" {
@@ -1752,7 +1651,7 @@ bootstrap_token_file = "` + empty + `"`), "acl: bootstrap_token_file: " + empty 
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load([]string{"-git-url", repo, "-config", writeFile(t, "nops.hcl", tt.file)}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-git-url", repo, "-config", writeConfig(t, tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}

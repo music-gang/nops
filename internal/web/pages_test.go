@@ -313,7 +313,7 @@ func (f *fakeGit) Repositories() []gitwatch.Repo {
 func newTestAuth(t *testing.T) *Auth {
 	t.Helper()
 	a, err := NewAuth(AuthOptions{
-		Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
+		Name: "oidc", Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
 		RedirectURL: "http://nops.test/auth/callback",
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

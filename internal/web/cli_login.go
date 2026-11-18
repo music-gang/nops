@@ -174,10 +174,11 @@ func (s *server) CLIRedirect(w http.ResponseWriter, r *http.Request, p Person, c
 	http.Redirect(w, r, loopback.String(), http.StatusSeeOther)
 }
 
-// cliInfo is GET /auth/cli: the auth method, which tells the client how to log in.
+// cliInfo is GET /auth/cli: the type of the auth method, which tells the
+// client how to log in.
 func (s *server) cliInfo(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	replyJSON(w, http.StatusOK, map[string]string{"method": s.auth.Method()})
+	replyJSON(w, http.StatusOK, map[string]string{"method": s.auth.Type()})
 }
 
 // cliToken is POST /auth/cli/token: the secret of a session, for the code the

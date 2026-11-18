@@ -205,17 +205,22 @@ func TestCLILoginGetsWhatTheBindingRulesGive(t *testing.T) {
 	}
 }
 
-func TestCLILoginInfoSaysTheMethod(t *testing.T) {
-	a := newApp(t)
+// The client and the login page go by the type of the auth method, whatever
+// its auth block is named.
+func TestCLILoginInfoAndLoginPageSayTheType(t *testing.T) {
+	a := newApp(t, func(o *AuthOptions) { o.Name = "authentik" })
 	rec := a.do("GET", "/auth/cli", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"method":"oidc"`) {
 		t.Errorf("status %d, body %s", rec.Code, rec.Body)
 	}
-	ba := newBasicApp(t, "alice:"+bcryptHash(t, "pw")+"\n")
+	mustContain(t, a.do("GET", "/auth/login", nil).Body.String(), `href="/auth/oidc?next=`)
+
+	ba := newBasicAppFrom(t, BasicAuthOptions{Name: "local", UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "pw")+"\n")}, "", false)
 	rec = ba.do("GET", "/auth/cli", nil, nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"method":"basic"`) {
 		t.Errorf("basic: status %d, body %s", rec.Code, rec.Body)
 	}
+	mustContain(t, ba.do("GET", "/auth/login", nil, nil).Body.String(), `action="/auth/basic"`)
 }
 
 // -- basic ---------------------------------------------------------------------

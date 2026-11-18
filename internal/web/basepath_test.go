@@ -31,7 +31,7 @@ func newBasePathTestServer(t *testing.T) (http.Handler, *store.Store) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tokens := openTestStore(t)
 	auth, err := NewAuth(AuthOptions{
-		Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
+		Name: "oidc", Issuer: "https://idp.test", ClientID: "nops", ClientSecret: "secret",
 		RedirectURL: "http://nops.test/nops/auth/callback",
 		BasePath:    "/nops",
 		Log:         log,

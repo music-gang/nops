@@ -101,7 +101,8 @@ nothing.
 ## Binding rules
 
 A login only proves who you are. A binding rule says what that person gets:
-it names an auth method (`oidc` or `basic`), a selector on the login's claims,
+it names an auth method by the name of its
+[`auth` block](configuration.md#authentication), a selector on the login's claims,
 and what it binds: an ACL policy, or management. Nops adds up every rule that
 matches, and a login that no rule matches fails. With the ACL off, rules are
 not read and every login succeeds.
@@ -122,7 +123,7 @@ nops acl binding-rule create -auth-method oidc \
 ```
 
 Nops matches a person by the issuer and `sub` of an OIDC login, or by the
-method and username of a basic one. The username is only what Nops shows: a
+username of a local user. The username is only what Nops shows: a
 renamed account, or a new one that takes an old name, never inherits sessions
 or the record of what a person created.
 

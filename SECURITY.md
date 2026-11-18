@@ -20,7 +20,7 @@ into an older one (see
 ## Scope notes
 
 - The dashboard authenticates the acting user itself, with OpenID Connect or a
-  local `username:bcrypt-hash` file depending on `-auth-mode` (see
+  local `username:bcrypt-hash` file depending on the `auth` block (see
   [docs/dashboard.md](docs/dashboard.md#authentication)). Nops serves TLS
   itself with the
   [`tls` block](docs/configuration.md#certificate-and-key), or a reverse

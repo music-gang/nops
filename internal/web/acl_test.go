@@ -721,13 +721,13 @@ func TestBindingRulesOnTheAPI(t *testing.T) {
 	}
 
 	// PUT replaces the rule, whole.
-	rec = s.api("PUT", "/api/acl/binding-rules/"+created.ID, s.boot, `{"auth_method":"basic","bind_type":"management"}`)
+	rec = s.api("PUT", "/api/acl/binding-rules/"+created.ID, s.boot, `{"auth_method":"oidc","bind_type":"management"}`)
 	var replaced apiBindingRule
 	if err := json.Unmarshal(rec.Body.Bytes(), &replaced); err != nil || rec.Code != http.StatusOK ||
-		replaced.AuthMethod != "basic" || replaced.BindType != "management" || replaced.Selector != "" || replaced.BindName != "" {
+		replaced.AuthMethod != "oidc" || replaced.BindType != "management" || replaced.Selector != "" || replaced.BindName != "" {
 		t.Errorf("replace: status %d: %s", rec.Code, rec.Body)
 	}
-	if rec := s.api("PUT", "/api/acl/binding-rules/nope", s.boot, `{"auth_method":"basic","bind_type":"management"}`); rec.Code != http.StatusNotFound {
+	if rec := s.api("PUT", "/api/acl/binding-rules/nope", s.boot, `{"auth_method":"oidc","bind_type":"management"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("replace an unknown rule: status %d, want 404", rec.Code)
 	}
 
@@ -752,6 +752,7 @@ func TestBindingRulesAreCheckedBeforeTheyAreSaved(t *testing.T) {
 		"a claim that does not exist":     `{"auth_method":"oidc","selector":"value.nope == \"x\"","bind_type":"management"}`,
 		"a selector that reads elsewhere": `{"auth_method":"oidc","selector":"foo == \"x\"","bind_type":"management"}`,
 		"an unknown auth method":          `{"auth_method":"ldap","bind_type":"management"}`,
+		"a method that is not configured": `{"auth_method":"basic","bind_type":"management"}`,
 		"no auth method":                  `{"bind_type":"management"}`,
 		"an unknown bind type":            `{"auth_method":"oidc","bind_type":"root"}`,
 		"a policy rule without a name":    `{"auth_method":"oidc","bind_type":"policy"}`,
@@ -811,14 +812,14 @@ func TestAdministrationFormsManageBindingRules(t *testing.T) {
 	mustContain(t, ts.get("/admin/binding-rules/"+id+"/edit"), `value="`+id+`"`, `value="policy:readers" selected`)
 	mustContain(t, ts.get("/admin/binding-rules/new"), "New binding rule", `name="id" value=""`)
 
-	edit := url.Values{"id": {id}, "auth_method": {"basic"}, "bind": {"management"}}
+	edit := url.Values{"id": {id}, "auth_method": {"oidc"}, "bind": {"management"}}
 	if rec := ts.page("POST", "/admin/binding-rules", edit); rec.Code != http.StatusSeeOther {
 		t.Fatalf("replace: status %d", rec.Code)
 	}
-	if r, _ := ts.tokens.BindingRule(t.Context(), id); r.AuthMethod != "basic" || r.BindType != acl.BindManagement || r.Selector != "" {
+	if r, _ := ts.tokens.BindingRule(t.Context(), id); r.AuthMethod != "oidc" || r.BindType != acl.BindManagement || r.Selector != "" {
 		t.Errorf("rule after the replace = %+v", r)
 	}
-	if rec := ts.page("POST", "/admin/binding-rules", url.Values{"id": {"nope"}, "auth_method": {"basic"}, "bind": {"management"}}); rec.Code != http.StatusNotFound {
+	if rec := ts.page("POST", "/admin/binding-rules", url.Values{"id": {"nope"}, "auth_method": {"oidc"}, "bind": {"management"}}); rec.Code != http.StatusNotFound {
 		t.Errorf("replace an unknown rule: status %d, want 404", rec.Code)
 	}
 
@@ -1046,5 +1047,29 @@ func TestAnACLPolicyHasAReadOnlyPage(t *testing.T) {
 	mustContain(t, manager.get("/admin/policies/readers/view"), "see all", "policy = &#34;read&#34;", `href="/admin/policies/readers/edit"`, `href="/admin/policies"`)
 	if rec := manager.page("GET", "/admin/policies/missing/view", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("a management token on a missing ACL policy: status %d, want 404", rec.Code)
+	}
+}
+
+// A rule saved for an auth method that is no longer configured stays, and the
+// pages say so; saving it again needs the configured method.
+func TestAdministrationMarksARuleOfAnotherAuthMethod(t *testing.T) {
+	ts := dashboardAs(t, &fakeStore{}, &fakeEngine{}, "")
+	r, err := ts.tokens.PutBindingRule(t.Context(), store.BindingRule{AuthMethod: "basic", BindType: acl.BindManagement}, store.Audit{Actor: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, ts.get("/admin/binding-rules"), "not configured")
+	mustContain(t, ts.get("/admin/binding-rules/"+r.ID+"/edit"), `<option value="oidc">oidc</option>`, `<option value="basic" selected>basic (not configured)</option>`)
+
+	rec := ts.page("POST", "/admin/binding-rules", url.Values{"id": {r.ID}, "auth_method": {"basic"}, "bind": {"management"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("save with the old method: status %d, want 400", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "the name of the auth block")
+	if rec := ts.page("POST", "/admin/binding-rules", url.Values{"id": {r.ID}, "auth_method": {"oidc"}, "bind": {"management"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save with the configured method: status %d", rec.Code)
+	}
+	if page := ts.get("/admin/binding-rules"); strings.Contains(page, "not configured") {
+		t.Errorf("the rule is still marked: %s", page)
 	}
 }

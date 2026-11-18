@@ -72,6 +72,9 @@ func newBasicAppFrom(t *testing.T, o BasicAuthOptions, basePath string, aclOn bo
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewTextHandler(logs, nil))
 	o.Log = log
+	if o.Name == "" {
+		o.Name = "basic"
+	}
 	auth, err := NewBasicAuth(o)
 	if err != nil {
 		t.Fatal(err)
@@ -126,12 +129,13 @@ func TestNewBasicAuthValidates(t *testing.T) {
 		name string
 		opts BasicAuthOptions
 	}{
-		{"no users file", BasicAuthOptions{Log: log}},
-		{"missing users file", BasicAuthOptions{UsersFile: "/does/not/exist", Log: log}},
-		{"empty users file", BasicAuthOptions{UsersFile: writeUsersFile(t, "# just a comment\n"), Log: log}},
-		{"malformed line", BasicAuthOptions{UsersFile: writeUsersFile(t, "not-a-valid-line\n"), Log: log}},
-		{"not a bcrypt hash", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:not-bcrypt\n"), Log: log}},
-		{"duplicate user", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\nalice:"+bcryptHash(t, "b")+"\n"), Log: log}},
+		{"no name", BasicAuthOptions{UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\n"), Log: log}},
+		{"no users file", BasicAuthOptions{Name: "basic", Log: log}},
+		{"missing users file", BasicAuthOptions{Name: "basic", UsersFile: "/does/not/exist", Log: log}},
+		{"empty users file", BasicAuthOptions{Name: "basic", UsersFile: writeUsersFile(t, "# just a comment\n"), Log: log}},
+		{"malformed line", BasicAuthOptions{Name: "basic", UsersFile: writeUsersFile(t, "not-a-valid-line\n"), Log: log}},
+		{"not a bcrypt hash", BasicAuthOptions{Name: "basic", UsersFile: writeUsersFile(t, "alice:not-bcrypt\n"), Log: log}},
+		{"duplicate user", BasicAuthOptions{Name: "basic", UsersFile: writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\nalice:"+bcryptHash(t, "b")+"\n"), Log: log}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -209,6 +213,7 @@ func TestParseGroupsFile(t *testing.T) {
 
 func TestNewBasicAuthRefusesAGroupsFileWithAnUnknownMember(t *testing.T) {
 	_, err := NewBasicAuth(BasicAuthOptions{
+		Name:       "basic",
 		UsersFile:  writeUsersFile(t, "alice:"+bcryptHash(t, "a")+"\n"),
 		GroupsFile: writeGroupsFile(t, "ops: bob\n"),
 	})

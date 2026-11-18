@@ -113,32 +113,9 @@ type Config struct {
 	TLSCertFile string
 	TLSKeyFile  string
 
-	// The limit on failed logins with a username and a password, from the auth
-	// block of the -config file (docs/configuration.md#local-users--auth-modebasic).
-	// A zero in either turns it off.
-	LoginMaxFailures   int
-	LoginFailureWindow time.Duration
-
-	// AuthMode picks the dashboard's login backend, "oidc" or "basic"
-	// (docs/dashboard.md#authentication): mutually exclusive, so only the
-	// fields of the chosen one are used, and check() requires the other's
-	// to be unset.
-	AuthMode string
-
-	// OIDC login of the dashboard (docs/dashboard.md#authentication). The
-	// client secret is read from a file by Load, or from its plain env var.
-	OIDCIssuerURL        string // exactly as the provider announces it: a trailing slash matters
-	OIDCClientID         string
-	OIDCClientSecretFile string
-	OIDCClientSecret     string
-
-	// UsersFile is the local-users login's "username:bcrypt-hash" file
-	// (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
-	UsersFile string
-
-	// GroupsFile is the optional "group: user1 user2" file of the local-users
-	// login (docs/dashboard.md#local-users--auth-modebasic), used only with AuthMode "basic".
-	GroupsFile string
+	// Auth is the dashboard's auth method, the auth block of the -config file
+	// (docs/configuration.md#authentication).
+	Auth Auth
 
 	// WebhookSecret authenticates the git forge's push webhook
 	// (docs/running-nops.md#the-git-webhook): its HMAC for GitHub and Gitea, its
@@ -193,6 +170,28 @@ type Repository struct {
 	// Jobs are the "<namespace>/<job ID>" patterns of the jobs the repository
 	// may declare, path.Match syntax; nil is any job.
 	Jobs []string
+}
+
+// Auth is the auth method of the dashboard, the auth block of the -config
+// file. Only the fields of its Type are set.
+type Auth struct {
+	// Name is the block's label: the name binding rules give the method.
+	Name string
+	Type string // oidc or basic
+
+	// The OIDC login (type oidc).
+	IssuerURL        string // exactly as the provider announces it: a trailing slash matters
+	ClientID         string
+	ClientSecretFile string
+	ClientSecret     string // content of ClientSecretFile
+
+	// The local users (type basic): the "username:bcrypt-hash" file, the
+	// optional "group: user1 user2" file, and the limit on failed logins, which
+	// a zero in either turns off (docs/dashboard.md#local-users).
+	UsersFile     string
+	GroupsFile    string
+	MaxFailures   int
+	FailureWindow time.Duration
 }
 
 // Notify is one notification adapter, a notify block of the -config file.
@@ -267,41 +266,6 @@ var options = []option{
 			c.ListenAddr = v
 			return nil
 		}},
-	{name: "auth-mode", usage: "how the dashboard logs people in: oidc or basic (required)",
-		set: func(c *Config, v string) error {
-			switch v {
-			case "":
-				return errors.New("required")
-			case "oidc", "basic":
-				c.AuthMode = v
-				return nil
-			default:
-				return fmt.Errorf("must be %q or %q, not %q", "oidc", "basic", v)
-			}
-		}},
-	{name: "oidc-issuer-url", usage: "issuer URL of the OIDC provider, exactly as it announces it (required with -auth-mode=oidc)",
-		set: func(c *Config, v string) (err error) {
-			if v == "" {
-				return nil
-			}
-			// Not optionalURL: unlike other URLs, a trailing slash here is
-			// significant (Authentik's issuer has one) and must be kept.
-			c.OIDCIssuerURL, err = httpURL(v)
-			return
-		}},
-	{name: "oidc-client-id", usage: "OIDC client ID of nops (required with -auth-mode=oidc)",
-		set: func(c *Config, v string) error { c.OIDCClientID = v; return nil }},
-	{name: "oidc-client-secret-file", usage: "`file` holding the OIDC client secret (required with -auth-mode=oidc)",
-		set: func(c *Config, v string) (err error) {
-			c.OIDCClientSecretFile = v
-			c.OIDCClientSecret, err = secretFile(v)
-			return
-		}},
-	{name: "users-file", usage: "`file` holding \"username:bcrypt-hash\" lines for the dashboard login (required with -auth-mode=basic)",
-		set: func(c *Config, v string) (err error) { c.UsersFile, err = readableFile(v); return }},
-	{name: "groups-file", usage: "`file` holding \"group: user1 user2\" lines, the groups of the local users for binding rules (optional, only with -auth-mode=basic)",
-		set: func(c *Config, v string) (err error) { c.GroupsFile, err = readableFile(v); return }},
-
 	{name: "webhook-secret-file", usage: "`file` holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
 		set: func(c *Config, v string) (err error) {
 			c.WebhookSecretFile = v
@@ -360,6 +324,18 @@ var removedOptions = []removedOption{
 	{name: "notify-timeout", replacedBy: "timeout in each notify block of -config (docs/configuration.md#notifications)"},
 	{name: "acl", boolean: true, replacedBy: "enabled in the acl block of -config (docs/configuration.md#access-control)"},
 	{name: "acl-bootstrap-token-file", valueEnv: "NOPS_ACL_BOOTSTRAP_TOKEN", replacedBy: "bootstrap_token_file in the acl block of -config (docs/configuration.md#access-control)"},
+	{name: "auth-mode", replacedBy: "type in the auth block of -config (docs/configuration.md#authentication)"},
+	{name: "oidc-issuer-url", replacedBy: authReplacement("issuer_url", "oidc")},
+	{name: "oidc-client-id", replacedBy: authReplacement("client_id", "oidc")},
+	{name: "oidc-client-secret-file", valueEnv: "NOPS_OIDC_CLIENT_SECRET", replacedBy: authReplacement("client_secret_file", "oidc")},
+	{name: "users-file", replacedBy: authReplacement("users_file", "basic")},
+	{name: "groups-file", replacedBy: authReplacement("groups_file", "basic")},
+}
+
+// authReplacement says which attribute of the auth block replaces a removed
+// login option.
+func authReplacement(attr, typ string) string {
+	return fmt.Sprintf("%s in an auth block of type %q in -config (docs/configuration.md#authentication)", attr, typ)
 }
 
 // notifyReplacement says which attribute of a notify block replaces a removed
@@ -424,9 +400,6 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
 		IdleTimeout:       defaultIdleTimeout,
-
-		LoginMaxFailures:   defaultLoginMaxFailures,
-		LoginFailureWindow: defaultLoginFailureWindow,
 	}
 	var errs []error
 	explicit := make(map[string]bool) // the options given by flag or variable
@@ -461,7 +434,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
 	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.loadNomad(fc)...)
-	errs = append(errs, c.loadAuth(fc)...)
+	errs = append(errs, c.loadAuth(fc, fileErr)...)
 	errs = append(errs, c.loadACL(fc)...)
 	errs = append(errs, c.loadNotify(fc)...)
 	errs = append(errs, c.check()...)
@@ -484,8 +457,6 @@ type secretValue struct {
 }
 
 var secretValues = []secretValue{
-	{envVar: "NOPS_OIDC_CLIENT_SECRET",
-		get: func(c *Config) string { return c.OIDCClientSecret }, set: func(c *Config, v string) { c.OIDCClientSecret = v }},
 	{envVar: "NOPS_GIT_TOKEN",
 		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
 	{envVar: "NOPS_NOMAD_TOKEN",
@@ -540,32 +511,6 @@ func (c *Config) check() []error {
 			errs = append(errs, fmt.Errorf("a git token needs a non-empty %s", username))
 		}
 	}
-	oidcSet := c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCClientSecret != ""
-	switch c.AuthMode {
-	case "oidc":
-		if c.OIDCIssuerURL == "" {
-			errs = append(errs, errors.New("-oidc-issuer-url is required with -auth-mode=oidc"))
-		}
-		if c.OIDCClientID == "" {
-			errs = append(errs, errors.New("-oidc-client-id is required with -auth-mode=oidc"))
-		}
-		if c.OIDCClientSecret == "" {
-			errs = append(errs, errors.New("the OIDC client secret is required with -auth-mode=oidc (-oidc-client-secret-file or NOPS_OIDC_CLIENT_SECRET)"))
-		}
-		if c.UsersFile != "" {
-			errs = append(errs, errors.New("-users-file is only used with -auth-mode=basic"))
-		}
-		if c.GroupsFile != "" {
-			errs = append(errs, errors.New("-groups-file is only used with -auth-mode=basic"))
-		}
-	case "basic":
-		if c.UsersFile == "" {
-			errs = append(errs, errors.New("-users-file is required with -auth-mode=basic"))
-		}
-		if oidcSet {
-			errs = append(errs, errors.New("the -oidc-* options are only used with -auth-mode=oidc"))
-		}
-	}
 	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
 		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
 	}
@@ -601,10 +546,15 @@ type fileACL struct {
 }
 
 type fileAuth struct {
-	Name          string  `hcl:"name,label"`
-	Type          string  `hcl:"type"`
-	MaxFailures   *int    `hcl:"max_failures,optional"`
-	FailureWindow *string `hcl:"failure_window,optional"`
+	Name             string  `hcl:"name,label"`
+	Type             string  `hcl:"type"`
+	IssuerURL        *string `hcl:"issuer_url,optional"`
+	ClientID         *string `hcl:"client_id,optional"`
+	ClientSecretFile *string `hcl:"client_secret_file,optional"`
+	UsersFile        *string `hcl:"users_file,optional"`
+	GroupsFile       *string `hcl:"groups_file,optional"`
+	MaxFailures      *int    `hcl:"max_failures,optional"`
+	FailureWindow    *string `hcl:"failure_window,optional"`
 }
 
 type fileNomad struct {
@@ -767,44 +717,103 @@ func (c *Config) loadNomad(fc *fileConfig) []error {
 	return nil
 }
 
-// loadAuth sets the limit on failed logins from the auth block of fc, when it
-// has one. The method is named basic, as a binding rule names it, and its
-// backend too: another name, a second block or one with -auth-mode=oidc is an
-// error. Every error names the file and the attribute.
-func (c *Config) loadAuth(fc *fileConfig) []error {
-	if fc == nil || len(fc.Auth) == 0 {
+// authAttributes are the attributes each type of auth block takes besides
+// type, and whether each is required.
+var authAttributes = map[string]map[string]bool{
+	"oidc":  {"issuer_url": true, "client_id": true, "client_secret_file": true},
+	"basic": {"users_file": true, "groups_file": false, "max_failures": false, "failure_window": false},
+}
+
+// loadAuth reads the auth block of fc into c.Auth. Nops needs exactly one:
+// none, a second one, an unknown type, a missing attribute or one the type
+// doesn't take is an error that names the file and the block. fileErr is why
+// the -config file could not be read, already reported.
+func (c *Config) loadAuth(fc *fileConfig, fileErr error) []error {
+	if fileErr != nil {
 		return nil
 	}
-	fail := func(format string, a ...any) []error {
-		return []error{fmt.Errorf("-config %s: auth: %s", c.ConfigFile, fmt.Sprintf(format, a...))}
+	if fc == nil || len(fc.Auth) == 0 {
+		return []error{errors.New("an auth block in -config is required (docs/configuration.md#authentication)")}
 	}
 	if len(fc.Auth) > 1 {
-		return fail("only one auth block is allowed")
+		return []error{fmt.Errorf("-config %s: only one auth block is allowed", c.ConfigFile)}
 	}
 	b := fc.Auth[0]
-	switch {
-	case b.Name != "basic":
-		return fail(`the label is %q, only "basic" is known`, b.Name)
-	case b.Type != "basic":
-		return fail(`type: is %q, only "basic" is known`, b.Type)
-	case c.AuthMode != "basic":
-		return fail(`the "basic" block is only used with -auth-mode=basic`)
-	}
 	var errs []error
+	fail := func(format string, a ...any) {
+		errs = append(errs, fmt.Errorf("-config %s: auth %q: %s", c.ConfigFile, b.Name, fmt.Sprintf(format, a...)))
+	}
+	if !repositoryName.MatchString(b.Name) {
+		fail("the name may hold only letters, digits, - and _")
+	}
+	takes, ok := authAttributes[b.Type]
+	if !ok {
+		fail("type: is %q, must be oidc or basic", b.Type)
+		return errs
+	}
+	a := Auth{Name: b.Name, Type: b.Type}
+	if b.Type == "basic" {
+		a.MaxFailures, a.FailureWindow = defaultLoginMaxFailures, defaultLoginFailureWindow
+	}
+	for _, f := range []struct {
+		name string
+		in   *string
+		read func(string) (string, error)
+		out  *string
+	}{
+		// Not optionalURL: unlike other URLs, a trailing slash in the issuer
+		// is significant (Authentik's has one) and must be kept.
+		{"issuer_url", b.IssuerURL, httpURL, &a.IssuerURL},
+		{"client_id", b.ClientID, required, &a.ClientID},
+		{"client_secret_file", b.ClientSecretFile, secretFile, &a.ClientSecret},
+		{"users_file", b.UsersFile, readableFile, &a.UsersFile},
+		{"groups_file", b.GroupsFile, readableFile, &a.GroupsFile},
+	} {
+		required, taken := takes[f.name]
+		switch {
+		case f.in != nil && !taken:
+			fail("%s: is not used by type %q", f.name, b.Type)
+			continue
+		case f.in == nil || *f.in == "":
+			if required {
+				fail("%s: required", f.name)
+			}
+			continue
+		}
+		v, err := f.read(*f.in)
+		if err != nil {
+			fail("%s: %v", f.name, err)
+			continue
+		}
+		*f.out = v
+	}
+	if b.ClientSecretFile != nil {
+		a.ClientSecretFile = *b.ClientSecretFile
+	}
+	// The limit on failed logins: a zero turns it off.
 	if b.MaxFailures != nil {
-		if *b.MaxFailures < 0 {
-			errs = append(errs, fmt.Errorf("-config %s: auth: max_failures: %d must not be negative", c.ConfigFile, *b.MaxFailures))
-		} else {
-			c.LoginMaxFailures = *b.MaxFailures
+		_, taken := takes["max_failures"]
+		switch {
+		case !taken:
+			fail("max_failures: is not used by type %q", b.Type)
+		case *b.MaxFailures < 0:
+			fail("max_failures: %d must not be negative", *b.MaxFailures)
+		default:
+			a.MaxFailures = *b.MaxFailures
 		}
 	}
 	if b.FailureWindow != nil {
-		d, err := nonNegativeDuration(*b.FailureWindow)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("-config %s: auth: failure_window: %w", c.ConfigFile, err))
+		_, taken := takes["failure_window"]
+		if !taken {
+			fail("failure_window: is not used by type %q", b.Type)
+		} else if d, err := nonNegativeDuration(*b.FailureWindow); err != nil {
+			fail("failure_window: %v", err)
 		} else {
-			c.LoginFailureWindow = d
+			a.FailureWindow = d
 		}
+	}
+	if len(errs) == 0 {
+		c.Auth = a
 	}
 	return errs
 }
@@ -1145,8 +1154,8 @@ func optionalURL(v string) (string, error) {
 
 // publicURLDefault derives a default -public-url from -listen-addr, for an
 // operator with no reverse proxy in front who would otherwise have nothing
-// meaningful to put there (typically -auth-mode=basic on a personal
-// machine, though the default applies to -auth-mode=oidc too: it is wrong
+// meaningful to put there (typically local users on a personal
+// machine, though the default applies to an OIDC login too: it is wrong
 // for a real OIDC provider, same as forgetting -public-url used to be, just
 // no longer a hard stop at startup). A specific host is kept as is; an
 // address with no host, or the wildcard 0.0.0.0/[::] (listen on every

@@ -32,6 +32,9 @@ const (
 
 // AuthOptions configures NewAuth.
 type AuthOptions struct {
+	// Name is the method's name, the label of its auth block: binding rules
+	// name it.
+	Name string
 	// Issuer, ClientID and ClientSecret identify nops at the OIDC provider.
 	Issuer, ClientID, ClientSecret string
 	// RedirectURL is <public-url>/auth/callback.
@@ -63,8 +66,8 @@ type Auth struct {
 
 // NewAuth creates the OIDC login.
 func NewAuth(o AuthOptions) (*Auth, error) {
-	if o.Issuer == "" || o.ClientID == "" || o.ClientSecret == "" {
-		return nil, errors.New("web: the OIDC issuer, client ID and client secret are required")
+	if o.Name == "" || o.Issuer == "" || o.ClientID == "" || o.ClientSecret == "" {
+		return nil, errors.New("web: the name, the OIDC issuer, client ID and client secret are required")
 	}
 	redirect, err := url.Parse(o.RedirectURL)
 	if err != nil || redirect.Host == "" {
@@ -82,7 +85,10 @@ func NewAuth(o AuthOptions) (*Auth, error) {
 }
 
 // Method implements Authenticator.
-func (a *Auth) Method() string { return "oidc" }
+func (a *Auth) Method() string { return a.opts.Name }
+
+// Type implements Authenticator.
+func (a *Auth) Type() string { return "oidc" }
 
 // Register adds the OIDC routes to mux: GET /auth/oidc sends the person to the
 // provider, and the provider sends them back to GET /auth/callback.

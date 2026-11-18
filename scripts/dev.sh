@@ -36,6 +36,12 @@ setup_state() {
   fi
   if [ ! -f "$dir/nops.hcl" ]; then
     cat >"$dir/nops.hcl" <<EOF
+auth "basic" {
+  type        = "basic"
+  users_file  = "$dir/users"
+  groups_file = "$dir/groups"
+}
+
 acl {
   enabled              = true
   bootstrap_token_file = "$dir/bootstrap.token"
@@ -205,9 +211,6 @@ EOF
     -git-url="${NOPS_DEV_GIT_URL:-file://$dir/jobs}" \
     -git-poll-interval=10s \
     -listen-addr=127.0.0.1:8080 \
-    -auth-mode=basic \
-    -users-file="$dir/users" \
-    -groups-file="$dir/groups" \
     -config="$dir/nops.hcl" \
     -db-path="$dir/nops.db" \
     "$@" &

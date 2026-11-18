@@ -151,7 +151,7 @@ What changes in each release of Nops, newest first. Before upgrading, read
 - `web`: after 10 failed logins with a password in 15 minutes, a username is
   locked until the 15 minutes are up, even one that doesn't exist, and a flood
   of logins no longer saturates the CPU. The `auth "basic"` block changes both
-  values ([local users](docs/dashboard.md#local-users--auth-modebasic),
+  values ([local users](docs/dashboard.md#local-users),
   [#246](https://github.com/music-gang/nops/pull/246)).
 - `config`: Nops serves the dashboard and the git webhook over HTTPS itself,
   with no proxy or behind one that trusts your certificate authority, from
