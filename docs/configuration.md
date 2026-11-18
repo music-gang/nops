@@ -29,7 +29,6 @@ inject secrets into the environment. These variables have no flag.
 | From a file (flag) | Value in the environment |
 |---|---|
 | `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
-| `NOPS_NOMAD_TOKEN_FILE` (`-nomad-token-file`) | `NOPS_NOMAD_TOKEN` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 
 A secret of the [configuration file](#configuration-file) is read only from
@@ -40,27 +39,34 @@ the file its `*_file` attribute names.
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-nomad-addr` | `NOPS_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad HTTP API address. |
-| `-nomad-ui-url` | `NOPS_NOMAD_UI_URL` | none | Nomad UI address as a browser reaches it, for the dashboard's links. Unset: no links. |
-| `-nomad-namespaces` | `NOPS_NOMAD_NAMESPACES` | `default` | Comma-separated [namespaces](running-nops.md#namespaces) Nops manages. |
-| `-nomad-token-file` | `NOPS_NOMAD_TOKEN_FILE` | none | File holding the [Nomad ACL token](running-nops.md#the-nomad-token). |
-| `-nomad-ca-cert` | `NOPS_NOMAD_CA_CERT` | none | PEM file of the CA of the Nomad server certificate. |
-| `-nomad-client-cert` | `NOPS_NOMAD_CLIENT_CERT` | none | PEM client certificate for mTLS. |
-| `-nomad-client-key` | `NOPS_NOMAD_CLIENT_KEY` | none | PEM client key for mTLS. |
-| `-nomad-tls-skip-verify` | `NOPS_NOMAD_TLS_SKIP_VERIFY` | `false` | Skip server certificate checks. Testing only. |
 
-The `nomad` block of the [configuration file](#configuration-file) sets the
-deadline of the requests to Nomad. It has no flag or variable, and one block
-at most:
+The `nomad` block of the [configuration file](#configuration-file) says how
+Nops reaches Nomad. Only `addr` has a flag, which wins. One block at most:
 
 ```hcl
 nomad {
-  timeout = "30s"
+  addr       = "https://nomad.service.consul:4646"
+  namespaces = ["default", "apps"]
+  token_file = "/secrets/nomad-token"
+  ui_url     = "https://nomad.example.com"
+  ca_cert    = "/secrets/nomad-ca.pem"
 }
 ```
 
 | Attribute | Default | Meaning |
 |---|---|---|
+| `addr` | `http://127.0.0.1:4646` | Nomad HTTP API address. |
+| `namespaces` | `["default"]` | The [namespaces](running-nops.md#namespaces) Nops manages. |
+| `token_file` | none | File holding the [Nomad ACL token](running-nops.md#the-nomad-token). Unset: no token. |
+| `ui_url` | none | Nomad UI address as a browser reaches it, for the dashboard's links. Unset: no links. |
+| `ca_cert` | none | PEM file of the CA of the Nomad server certificate. |
+| `client_cert` | none | PEM client certificate for mTLS, with `client_key`. |
+| `client_key` | none | PEM client key for mTLS, with `client_cert`. |
+| `tls_skip_verify` | `false` | Skip server certificate checks. Testing only. |
 | `timeout` | `30s` | How long a request to Nomad may take, the answer included. |
+
+Nops refuses to start with another `-nomad-*` flag, its variable, or
+`NOPS_NOMAD_TOKEN`, and names the attribute that replaces it.
 
 ## Git
 

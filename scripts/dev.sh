@@ -46,6 +46,10 @@ acl {
   enabled              = true
   bootstrap_token_file = "$dir/bootstrap.token"
 }
+
+nomad {
+  ui_url = "$nomad_addr"
+}
 EOF
   fi
   if [ ! -d "$dir/jobs/.git" ]; then
@@ -207,7 +211,6 @@ EOF
   set -m
   "$dir/bin/nops" serve \
     -nomad-addr="$nomad_addr" \
-    -nomad-ui-url="$nomad_addr" \
     -git-url="${NOPS_DEV_GIT_URL:-file://$dir/jobs}" \
     -git-poll-interval=10s \
     -listen-addr=127.0.0.1:8080 \

@@ -95,10 +95,10 @@ EOF
 
 ## Namespaces
 
-List the namespaces Nops manages in `-nomad-namespaces`. Nops ignores jobs in
-other namespaces and logs an ERROR for each. A job without a `namespace` is in
-`default`. Removing a namespace from the list leaves its jobs running as they
-are.
+List the namespaces Nops manages in `namespaces` of the
+[`nomad` block](configuration.md#nomad). Nops ignores jobs in other namespaces
+and logs an ERROR for each. A job without a `namespace` is in `default`.
+Removing a namespace from the list leaves its jobs running as they are.
 
 ## The Nomad token
 

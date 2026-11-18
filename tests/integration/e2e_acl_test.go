@@ -26,7 +26,7 @@ func TestE2EACLBootstrapTokenAdministersAndClientTokenIsLimited(t *testing.T) {
 	if err := os.WriteFile(bootFile, []byte(bootstrap+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e := newE2EWithoutLogin(t, nopsConfig(t, `
+	e := newE2EWithoutLogin(t, e2eNomad{}, nopsConfig(t, `
 acl {
   enabled              = true
   bootstrap_token_file = "`+bootFile+`"

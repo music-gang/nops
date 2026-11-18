@@ -60,7 +60,7 @@ func (e *e2eEnv) liveIn(ns, jobID string) *api.Job {
 func TestE2EOneInstanceManagesSeveralNamespaces(t *testing.T) {
 	_, raw := newClient(t)
 	nsA, nsB := newNamespace(t, raw, "nsa"), newNamespace(t, raw, "nsb")
-	e := newE2E(t, "NOPS_NOMAD_NAMESPACES="+nsA+","+nsB)
+	e := newE2EWithNomad(t, e2eNomad{namespaces: []string{nsA, nsB}})
 	jobID := uniqueID(t, e.raw, "multins")
 	hookID := uniqueID(t, e.raw, "multinshook")
 

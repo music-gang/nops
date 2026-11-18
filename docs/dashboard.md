@@ -70,9 +70,9 @@ why a deployment stays in `applying` without opening Nomad's UI.
 
 ### Links into the Nomad UI
 
-Set [`-nomad-ui-url`](configuration.md#nomad) and the Job and Deployment
-pages link to the job in Nomad's UI, and to its deployments when canaries wait
-for promotion. Unset, there are no links.
+Set `ui_url` in the [`nomad` block](configuration.md#nomad) and the Job and
+Deployment pages link to the job in Nomad's UI, and to its deployments when
+canaries wait for promotion. Unset, there are no links.
 
 ## Authentication
 

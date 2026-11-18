@@ -235,7 +235,7 @@ type deploymentDetailData struct {
 	// a Nomad to ask.
 	Nomad *nomadView
 	// NomadURL and NomadDeploymentsURL are the job and its Deployments tab in the
-	// Nomad UI; "" without a -nomad-ui-url.
+	// Nomad UI; "" without a ui_url.
 	NomadURL, NomadDeploymentsURL string
 	Diff                          *api.JobDiff
 	Summary                       nomadx.DiffSummary
