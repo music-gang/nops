@@ -77,7 +77,7 @@ func main() {
 func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	log.Info("starting", startupAttrs(cfg)...)
 	if cfg.NomadTLSSkipVerify {
-		log.Warn("Nomad server certificate verification is disabled (-nomad-tls-skip-verify)")
+		log.Warn("Nomad server certificate verification is disabled (tls_skip_verify in the nomad block)")
 	}
 	if !cfg.ACL {
 		log.Warn("the ACL is off: everyone who logs in, and every token, has full control, and /metrics is open (the acl block of -config turns it on)")

@@ -63,7 +63,7 @@ func TestE2EServesTLS(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(writeSelfSigned(t, certFile, keyFile, 1))
 
-	proc := startNopsTLS(t, newScratchRepo(t).url, roots, nopsConfig(t, `
+	proc := startNopsTLS(t, newScratchRepo(t).url, roots, e2eNomad{}, nopsConfig(t, `
 listen {
   tls {
     cert_file = "`+certFile+`"

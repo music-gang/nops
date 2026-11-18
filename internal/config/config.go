@@ -3,8 +3,9 @@
 //
 // Every option has a flag and an environment variable (NOPS_ followed by the
 // flag name in upper case, with dashes as underscores). A flag wins over the
-// variable, the variable over the default. The file holds only what a flag
-// cannot: the repository, listen, nomad, auth, acl and notify blocks. nops reads nothing else:
+// variable, the variable over the file, the file over the default. The file
+// holds the repository, listen, nomad, auth, acl and notify blocks; of them,
+// only the nomad block's addr has a flag. nops reads nothing else:
 // the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -21,7 +22,6 @@ import (
 	"path"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	// The zone database is embedded: a sync window is read in a named time zone
@@ -44,6 +44,9 @@ const (
 	defaultWriteTimeout      = time.Minute
 	defaultIdleTimeout       = 2 * time.Minute
 )
+
+// defaultNomadAddr is the address of Nomad's HTTP API on the local agent.
+const defaultNomadAddr = "http://127.0.0.1:4646"
 
 // The default deadlines of the calls to Nomad (the nomad block) and of a poll
 // of a repository (the repository block, -git-timeout for the default one).
@@ -77,8 +80,7 @@ type Config struct {
 	NomadClientCert    string
 	NomadClientKey     string
 	NomadTLSSkipVerify bool
-	// NomadTimeout is how long a request to Nomad may take, from the nomad
-	// block of the -config file.
+	// NomadTimeout is how long a request to Nomad may take.
 	NomadTimeout time.Duration
 
 	// The -git-* options: the repository named DefaultRepository, when GitURL
@@ -204,11 +206,10 @@ type Notify struct {
 }
 
 type option struct {
-	name    string // flag name; the env var is derived from it
-	def     string
-	usage   string
-	boolean bool
-	set     func(c *Config, v string) error
+	name  string // flag name; the env var is derived from it
+	def   string
+	usage string
+	set   func(c *Config, v string) error
 }
 
 func (o option) env() string {
@@ -216,26 +217,8 @@ func (o option) env() string {
 }
 
 var options = []option{
-	{name: "nomad-addr", def: "http://127.0.0.1:4646", usage: "Nomad HTTP API address",
+	{name: "nomad-addr", def: defaultNomadAddr, usage: "Nomad HTTP API address (wins over addr in the nomad block of -config)",
 		set: func(c *Config, v string) (err error) { c.NomadAddr, err = httpURL(v); return }},
-	{name: "nomad-ui-url", usage: "address a person opens the Nomad UI at in a browser, e.g. https://nomad.example.com (a sub path is kept): the dashboard links to Nomad from it; unset: no link, it is never taken from -nomad-addr",
-		set: func(c *Config, v string) (err error) { c.NomadUIURL, err = optionalURL(v); return }},
-	{name: "nomad-namespaces", def: api.DefaultNamespace, usage: "comma-separated Nomad namespaces of the managed jobs and hooks",
-		set: func(c *Config, v string) (err error) { c.NomadNamespaces, err = namespaceList(v); return }},
-	{name: "nomad-token-file", usage: "`file` holding the Nomad ACL token (empty: no token)",
-		set: func(c *Config, v string) (err error) {
-			c.NomadTokenFile = v
-			c.NomadToken, err = secretFile(v)
-			return
-		}},
-	{name: "nomad-ca-cert", usage: "PEM `file` of the CA that signed the Nomad server certificate",
-		set: func(c *Config, v string) (err error) { c.NomadCACert, err = readableFile(v); return }},
-	{name: "nomad-client-cert", usage: "PEM `file` of the client certificate for Nomad mTLS (with -nomad-client-key)",
-		set: func(c *Config, v string) (err error) { c.NomadClientCert, err = readableFile(v); return }},
-	{name: "nomad-client-key", usage: "PEM `file` of the client key for Nomad mTLS (with -nomad-client-cert)",
-		set: func(c *Config, v string) (err error) { c.NomadClientKey, err = readableFile(v); return }},
-	{name: "nomad-tls-skip-verify", def: "false", boolean: true, usage: "do not verify the Nomad server certificate (insecure)",
-		set: func(c *Config, v string) (err error) { c.NomadTLSSkipVerify, err = strconv.ParseBool(v); return }},
 
 	{name: "config", usage: "HCL `file` of the options a flag can't hold",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
@@ -330,6 +313,20 @@ var removedOptions = []removedOption{
 	{name: "oidc-client-secret-file", valueEnv: "NOPS_OIDC_CLIENT_SECRET", replacedBy: authReplacement("client_secret_file", "oidc")},
 	{name: "users-file", replacedBy: authReplacement("users_file", "basic")},
 	{name: "groups-file", replacedBy: authReplacement("groups_file", "basic")},
+	{name: "nomad-namespace", replacedBy: nomadReplacement("namespaces")},
+	{name: "nomad-namespaces", replacedBy: nomadReplacement("namespaces")},
+	{name: "nomad-token-file", valueEnv: "NOPS_NOMAD_TOKEN", replacedBy: nomadReplacement("token_file")},
+	{name: "nomad-ui-url", replacedBy: nomadReplacement("ui_url")},
+	{name: "nomad-ca-cert", replacedBy: nomadReplacement("ca_cert")},
+	{name: "nomad-client-cert", replacedBy: nomadReplacement("client_cert")},
+	{name: "nomad-client-key", replacedBy: nomadReplacement("client_key")},
+	{name: "nomad-tls-skip-verify", boolean: true, replacedBy: nomadReplacement("tls_skip_verify")},
+}
+
+// nomadReplacement says which attribute of the nomad block replaces a removed
+// -nomad-* option.
+func nomadReplacement(attr string) string {
+	return attr + " in the nomad block of -config (docs/configuration.md#nomad)"
 }
 
 // authReplacement says which attribute of the auth block replaces a removed
@@ -369,7 +366,7 @@ func newFlagSet(out io.Writer) (*flag.FlagSet, []*value) {
 	fs.Usage = func() { usage(out) }
 	vals := make([]*value, len(options))
 	for i, o := range options {
-		vals[i] = &value{boolean: o.boolean}
+		vals[i] = &value{}
 		fs.Var(vals[i], o.name, o.usage)
 	}
 	return fs, vals
@@ -395,6 +392,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	c := &Config{
+		NomadNamespaces:   []string{api.DefaultNamespace},
 		NomadTimeout:      defaultNomadTimeout,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
@@ -426,14 +424,12 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 			errs = append(errs, fmt.Errorf("%s was removed: %s", o.valueEnv, o.replacedBy))
 		}
 	}
-	if getenv("NOPS_NOMAD_NAMESPACE") != "" {
-		errs = append(errs, errors.New("NOPS_NOMAD_NAMESPACE was replaced by NOPS_NOMAD_NAMESPACES (a comma-separated list)"))
-	}
 	errs = append(errs, resolveSecretValues(c, getenv)...)
 	fc, fileErr := readConfigFile(c.ConfigFile)
+	// The nomad block first: a repository's jobs must match its namespaces.
+	errs = append(errs, c.loadNomad(fc, explicit)...)
 	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
 	errs = append(errs, c.loadListen(fc)...)
-	errs = append(errs, c.loadNomad(fc)...)
 	errs = append(errs, c.loadAuth(fc, fileErr)...)
 	errs = append(errs, c.loadACL(fc)...)
 	errs = append(errs, c.loadNotify(fc)...)
@@ -459,8 +455,6 @@ type secretValue struct {
 var secretValues = []secretValue{
 	{envVar: "NOPS_GIT_TOKEN",
 		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
-	{envVar: "NOPS_NOMAD_TOKEN",
-		get: func(c *Config) string { return c.NomadToken }, set: func(c *Config, v string) { c.NomadToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
 }
@@ -511,9 +505,6 @@ func (c *Config) check() []error {
 			errs = append(errs, fmt.Errorf("a git token needs a non-empty %s", username))
 		}
 	}
-	if (c.NomadClientCert == "") != (c.NomadClientKey == "") {
-		errs = append(errs, errors.New("-nomad-client-cert and -nomad-client-key must be set together"))
-	}
 	return errs
 }
 
@@ -558,7 +549,15 @@ type fileAuth struct {
 }
 
 type fileNomad struct {
-	Timeout *string `hcl:"timeout,optional"`
+	Addr          *string   `hcl:"addr,optional"`
+	Namespaces    *[]string `hcl:"namespaces,optional"`
+	TokenFile     string    `hcl:"token_file,optional"`
+	UIURL         string    `hcl:"ui_url,optional"`
+	CACert        string    `hcl:"ca_cert,optional"`
+	ClientCert    string    `hcl:"client_cert,optional"`
+	ClientKey     string    `hcl:"client_key,optional"`
+	TLSSkipVerify bool      `hcl:"tls_skip_verify,optional"`
+	Timeout       *string   `hcl:"timeout,optional"`
 }
 
 type fileListen struct {
@@ -703,18 +702,63 @@ func (c *Config) loadListen(fc *fileConfig) []error {
 	return errs
 }
 
-// loadNomad sets the timeout of the nomad block of fc, when it has one. An
-// error names the file and the attribute.
-func (c *Config) loadNomad(fc *fileConfig) []error {
-	if fc == nil || fc.Nomad == nil || fc.Nomad.Timeout == nil {
+// loadNomad reads the nomad block of fc, when it has one. Its addr counts
+// only when -nomad-addr is not in explicit, the options given by flag or
+// variable. Every error names the file and the attribute.
+func (c *Config) loadNomad(fc *fileConfig, explicit map[string]bool) []error {
+	if fc == nil || fc.Nomad == nil {
 		return nil
 	}
-	d, err := positiveDuration(*fc.Nomad.Timeout)
-	if err != nil {
-		return []error{fmt.Errorf("-config %s: nomad: timeout: %w", c.ConfigFile, err)}
+	b := fc.Nomad
+	var errs []error
+	fail := func(attr string, err error) {
+		errs = append(errs, fmt.Errorf("-config %s: nomad: %s: %w", c.ConfigFile, attr, err))
 	}
-	c.NomadTimeout = d
-	return nil
+	var err error
+	if b.Addr != nil && !explicit["nomad-addr"] {
+		if c.NomadAddr, err = httpURL(*b.Addr); err != nil {
+			fail("addr", err)
+		}
+	}
+	if b.Namespaces != nil {
+		// Kept as they were on an error, so the jobs of a repository block
+		// are not reported against an empty list too.
+		if ns, err := namespaceList(*b.Namespaces); err != nil {
+			fail("namespaces", err)
+		} else {
+			c.NomadNamespaces = ns
+		}
+	}
+	c.NomadTokenFile = b.TokenFile
+	if c.NomadToken, err = secretFile(b.TokenFile); err != nil {
+		fail("token_file", err)
+	}
+	if c.NomadUIURL, err = optionalURL(b.UIURL); err != nil {
+		fail("ui_url", err)
+	}
+	for _, f := range []struct {
+		name string
+		in   string
+		out  *string
+	}{
+		{"ca_cert", b.CACert, &c.NomadCACert},
+		{"client_cert", b.ClientCert, &c.NomadClientCert},
+		{"client_key", b.ClientKey, &c.NomadClientKey},
+	} {
+		if *f.out, err = readableFile(f.in); err != nil {
+			fail(f.name, err)
+		}
+	}
+	if (b.ClientCert == "") != (b.ClientKey == "") {
+		fail("client_cert", errors.New("must be set together with client_key"))
+	}
+	c.NomadTLSSkipVerify = b.TLSSkipVerify
+	if b.Timeout != nil {
+		if c.NomadTimeout, err = positiveDuration(*b.Timeout); err != nil {
+			fail("timeout", err)
+		}
+	}
+	return errs
 }
 
 // authAttributes are the attributes each type of auth block takes besides
@@ -1064,31 +1108,23 @@ func gitPath(v string) (string, error) {
 	return clean, nil
 }
 
-// csvList splits a comma-separated list, dropping blanks around and between
-// the items. An empty value is an empty (nil) list.
-func csvList(v string) []string {
-	var out []string
-	for _, item := range strings.Split(v, ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			out = append(out, item)
-		}
+// namespaceList checks the namespaces of the nomad block: a non-empty list
+// with no empty name, a repeated name kept once (the order of the first
+// occurrence stands).
+func namespaceList(list []string) ([]string, error) {
+	if len(list) == 0 {
+		return nil, errors.New("is empty: Nops needs a namespace to manage")
 	}
-	return out
-}
-
-// namespaceList parses -nomad-namespaces: a non-empty comma-separated list,
-// with a repeated name kept once (the order of the first occurrence stands).
-func namespaceList(v string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
-	for _, ns := range csvList(v) {
+	for _, ns := range list {
+		if strings.TrimSpace(ns) == "" {
+			return nil, fmt.Errorf("%q is not a namespace name", ns)
+		}
 		if !seen[ns] {
 			seen[ns] = true
 			out = append(out, ns)
 		}
-	}
-	if len(out) == 0 {
-		return nil, errors.New("required")
 	}
 	return out, nil
 }

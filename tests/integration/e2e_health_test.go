@@ -388,7 +388,7 @@ func TestE2EApplyWaitsForCanaryPromotion(t *testing.T) {
 // post-hook without anyone touching Nomad.
 func TestE2EPromoteFromTheDashboard(t *testing.T) {
 	const nomadUI = "https://nomad-ui.example.test/nomad" // where a person opens Nomad, not where nops does
-	e := newE2E(t, "NOPS_APPLY_TIMEOUT=8s", "NOPS_NOMAD_UI_URL="+nomadUI)
+	e := newE2EWithNomad(t, e2eNomad{uiURL: nomadUI}, "NOPS_APPLY_TIMEOUT=8s")
 	jobID := uniqueID(t, e.raw, "promotesvc")
 	hookID := uniqueID(t, e.raw, "promotehook")
 	marker := filepath.Join(t.TempDir(), "post-hook-ran")

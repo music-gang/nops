@@ -132,9 +132,9 @@ type Options struct {
 	// that lives in configuration. Empty unless ACL is on.
 	BootstrapToken string
 
-	// NomadUIURL is where a person opens Nomad in a browser (-nomad-ui-url), the
-	// base the dashboard's "Open in Nomad" links are built on. Optional: empty
-	// shows no link.
+	// NomadUIURL is where a person opens Nomad in a browser (ui_url of the
+	// nomad block), the base the dashboard's "Open in Nomad" links are built
+	// on. Optional: empty shows no link.
 	NomadUIURL string
 
 	// Nomad is what the Nomad panel of the Job and Deployment pages reads.

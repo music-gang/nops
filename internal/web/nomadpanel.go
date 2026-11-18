@@ -57,7 +57,7 @@ type nomadView struct {
 	AppliedIndex uint64
 
 	// DeploymentsURL is the job's Deployments tab in the Nomad UI, "" without a
-	// -nomad-ui-url.
+	// ui_url.
 	DeploymentsURL string
 }
 

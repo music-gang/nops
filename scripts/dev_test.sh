@@ -44,6 +44,10 @@ check config "auth \"basic\" {
 acl {
   enabled              = true
   bootstrap_token_file = \"$dir/bootstrap.token\"
+}
+
+nomad {
+  ui_url = \"$nomad_addr\"
 }" "$(cat "$dir/nops.hcl")"
 check jobs-files 'web.nomad.hcl
 web.vars.hcl' "$(git -C "$dir/jobs" ls-files)"

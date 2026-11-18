@@ -461,7 +461,7 @@ type jobData struct {
 	// deployments than a page holds, or one of them in use.
 	ListTools bool
 	Nomad     *nomadView // what Nomad says of the job; nil without a Nomad to ask
-	NomadURL  string     // the job in the Nomad UI; "" without a -nomad-ui-url
+	NomadURL  string     // the job in the Nomad UI; "" without a ui_url
 }
 
 func (s *server) job(w http.ResponseWriter, r *http.Request) {

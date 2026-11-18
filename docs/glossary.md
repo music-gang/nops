@@ -21,7 +21,7 @@ disagrees with this one, this page wins. Code-only terms are in
 | **spec** | A job's HCL as Nomad parses it. The **target spec** is the one in git. |
 | **spec hash** | Identifies what a deployment does: the target spec plus its hooks. |
 | **target job** | The job a deployment is about. |
-| **managed namespace** | A namespace in `-nomad-namespaces`. |
+| **managed namespace** | A namespace in `namespaces` of the [`nomad` block](configuration.md#nomad). |
 | **managed job** | A job with `nops_managed = "true"`. |
 | **policy** | `auto`, `approval` or `none`: who gives the go-ahead ([policies](policies.md)). |
 | **drift** | A difference between the target spec and the live job. |

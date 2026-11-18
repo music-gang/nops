@@ -36,7 +36,7 @@ func TestNomadLinkURLs(t *testing.T) {
 		})
 	}
 
-	// No -nomad-ui-url, no link: never one built from anything else.
+	// No ui_url, no link: never one built from anything else.
 	s := &server{}
 	if s.nomadJobURL("default", "web") != "" || s.nomadDeploymentsURL("default", "web") != "" {
 		t.Error("a link was built without a Nomad UI address")

@@ -18,7 +18,7 @@ import (
 // apply, hooks) is covered by the end-to-end tests in e2e_test.go and
 // e2e_hooks_test.go.
 func TestNopsBinaryStartsAndShutsDown(t *testing.T) {
-	p := startNops(t, newScratchRepo(t).url)
+	p := startNops(t, newScratchRepo(t).url, e2eNomad{})
 
 	resp, err := http.Get(p.baseURL + "/healthz")
 	if err != nil {

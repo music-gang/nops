@@ -177,10 +177,6 @@ func TestLoadPrecedence(t *testing.T) {
 // through its variable, so a typo in a set function or in the env name
 // shows up.
 func TestLoadEveryOption(t *testing.T) {
-	ca := writeFile(t, "ca.pem", "ca")
-	cert := writeFile(t, "cert.pem", "cert")
-	key := writeFile(t, "key.pem", "key")
-	nomadTok := writeFile(t, "nomad-token", "nomad-secret\n")
 	gitTok := writeFile(t, "git-token", "  git-secret\n")
 	appsTok := writeFile(t, "apps-token", "apps-secret\n")
 	bootstrap := secret.New()
@@ -205,13 +201,6 @@ acl {
 
 	values := map[string]string{
 		"nomad-addr":            "https://nomad.example.com:4646",
-		"nomad-ui-url":          "https://infra.example.com/nomad/",
-		"nomad-namespaces":      "apps,infra, apps",
-		"nomad-token-file":      nomadTok,
-		"nomad-ca-cert":         ca,
-		"nomad-client-cert":     cert,
-		"nomad-client-key":      key,
-		"nomad-tls-skip-verify": "true",
 		"git-url":               repo,
 		"git-branch":            "prod",
 		"git-path":              "jobs/apps",
@@ -232,24 +221,18 @@ acl {
 		"log-level":             "debug",
 	}
 	want := Config{
-		NomadAddr:          "https://nomad.example.com:4646",
-		NomadUIURL:         "https://infra.example.com/nomad",
-		NomadNamespaces:    []string{"apps", "infra"},
-		NomadTokenFile:     nomadTok,
-		NomadToken:         "nomad-secret",
-		NomadCACert:        ca,
-		NomadClientCert:    cert,
-		NomadClientKey:     key,
-		NomadTLSSkipVerify: true,
-		GitURL:             repo,
-		GitBranch:          "prod",
-		GitPath:            "jobs/apps",
-		GitUsername:        "oauth2",
-		GitTokenFile:       gitTok,
-		GitToken:           "git-secret",
-		GitTimeout:         45 * time.Second,
-		NomadTimeout:       30 * time.Second, // the nomad block is the file's, not an option
-		ConfigFile:         configFile,
+		NomadAddr: "https://nomad.example.com:4646",
+		// The rest of the nomad block is the file's, not an option.
+		NomadNamespaces: []string{"default"},
+		NomadTimeout:    30 * time.Second,
+		GitURL:          repo,
+		GitBranch:       "prod",
+		GitPath:         "jobs/apps",
+		GitUsername:     "oauth2",
+		GitTokenFile:    gitTok,
+		GitToken:        "git-secret",
+		GitTimeout:      45 * time.Second,
+		ConfigFile:      configFile,
 		Repositories: []Repository{
 			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret", Timeout: 45 * time.Second},
 			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret", Timeout: 2 * time.Minute},
@@ -323,15 +306,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"nomad-addr", "ftp://nomad", "not an http"},
 		{"nomad-addr", "http://", "not an http"},
 		{"nomad-addr", "http://bad host", "invalid character"},
-		{"nomad-namespaces", "", "required"},
-		{"nomad-namespaces", " , ", "required"},
-		{"nomad-token-file", missing, "no such file"},
-		{"nomad-token-file", empty, "is empty"},
-		{"nomad-ca-cert", missing, "no such file"},
-		{"nomad-ca-cert", dir, "is a directory"},
-		{"nomad-client-cert", missing, "no such file"},
-		{"nomad-client-key", missing, "no such file"},
-		{"nomad-tls-skip-verify", "maybe", "invalid syntax"},
 		{"config", missing, "no such file"},
 		{"config", dir, "is a directory"},
 		{"git-branch", "", "required"},
@@ -346,8 +320,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
 		{"public-url", "nops.example.com", "not an http"},
-		{"nomad-ui-url", "nomad.example.com", "not an http"},
-		{"nomad-ui-url", "/ui", "not an http"},
 		{"git-poll-interval", "-1m", "must be positive"},
 		{"drift-interval", "soon", "invalid duration"},
 		{"engine-interval", "0", "must be positive"},
@@ -442,42 +414,6 @@ func TestLoadPublicURLDefault(t *testing.T) {
 	}
 }
 
-// TestLoadNomadUIURL covers -nomad-ui-url: unset means no link (it is never
-// taken from -nomad-addr, which is the address nops uses, not one a browser
-// can reach), a value is an absolute http(s) URL whose sub path is kept, and the
-// variable and the flag say the same.
-func TestLoadNomadUIURL(t *testing.T) {
-	args := func(extra ...string) []string { return append([]string{"-git-url", repo}, extra...) }
-
-	c, err := Load(args("-nomad-addr", "http://nomad.service.consul:4646"), envOf(nil), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.NomadUIURL != "" {
-		t.Errorf("NomadUIURL = %q with only -nomad-addr set, want none: a link built from it would be a wrong one", c.NomadUIURL)
-	}
-
-	for in, want := range map[string]string{
-		"https://nomad.example.com":        "https://nomad.example.com",
-		"https://nomad.example.com/":       "https://nomad.example.com",
-		"https://infra.example.com/nomad/": "https://infra.example.com/nomad",
-		"http://127.0.0.1:4646":            "http://127.0.0.1:4646",
-	} {
-		c, err := Load(args("-nomad-ui-url", in), envOf(nil), io.Discard)
-		if err != nil || c.NomadUIURL != want {
-			t.Errorf("-nomad-ui-url %q = %q, %v; want %q", in, c.NomadUIURL, err, want)
-		}
-		c, err = Load(args(), envOf(map[string]string{"NOPS_NOMAD_UI_URL": in}), io.Discard)
-		if err != nil || c.NomadUIURL != want {
-			t.Errorf("NOPS_NOMAD_UI_URL %q = %q, %v; want %q", in, c.NomadUIURL, err, want)
-		}
-	}
-
-	if _, err := Load(args("-nomad-ui-url", "ftp://nomad.example.com"), envOf(nil), io.Discard); err == nil {
-		t.Error("an ftp:// address was accepted")
-	}
-}
-
 // TestLoadBasePath covers BasePath, derived from -public-url's own path
 // component: there is no separate flag (docs/running-nops.md#under-a-sub-path).
 func TestLoadBasePath(t *testing.T) {
@@ -531,7 +467,6 @@ func checkErr(t *testing.T, err error, prefix, want string) {
 
 func TestLoadCrossChecks(t *testing.T) {
 	tok := writeFile(t, "token", "secret")
-	cert := writeFile(t, "cert.pem", "cert")
 	tests := []struct {
 		name string
 		args []string
@@ -540,8 +475,6 @@ func TestLoadCrossChecks(t *testing.T) {
 		{"token with ssh url", []string{"-git-url", "git@git.example.com:ops/jobs.git", "-git-token-file", tok}, "needs an https:// -git-url"},
 		{"token with http url", []string{"-git-url", "http://git.example.com/jobs.git", "-git-token-file", tok}, "needs an https:// -git-url"},
 		{"token without username", []string{"-git-url", repo, "-git-token-file", tok, "-git-username="}, "needs a non-empty -git-username"},
-		{"cert without key", []string{"-git-url", repo, "-nomad-client-cert", cert}, "must be set together"},
-		{"key without cert", []string{"-git-url", repo, "-nomad-client-key", cert}, "must be set together"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -639,22 +572,6 @@ func TestLoadArguments(t *testing.T) {
 		t.Errorf("positional argument: err = %v", err)
 	}
 
-	// A bool flag works without a value.
-	c, err := Load([]string{"-nomad-tls-skip-verify"}, env, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.NomadTLSSkipVerify {
-		t.Error("-nomad-tls-skip-verify without value did not set it")
-	}
-	// ...and an explicit false beats a true variable.
-	c, err = Load([]string{"-nomad-tls-skip-verify=false"}, envOf(map[string]string{"NOPS_GIT_URL": repo, "NOPS_NOMAD_TLS_SKIP_VERIFY": "true"}), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.NomadTLSSkipVerify {
-		t.Error("-nomad-tls-skip-verify=false did not win over the variable")
-	}
 }
 
 // The completion offers files for a flag whose usage quotes `file`, as the
@@ -667,7 +584,7 @@ func TestFlagsThatTakeAFileQuoteIt(t *testing.T) {
 	if strings.Contains(out.String(), "`") {
 		t.Error("the usage prints the quotes of a value name")
 	}
-	file := map[string]bool{"config": true, "db-path": true, "nomad-ca-cert": true, "nomad-client-cert": true, "nomad-client-key": true}
+	file := map[string]bool{"config": true, "db-path": true}
 	FlagSet(io.Discard).VisitAll(func(f *flag.Flag) {
 		name, _ := flag.UnquoteUsage(f)
 		if want := file[f.Name] || strings.HasSuffix(f.Name, "-file"); (name == "file") != want {
@@ -770,16 +687,6 @@ func TestNomadIgnoresNomadEnv(t *testing.T) {
 	}
 }
 
-func TestOldNamespaceVariableIsRejected(t *testing.T) {
-	_, err := Load([]string{"-git-url", repo}, envOf(map[string]string{"NOPS_NOMAD_NAMESPACE": "apps"}), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "NOPS_NOMAD_NAMESPACES") {
-		t.Fatalf("err = %v, want one naming NOPS_NOMAD_NAMESPACES", err)
-	}
-	if _, err := Load([]string{"-git-url", repo, "-nomad-namespace", "apps"}, envOf(nil), io.Discard); err == nil {
-		t.Error("the old -nomad-namespace flag was accepted")
-	}
-}
-
 func TestNomadCarriesSettings(t *testing.T) {
 	c := &Config{
 		NomadAddr:          "https://nomad.example.com:4646",
@@ -808,7 +715,6 @@ func TestSecretValueFallback(t *testing.T) {
 		extra  map[string]string // other env needed for a cross-check (e.g. a URL for a token)
 	}{
 		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
-		{"NOPS_NOMAD_TOKEN", "plain-nomad-token", func(c *Config) string { return c.NomadToken }, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.envVar, func(t *testing.T) {
@@ -1062,6 +968,10 @@ repository "default" {
 
 func TestLoadRepositoryJobs(t *testing.T) {
 	file := writeConfig(t, `
+nomad {
+  namespaces = ["default", "labs"]
+}
+
 repository "apps" {
   url  = "https://git.example.com/ops/apps.git"
   jobs = ["labs/billing-api", "lab*/billing-api-*", "crm"]
@@ -1071,7 +981,7 @@ repository "infra" {
   url = "https://git.example.com/ops/infra.git"
 }
 `)
-	c, err := Load([]string{"-config", file, "-nomad-namespaces", "default,labs"}, envOf(nil), io.Discard)
+	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1233,25 +1143,111 @@ listen {
 }
 
 func TestLoadNomadFromTheFile(t *testing.T) {
+	ca := writeFile(t, "ca.pem", "ca")
+	cert := writeFile(t, "cert.pem", "cert")
+	key := writeFile(t, "key.pem", "key")
+	tok := writeFile(t, "nomad-token", "  nomad-secret\n")
 	file := writeConfig(t, `
 repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
 
 nomad {
-  timeout = "2m"
+  addr            = "https://nomad.example.com:4646"
+  namespaces      = ["apps", "infra", "apps"]
+  token_file      = "`+tok+`"
+  ui_url          = "https://infra.example.com/nomad/"
+  ca_cert         = "`+ca+`"
+  client_cert     = "`+cert+`"
+  client_key      = "`+key+`"
+  tls_skip_verify = true
+  timeout         = "2m"
 }
 `)
 	c, err := Load([]string{"-config", file}, envOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.NomadTimeout != 2*time.Minute {
-		t.Errorf("NomadTimeout = %v, want 2m", c.NomadTimeout)
+	got := &api.Config{Address: c.NomadAddr, SecretID: c.NomadToken, TLSConfig: &api.TLSConfig{
+		CACert: c.NomadCACert, ClientCert: c.NomadClientCert, ClientKey: c.NomadClientKey, Insecure: c.NomadTLSSkipVerify,
+	}}
+	want := &api.Config{Address: "https://nomad.example.com:4646", SecretID: "nomad-secret", TLSConfig: &api.TLSConfig{
+		CACert: ca, ClientCert: cert, ClientKey: key, Insecure: true,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Nomad client settings = %+v, want %+v", got, want)
+	}
+	// A repeated namespace is kept once, the trailing slash of ui_url goes and
+	// its sub path stays.
+	if !reflect.DeepEqual(c.NomadNamespaces, []string{"apps", "infra"}) || c.NomadTokenFile != tok ||
+		c.NomadUIURL != "https://infra.example.com/nomad" || c.NomadTimeout != 2*time.Minute {
+		t.Errorf("namespaces %q, token file %q, UI URL %q, timeout %v", c.NomadNamespaces, c.NomadTokenFile, c.NomadUIURL, c.NomadTimeout)
+	}
+
+	// Without ui_url there is no link: it is never taken from addr, the
+	// address Nops uses, not one a browser reaches.
+	c, err = Load([]string{"-config", writeConfig(t, `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+nomad {
+  addr = "http://nomad.service.consul:4646"
+}
+`)}, envOf(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NomadUIURL != "" || !reflect.DeepEqual(c.NomadNamespaces, []string{"default"}) || c.NomadToken != "" {
+		t.Errorf("UI URL %q, namespaces %q, token %q; want no link, the default namespace, no token", c.NomadUIURL, c.NomadNamespaces, c.NomadToken)
+	}
+}
+
+// The address of the nomad block yields to -nomad-addr and to its variable.
+func TestLoadNomadAddrPrecedence(t *testing.T) {
+	file := writeConfig(t, `
+repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+
+nomad {
+  addr = "http://from-file:4646"
+}
+`)
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{"the file over the default", nil, nil, "http://from-file:4646"},
+		{"the variable over the file", nil, map[string]string{"NOPS_NOMAD_ADDR": "http://from-env:4646"}, "http://from-env:4646"},
+		{"the flag over the variable", []string{"-nomad-addr", "http://from-flag:4646"}, map[string]string{"NOPS_NOMAD_ADDR": "http://from-env:4646"}, "http://from-flag:4646"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := Load(append([]string{"-config", file}, tt.args...), envOf(tt.env), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.NomadAddr != tt.want {
+				t.Errorf("NomadAddr = %q, want %q", c.NomadAddr, tt.want)
+			}
+		})
+	}
+
+	// An invalid addr the flag overrides is not read.
+	bad := writeConfig(t, "nomad {\n  addr = \"nomad:4646\"\n}\n")
+	if _, err := Load([]string{"-git-url", repo, "-config", bad, "-nomad-addr", "http://from-flag:4646"}, envOf(nil), io.Discard); err != nil {
+		t.Errorf("addr overridden by the flag: %v", err)
 	}
 }
 
 func TestLoadNomadInvalid(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	empty := writeFile(t, "empty", " \n")
+	cert := writeFile(t, "cert.pem", "cert")
 	apps := `repository "apps" {
   url = "https://git.example.com/ops/apps.git"
 }
@@ -1260,11 +1256,25 @@ func TestLoadNomadInvalid(t *testing.T) {
 	tests := []struct {
 		name, file, want string
 	}{
-		{"not a duration", nomad(`timeout = "soon"`), "nomad: timeout:"},
-		{"zero", nomad(`timeout = "0s"`), `nomad: timeout: duration "0s" must be positive`},
-		{"negative", nomad(`timeout = "-1m"`), `nomad: timeout: duration "-1m" must be positive`},
-		{"a number", nomad(`timeout = 30`), "timeout"},
-		{"the address belongs to a flag", nomad(`addr = "http://nomad:4646"`), "Unsupported argument"},
+		{"addr without a scheme", nomad(`addr = "nomad.example.com:4646"`), `nomad: addr: "nomad.example.com:4646" is not an http`},
+		{"addr not http", nomad(`addr = "ftp://nomad"`), "nomad: addr: \"ftp://nomad\" is not an http"},
+		{"addr empty", nomad(`addr = ""`), "nomad: addr: \"\" is not an http"},
+		{"no namespace", nomad(`namespaces = []`), "nomad: namespaces: is empty"},
+		{"an empty namespace", nomad(`namespaces = ["apps", " "]`), `nomad: namespaces: " " is not a namespace name`},
+		{"namespaces a string", nomad(`namespaces = "apps"`), "namespaces"},
+		{"token_file missing", nomad(`token_file = "` + missing + `"`), "nomad: token_file: open " + missing},
+		{"token_file empty", nomad(`token_file = "` + empty + `"`), "nomad: token_file: " + empty + " is empty"},
+		{"ui_url not a URL", nomad(`ui_url = "/ui"`), `nomad: ui_url: "/ui" is not an http`},
+		{"ca_cert missing", nomad(`ca_cert = "` + missing + `"`), "nomad: ca_cert: open " + missing},
+		{"ca_cert a directory", nomad(`ca_cert = "` + dir + `"`), "nomad: ca_cert: " + dir + " is a directory"},
+		{"client_cert without client_key", nomad(`client_cert = "` + cert + `"`), "nomad: client_cert: must be set together with client_key"},
+		{"client_key without client_cert", nomad(`client_key = "` + cert + `"`), "nomad: client_cert: must be set together with client_key"},
+		{"tls_skip_verify a string", nomad(`tls_skip_verify = "maybe"`), "tls_skip_verify"},
+		{"timeout not a duration", nomad(`timeout = "soon"`), "nomad: timeout:"},
+		{"timeout zero", nomad(`timeout = "0s"`), `nomad: timeout: duration "0s" must be positive`},
+		{"timeout negative", nomad(`timeout = "-1m"`), `nomad: timeout: duration "-1m" must be positive`},
+		{"timeout a number", nomad(`timeout = 30`), "timeout"},
+		{"the token itself", nomad(`token = "secret"`), "Unsupported argument"},
 		{"two blocks", nomad("") + nomad(""), "Duplicate nomad block"},
 	}
 	for _, tt := range tests {
@@ -1272,6 +1282,46 @@ func TestLoadNomadInvalid(t *testing.T) {
 			_, err := Load([]string{"-config", writeConfig(t, tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The -nomad-* options but -nomad-addr moved into the nomad block: each one,
+// its variable, and the variables that held the token or a single namespace
+// stop Nops, naming the attribute that replaces it.
+func TestLoadNomadOptionsRemoved(t *testing.T) {
+	file := writeFile(t, "file", "x")
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{"flag -nomad-namespaces", []string{"-nomad-namespaces", "apps"}, nil, "namespaces in the nomad block"},
+		{"NOPS_NOMAD_NAMESPACES", nil, map[string]string{"NOPS_NOMAD_NAMESPACES": "apps"}, "namespaces in the nomad block"},
+		{"flag -nomad-namespace", []string{"-nomad-namespace", "apps"}, nil, "namespaces in the nomad block"},
+		{"NOPS_NOMAD_NAMESPACE", nil, map[string]string{"NOPS_NOMAD_NAMESPACE": "apps"}, "namespaces in the nomad block"},
+		{"flag -nomad-token-file", []string{"-nomad-token-file", file}, nil, "token_file in the nomad block"},
+		{"NOPS_NOMAD_TOKEN_FILE", nil, map[string]string{"NOPS_NOMAD_TOKEN_FILE": file}, "token_file in the nomad block"},
+		{"NOPS_NOMAD_TOKEN", nil, map[string]string{"NOPS_NOMAD_TOKEN": "secret"}, "token_file in the nomad block"},
+		{"flag -nomad-ui-url", []string{"-nomad-ui-url", "https://nomad.example.com"}, nil, "ui_url in the nomad block"},
+		{"NOPS_NOMAD_UI_URL", nil, map[string]string{"NOPS_NOMAD_UI_URL": "https://nomad.example.com"}, "ui_url in the nomad block"},
+		{"flag -nomad-ca-cert", []string{"-nomad-ca-cert", file}, nil, "ca_cert in the nomad block"},
+		{"NOPS_NOMAD_CA_CERT", nil, map[string]string{"NOPS_NOMAD_CA_CERT": file}, "ca_cert in the nomad block"},
+		{"flag -nomad-client-cert", []string{"-nomad-client-cert", file}, nil, "client_cert in the nomad block"},
+		{"NOPS_NOMAD_CLIENT_CERT", nil, map[string]string{"NOPS_NOMAD_CLIENT_CERT": file}, "client_cert in the nomad block"},
+		{"flag -nomad-client-key", []string{"-nomad-client-key", file}, nil, "client_key in the nomad block"},
+		{"NOPS_NOMAD_CLIENT_KEY", nil, map[string]string{"NOPS_NOMAD_CLIENT_KEY": file}, "client_key in the nomad block"},
+		{"flag -nomad-tls-skip-verify", []string{"-nomad-tls-skip-verify"}, nil, "tls_skip_verify in the nomad block"},
+		{"flag -nomad-tls-skip-verify", []string{"-nomad-tls-skip-verify=false"}, nil, "tls_skip_verify in the nomad block"},
+		{"NOPS_NOMAD_TLS_SKIP_VERIFY", nil, map[string]string{"NOPS_NOMAD_TLS_SKIP_VERIFY": "true"}, "tls_skip_verify in the nomad block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(append([]string{"-git-url", repo}, tt.args...), envOf(tt.env), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.name+" was removed") || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %s removed, replaced by %s", err, tt.name, tt.want)
 			}
 		})
 	}

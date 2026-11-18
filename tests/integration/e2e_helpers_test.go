@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -117,6 +118,13 @@ type nopsProc struct {
 	exited  chan error
 }
 
+// e2eNomad is what a test sets in the nomad block of its nops, which
+// startNops writes with the token.
+type e2eNomad struct {
+	namespaces []string // the managed namespaces; nil is "default"
+	uiURL      string
+}
+
 // startNops runs the nops binary against the Nomad under test and the git
 // repository at repoURL, with basic auth (e2eUser) and short intervals so a
 // test does not wait for the production defaults. env entries ("KEY=value")
@@ -127,15 +135,15 @@ type nopsProc struct {
 // holding the rule running-nops.md#the-nomad-token documents, in every
 // namespace it manages. So whatever nops asks of Nomad that the documented
 // token does not allow fails here and not on a cluster.
-func startNops(t *testing.T, repoURL string, env ...string) *nopsProc {
+func startNops(t *testing.T, repoURL string, n e2eNomad, env ...string) *nopsProc {
 	t.Helper()
-	return startNopsTLS(t, repoURL, nil, env...)
+	return startNopsTLS(t, repoURL, nil, n, env...)
 }
 
 // startNopsTLS is startNops for a nops that serves HTTPS itself (a tls block in
 // its configuration file): roots are the certificates its client trusts, and
 // nil is plain HTTP.
-func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...string) *nopsProc {
+func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad, env ...string) *nopsProc {
 	t.Helper()
 	scheme, client := "http", http.DefaultClient
 	if roots != nil {
@@ -147,7 +155,10 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...str
 	}
 	addr := testAddr(t)
 	bin := buildNopsBinary(t)
-	tokenFile := writeNopsToken(t, managedNamespaces(env))
+	if n.namespaces == nil {
+		n.namespaces = []string{"default"}
+	}
+	config := withNomadBlock(t, env, n, writeNopsToken(t, n.namespaces))
 
 	dbPath := filepath.Join(t.TempDir(), "nops.db")
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
@@ -155,13 +166,11 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...str
 	cmd := exec.Command(bin, "serve")
 	cmd.Env = append(os.Environ(),
 		"NOPS_NOMAD_ADDR="+addr,
-		"NOPS_NOMAD_NAMESPACES=default",
-		"NOPS_NOMAD_TOKEN_FILE="+tokenFile,
 		"NOPS_GIT_URL="+repoURL,
 		"NOPS_GIT_BRANCH=main",
 		"NOPS_DB_PATH="+dbPath,
 		"NOPS_LISTEN_ADDR="+listenAddr,
-		nopsConfig(t, ""),
+		config,
 		"NOPS_PUBLIC_URL="+scheme+"://"+listenAddr,
 		"NOPS_GIT_POLL_INTERVAL=200ms",
 		"NOPS_DRIFT_INTERVAL=200ms",
@@ -209,23 +218,38 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...str
 	return nil
 }
 
-// managedNamespaces is the namespaces nops is started with: the last
-// NOPS_NOMAD_NAMESPACES of env, which wins as it does for the process, or
-// "default".
-func managedNamespaces(env []string) []string {
-	namespaces := "default"
+// withNomadBlock adds the nomad block of n, with tokenFile, to the -config
+// file of env (the last NOPS_CONFIG, as for the process), or to a new one
+// without, and returns the variable that names it.
+func withNomadBlock(t *testing.T, env []string, n e2eNomad, tokenFile string) string {
+	t.Helper()
+	config := nopsConfig(t, "")
 	for _, kv := range env {
-		if v, ok := strings.CutPrefix(kv, "NOPS_NOMAD_NAMESPACES="); ok {
-			namespaces = v
+		if strings.HasPrefix(kv, "NOPS_CONFIG=") {
+			config = kv
 		}
 	}
-	return strings.Split(namespaces, ",")
+	quoted := make([]string, len(n.namespaces))
+	for i, ns := range n.namespaces {
+		quoted[i] = strconv.Quote(ns)
+	}
+	block := fmt.Sprintf("\nnomad {\n  namespaces = [%s]\n  token_file = %q\n  ui_url     = %q\n}\n",
+		strings.Join(quoted, ", "), tokenFile, n.uiURL)
+	f, err := os.OpenFile(strings.TrimPrefix(config, "NOPS_CONFIG="), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(block); err != nil {
+		t.Fatal(err)
+	}
+	return config
 }
 
 // writeNopsToken creates a client token holding the documented rule in every
 // namespace of namespaces, and returns the file holding its secret, for
-// -nomad-token-file. The policy and the token go when the test ends, after nops
-// is stopped.
+// token_file in the nomad block. The policy and the token go when the test
+// ends, after nops is stopped.
 func writeNopsToken(t *testing.T, namespaces []string) string {
 	t.Helper()
 	_, admin := newClient(t)
@@ -489,18 +513,24 @@ type e2eEnv struct {
 
 func newE2E(t *testing.T, env ...string) *e2eEnv {
 	t.Helper()
-	e := newE2EWithoutLogin(t, env...)
+	return newE2EWithNomad(t, e2eNomad{}, env...)
+}
+
+// newE2EWithNomad is newE2E with n in the nomad block of nops.
+func newE2EWithNomad(t *testing.T, n e2eNomad, env ...string) *e2eEnv {
+	t.Helper()
+	e := newE2EWithoutLogin(t, n, env...)
 	e.dash.login(t, e2eUser, e2ePassword)
 	return e
 }
 
-// newE2EWithoutLogin is newE2E with the dashboard client not logged in: with
-// the ACL on, a login needs a binding rule first.
-func newE2EWithoutLogin(t *testing.T, env ...string) *e2eEnv {
+// newE2EWithoutLogin is newE2EWithNomad with the dashboard client not logged
+// in: with the ACL on, a login needs a binding rule first.
+func newE2EWithoutLogin(t *testing.T, n e2eNomad, env ...string) *e2eEnv {
 	t.Helper()
 	c, raw := newClient(t)
 	repo := newScratchRepo(t)
-	proc := startNops(t, repo.url, env...)
+	proc := startNops(t, repo.url, n, env...)
 
 	// Read-only use of nops's own database, alongside the running process (WAL).
 	st, err := store.Open(proc.dbPath)

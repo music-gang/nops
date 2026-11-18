@@ -3,7 +3,7 @@ package web
 import "github.com/music-gang/nops/internal/nomadx"
 
 // nomadJobURL is the page of a job in the Nomad UI, or "" when the dashboard
-// does not know where a person opens Nomad (-nomad-ui-url unset).
+// does not know where a person opens Nomad (no ui_url in the nomad block).
 func (s *server) nomadJobURL(namespace, jobID string) string {
 	return nomadx.UIJobURL(s.nomadUI, namespace, jobID)
 }
