@@ -545,7 +545,7 @@ func (s *Store) DeleteExpiredTokens(ctx context.Context) (int, error) {
 type BindingRule struct {
 	ID          string
 	Description string
-	AuthMethod  string // "oidc" or "basic"
+	AuthMethod  string // the name of the auth method, the label of its auth block
 	Selector    string // a go-bexpr expression on the login's claims; empty matches every login
 	BindType    string // acl.BindPolicy or acl.BindManagement
 	BindName    string // the ACL policy a BindPolicy rule binds; empty for BindManagement

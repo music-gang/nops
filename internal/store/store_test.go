@@ -484,8 +484,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 19 {
-		t.Errorf("user_version = %d, %v; want 19", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 20 {
+		t.Errorf("user_version = %d, %v; want 20", v, err)
 	}
 }
 
@@ -1889,5 +1889,48 @@ func TestRetryOfLinksARetryToTheDeploymentItRetries(t *testing.T) {
 	}
 	if want := "detected at commit abc1234, retry of " + failed.ID; evs[0].Message != want {
 		t.Errorf("first event = %q, want %q", evs[0].Message, want)
+	}
+}
+
+// The binding rules saved before the upgrade keep their auth method, and a rule
+// may then name any auth method, as the label of an auth block does.
+func TestBindingRulesFromBeforeTheUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names[:19] {
+		body, err := migrationsFS.ReadFile("migrations/" + name.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("seed %s: %v", name.Name(), err)
+		}
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = 19",
+		`INSERT INTO acl_binding_rules (id, description, auth_method, selector, bind_type, bind_name, created_at, modified_at)
+			VALUES ('r1', 'ops', 'oidc', '"ops" in list.groups', 'management', '', '2026-09-01T00:00:01.000000000Z', '2026-09-01T00:00:01.000000000Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed v19: %v", err)
+		}
+	}
+	db.Close()
+
+	s := openAt(t, path)
+	r, err := s.BindingRule(ctx, "r1")
+	if err != nil || r.AuthMethod != "oidc" || r.Description != "ops" || r.Selector != `"ops" in list.groups` || r.BindType != "management" {
+		t.Errorf("rule after the upgrade = %+v, %v", r, err)
+	}
+	if _, err := s.PutBindingRule(ctx, BindingRule{AuthMethod: "authentik", BindType: "management"}, Audit{Actor: "test"}); err != nil {
+		t.Errorf("a rule on a named auth method: %v", err)
 	}
 }

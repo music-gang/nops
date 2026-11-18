@@ -18,7 +18,7 @@
       {{range .Rules}}
       <tr>
         <td class="cell-ellipsis"><a href="{{$.Base}}/admin/binding-rules/{{.ID}}/edit">{{if .Description}}{{.Description}}{{else}}<span class="mono">{{.ID}}</span>{{end}}</a></td>
-        <td><span class="label">{{.AuthMethod}}</span></td>
+        <td><span class="label">{{.AuthMethod}}</span>{{if not .Configured}} <span class="muted" title="No auth block has this name: the rule binds nothing">not configured</span>{{end}}</td>
         <td class="hide-sm cell-ellipsis mono" title="{{.Selector}}">{{if .Selector}}{{.Selector}}{{else}}<span class="muted">every login</span>{{end}}</td>
         <td class="cell-ellipsis">{{.Binds}}</td>
         <td class="hide-sm muted">{{template "time" .Modified}}</td>
@@ -72,7 +72,7 @@
   <div class="field">
     <label class="field__label" for="rule-method">Auth method</label>
     <select id="rule-method" name="auth_method" class="input input--auto">
-      {{range .Methods}}<option value="{{.}}"{{if eq . $.Form.AuthMethod}} selected{{end}}>{{.}}</option>{{end}}
+      {{range .Methods}}<option value="{{.}}"{{if eq . $.Form.AuthMethod}} selected{{end}}>{{.}}{{if ne . $.Configured}} (not configured){{end}}</option>{{end}}
     </select>
     <p class="field__caption">The logins it applies to.</p>
   </div>

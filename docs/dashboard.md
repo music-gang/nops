@@ -77,15 +77,15 @@ for promotion. Unset, there are no links.
 ## Authentication
 
 Nops checks who you are itself; it never trusts a header from a reverse proxy.
-`-auth-mode` picks one of two backends (options in
-[configuration](configuration.md#dashboard)):
+The `type` of the [`auth` block](configuration.md#authentication) picks one
+of two backends:
 
 - **`oidc`**: log in through your OpenID Connect provider (Authentik,
   Authelia, Keycloak). With the [ACL](acl.md) off, everyone the provider
   lets in has full control; with it on, [binding rules](acl.md#binding-rules)
   decide what a login gets. Nops contacts the provider only at login, so a
   provider outage doesn't stop deployments.
-- **`basic`**: [local users](#local-users--auth-modebasic) from a file.
+- **`basic`**: [local users](#local-users) from a file.
 
 A login gives you a [session token](acl.md#binding-rules) that lasts 12
 hours, restarts included. Logging out revokes it. The login page also takes a
@@ -93,24 +93,23 @@ token you paste, such as the bootstrap token: the browser keeps it until it
 closes, and logging out forgets it without revoking it. Changes to the binding
 rules, the users file or the groups file take effect at the next login.
 
-## Local users (`-auth-mode=basic`)
+## Local users
 
-`-users-file` holds one `username:bcrypt-hash` line per user. Generate a line
+`users_file` holds one `username:bcrypt-hash` line per user. Generate a line
 with:
 
 ```sh
 htpasswd -nB alice
 ```
 
-`-groups-file`, optional, holds one `group: user1 user2` line per group, in
+`groups_file`, optional, holds one `group: user1 user2` line per group, in
 Apache's `AuthGroupFile` format, for [binding rules](acl.md#binding-rules) on
 `list.groups`. Each member must be in the users file.
 
 Nops reads both files at startup: restart it after you change a user or a
 group. After 10 failed logins in 15 minutes, a username is locked until the 15
-minutes are up, even if it doesn't exist. The
-[`auth "basic"` block](configuration.md#local-users--auth-modebasic) changes
-both values.
+minutes are up, even if it doesn't exist. `max_failures` and `failure_window`
+of the [`auth` block](configuration.md#authentication) change them.
 
 ## Secret redaction
 

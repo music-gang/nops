@@ -62,7 +62,13 @@ docker run --rm httpd:2.4-alpine htpasswd -nbB admin change-me > users
 ## 4. Start Nops
 
 ```sh
-nops serve -git-url "file://$PWD/nops-jobs" -auth-mode basic -users-file users -git-poll-interval 10s
+cat > nops.hcl <<'EOF'
+auth "basic" {
+  type       = "basic"
+  users_file = "users"
+}
+EOF
+nops serve -config nops.hcl -git-url "file://$PWD/nops-jobs" -git-poll-interval 10s
 ```
 
 Nops finds that `web` is in git but not in Nomad, and logs

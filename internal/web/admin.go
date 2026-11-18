@@ -83,6 +83,7 @@ type policyRow struct {
 
 type ruleRow struct {
 	ID, Description, AuthMethod, Selector, Binds string
+	Configured                                   bool // AuthMethod is the configured auth method
 	Modified                                     timeView
 }
 
@@ -206,7 +207,11 @@ type rulePageData struct {
 	Error    string
 	Delete   bool // the deletion waits for a confirmation
 	Policies []policyRow
-	Methods  []string
+	// Methods are the auth methods the form offers: the configured one, and
+	// the rule's own when it is no longer configured, so editing it never
+	// changes it unseen.
+	Methods    []string
+	Configured string
 }
 
 type adminChangesData struct {
@@ -371,7 +376,10 @@ func (s *server) rulesPage(w http.ResponseWriter, r *http.Request) {
 		if b.BindType == acl.BindPolicy {
 			binds = "ACL policy " + b.BindName
 		}
-		data.Rules = append(data.Rules, ruleRow{ID: b.ID, Description: b.Description, AuthMethod: b.AuthMethod, Selector: b.Selector, Binds: binds, Modified: s.when(b.ModifiedAt)})
+		data.Rules = append(data.Rules, ruleRow{
+			ID: b.ID, Description: b.Description, AuthMethod: b.AuthMethod, Selector: b.Selector, Binds: binds,
+			Configured: b.AuthMethod == s.auth.Method(), Modified: s.when(b.ModifiedAt),
+		})
 	}
 	s.render(w, r, "admin_rules", data)
 }
@@ -478,8 +486,13 @@ func (s *server) ruleFormPage(w http.ResponseWriter, r *http.Request, f ruleForm
 		s.serverError(w, r, "list ACL policies", err)
 		return
 	}
+	methods := []string{s.auth.Method()}
+	if f.AuthMethod != "" && f.AuthMethod != s.auth.Method() {
+		methods = append(methods, f.AuthMethod)
+	}
 	s.render(w, r, "admin_rule", rulePageData{
-		adminBase: s.adminBase(r, "rules"), Form: f, Error: errMsg, Policies: rows, Methods: authMethods,
+		adminBase: s.adminBase(r, "rules"), Form: f, Error: errMsg, Policies: rows,
+		Methods: methods, Configured: s.auth.Method(),
 		Delete: f.Existing && r.Method == http.MethodGet && r.URL.Query().Get("delete") == "1",
 	})
 }

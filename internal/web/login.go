@@ -37,10 +37,12 @@ const (
 
 // Authenticator is an auth method: it checks who a person is and tells the
 // server. NewAuth (OpenID Connect) and NewBasicAuth (local users) both
-// implement it, and -auth-mode picks exactly one.
+// implement it, and the auth block of the configuration picks exactly one.
 type Authenticator interface {
-	// Method is the name binding rules give it: "oidc" or "basic".
+	// Method is the name binding rules give it: the label of its auth block.
 	Method() string
+	// Type is its backend: "oidc" or "basic".
+	Type() string
 	// Register adds the method's /auth/* routes to mux. When a person has
 	// proved who they are, the method calls host.Done.
 	Register(mux Router, host LoginHost)
@@ -93,10 +95,10 @@ func UserFrom(ctx context.Context) (string, bool) {
 
 // loginPageData is what the login template needs.
 type loginPageData struct {
-	Method string
-	Error  string
-	Next   string
-	Base   string // the dashboard's base path (docs/running-nops.md#under-a-sub-path)
+	Type  string
+	Error string
+	Next  string
+	Base  string // the dashboard's base path (docs/running-nops.md#under-a-sub-path)
 }
 
 // loginPage is GET /auth/login: the auth method, and a field for a token.
@@ -108,7 +110,7 @@ func (s *server) loginPage(w http.ResponseWriter, r *http.Request) {
 func (s *server) renderLogin(w http.ResponseWriter, status int, message, next string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	data := loginPageData{Method: s.auth.Method(), Error: message, Next: next, Base: s.basePath}
+	data := loginPageData{Type: s.auth.Type(), Error: message, Next: next, Base: s.basePath}
 	if err := s.tmpl.ExecuteTemplate(w, "login", data); err != nil {
 		s.log.Error("render login page", "error", err)
 	}

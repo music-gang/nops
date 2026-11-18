@@ -313,7 +313,7 @@ func newAppWith(t *testing.T, aclOn bool, tweak ...func(*AuthOptions)) *app {
 	a := &app{t: t, clock: clock, idp: newIDP(t, clock), logs: &syncBuffer{}, aclOn: aclOn,
 		deployments: &fakeStore{deployment: sampleDeployment()}, engine: &fakeEngine{}}
 	a.opts = AuthOptions{
-		Issuer: a.idp.srv.URL, ClientID: testClientID, ClientSecret: testClientSecret, RedirectURL: testRedirect,
+		Name: "oidc", Issuer: a.idp.srv.URL, ClientID: testClientID, ClientSecret: testClientSecret, RedirectURL: testRedirect,
 		Log: slog.New(slog.NewTextHandler(a.logs, nil)),
 	}
 	for _, f := range tweak {
@@ -840,12 +840,13 @@ func TestCallbackIgnoresAnOffSiteNext(t *testing.T) {
 }
 
 func TestNewAuthValidates(t *testing.T) {
-	ok := AuthOptions{Issuer: "https://idp.example.com", ClientID: "nops", ClientSecret: "s",
+	ok := AuthOptions{Name: "oidc", Issuer: "https://idp.example.com", ClientID: "nops", ClientSecret: "s",
 		RedirectURL: "https://nops.example.com/auth/callback"}
 	if _, err := NewAuth(ok); err != nil {
 		t.Fatalf("valid options: %v", err)
 	}
 	for name, tweak := range map[string]func(*AuthOptions){
+		"no name":        func(o *AuthOptions) { o.Name = "" },
 		"no issuer":      func(o *AuthOptions) { o.Issuer = "" },
 		"no client id":   func(o *AuthOptions) { o.ClientID = "" },
 		"no secret":      func(o *AuthOptions) { o.ClientSecret = "" },

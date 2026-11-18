@@ -63,18 +63,14 @@ func TestE2EServesTLS(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(writeSelfSigned(t, certFile, keyFile, 1))
 
-	config := filepath.Join(dir, "nops.hcl")
-	if err := os.WriteFile(config, []byte(`
+	proc := startNopsTLS(t, newScratchRepo(t).url, roots, nopsConfig(t, `
 listen {
   tls {
     cert_file = "`+certFile+`"
     key_file  = "`+keyFile+`"
   }
 }
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	proc := startNopsTLS(t, newScratchRepo(t).url, roots, "NOPS_CONFIG="+config)
+`))
 
 	// served is the serial of the certificate nops presents now.
 	served := func() int64 {

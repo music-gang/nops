@@ -55,7 +55,7 @@ func revokeCreatedFlags(fs *flag.FlagSet, k *call) {
 
 func bindingRuleFlags(fs *flag.FlagSet, k *call) {
 	fs.StringVar(&k.flags.description, "description", "", "what the binding rule is for")
-	fs.StringVar(&k.flags.authMethod, "auth-method", "", "oidc or basic (required)")
+	fs.StringVar(&k.flags.authMethod, "auth-method", "", "the name of the server's auth block (required)")
 	fs.StringVar(&k.flags.selector, "selector", "", "a go-bexpr expression on value.username, value.sub and list.groups (default: every login of the auth method)")
 	fs.StringVar(&k.flags.bindType, "bind-type", "", "policy, or management for everything (required)")
 	fs.StringVar(&k.flags.bindName, "bind-name", "", "the ACL policy a policy rule binds")

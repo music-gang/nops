@@ -32,40 +32,39 @@ func TestNewAuthenticatorPicksTheRightBackend(t *testing.T) {
 	}
 
 	t.Run("oidc", func(t *testing.T) {
-		cfg := &config.Config{
-			AuthMode: "oidc", PublicURL: "https://nops.example.com",
-			OIDCIssuerURL: "https://idp.example.com/", OIDCClientID: "nops", OIDCClientSecret: "secret",
-		}
+		cfg := &config.Config{PublicURL: "https://nops.example.com", Auth: config.Auth{
+			Name: "authentik", Type: "oidc", IssuerURL: "https://idp.example.com/", ClientID: "nops", ClientSecret: "secret",
+		}}
 		auth, err := newAuthenticator(cfg, discardLog())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := auth.(*web.Auth); !ok {
-			t.Errorf("got %T, want *web.Auth", auth)
+		if _, ok := auth.(*web.Auth); !ok || auth.Method() != "authentik" {
+			t.Errorf("got %T named %q, want *web.Auth named authentik", auth, auth.Method())
 		}
 	})
 
 	t.Run("basic", func(t *testing.T) {
-		cfg := &config.Config{AuthMode: "basic", PublicURL: "https://nops.example.com", UsersFile: usersFile}
+		cfg := &config.Config{PublicURL: "https://nops.example.com", Auth: config.Auth{Name: "local", Type: "basic", UsersFile: usersFile}}
 		auth, err := newAuthenticator(cfg, discardLog())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := auth.(*web.BasicAuth); !ok {
-			t.Errorf("got %T, want *web.BasicAuth", auth)
+		if _, ok := auth.(*web.BasicAuth); !ok || auth.Method() != "local" {
+			t.Errorf("got %T named %q, want *web.BasicAuth named local", auth, auth.Method())
 		}
 	})
 
-	t.Run("unknown mode", func(t *testing.T) {
-		cfg := &config.Config{AuthMode: "header", PublicURL: "https://nops.example.com"}
+	t.Run("unknown type", func(t *testing.T) {
+		cfg := &config.Config{PublicURL: "https://nops.example.com", Auth: config.Auth{Name: "header", Type: "header"}}
 		_, err := newAuthenticator(cfg, discardLog())
-		if err == nil || !strings.Contains(err.Error(), "unknown -auth-mode") {
-			t.Errorf("err = %v, want it to mention the unknown auth mode", err)
+		if err == nil || !strings.Contains(err.Error(), "unknown auth method type") {
+			t.Errorf("err = %v, want it to mention the unknown type", err)
 		}
 	})
 
 	t.Run("propagates a backend's own validation error", func(t *testing.T) {
-		cfg := &config.Config{AuthMode: "basic", PublicURL: "https://nops.example.com", UsersFile: "/does/not/exist"}
+		cfg := &config.Config{PublicURL: "https://nops.example.com", Auth: config.Auth{Name: "basic", Type: "basic", UsersFile: "/does/not/exist"}}
 		if _, err := newAuthenticator(cfg, discardLog()); err == nil {
 			t.Error("want an error for a users file that does not exist")
 		}
@@ -83,8 +82,9 @@ func TestStartupAttrs(t *testing.T) {
 			{Name: "default", URL: "https://ci:git-secret@git.example.com/ops/jobs.git", Branch: "main", Path: "jobs", Token: "git-secret"},
 			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main"},
 		},
-		AuthMode: "oidc", DBPath: "/data/nops.db", BasePath: "/nops",
-		NomadToken: "nomad-secret", OIDCClientSecret: "oidc-secret", WebhookSecret: "hook-secret",
+		Auth:   config.Auth{Name: "authentik", Type: "oidc", ClientSecret: "oidc-secret"},
+		DBPath: "/data/nops.db", BasePath: "/nops",
+		NomadToken: "nomad-secret", WebhookSecret: "hook-secret",
 	}
 	var buf bytes.Buffer
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("starting", startupAttrs(cfg)...)
@@ -92,7 +92,7 @@ func TestStartupAttrs(t *testing.T) {
 	for _, want := range []string{
 		"version=", "go=go", "listen_addr=:8080", "nomad_addr=https://nomad.example.com:4646",
 		"namespaces=\"[default prod]\"", "config=/etc/nops.hcl", "repositories=\"[default apps]\"",
-		"auth_mode=oidc", "acl=false", "db_path=/data/nops.db", "base_path=/nops",
+		"auth_method=authentik", "auth_type=oidc", "acl=false", "db_path=/data/nops.db", "base_path=/nops",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("starting line %q does not contain %q", line, want)

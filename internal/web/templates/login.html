@@ -13,7 +13,7 @@
   <img class="login__logo" src="{{.Base}}{{asset "logo-192x192.png"}}" alt="" width="96" height="96">
   <h1 class="login__title">Sign in to Nops</h1>
   {{if .Error}}<p class="login__error">{{.Error}}</p>{{end}}
-  {{if eq .Method "basic"}}
+  {{if eq .Type "basic"}}
   <form class="login__box" method="post" action="{{.Base}}/auth/basic">
     <input type="hidden" name="next" value="{{.Next}}">
     <label class="login__field">Username

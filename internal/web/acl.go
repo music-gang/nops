@@ -67,9 +67,6 @@ const maxSelector = 1 << 10
 // maxDescription is the longest description of a binding rule, in bytes.
 const maxDescription = 200
 
-// authMethods are the names a binding rule gives an auth method.
-var authMethods = []string{"oidc", "basic"}
-
 // putBindingRule checks a binding rule and saves it: a new one when r.ID is
 // empty, else the rule with that ID. A rule that does not check saves nothing.
 func (s *server) putBindingRule(ctx context.Context, sub *subject, r store.BindingRule) (store.BindingRule, error) {
@@ -77,8 +74,8 @@ func (s *server) putBindingRule(ctx context.Context, sub *subject, r store.Bindi
 	if len(r.Description) > maxDescription {
 		return store.BindingRule{}, invalidf("the description holds %d bytes at most", maxDescription)
 	}
-	if !slices.Contains(authMethods, r.AuthMethod) {
-		return store.BindingRule{}, invalidf("the auth method is %s", strings.Join(authMethods, " or "))
+	if r.AuthMethod != s.auth.Method() {
+		return store.BindingRule{}, invalidf("the auth method is %q, the name of the auth block", s.auth.Method())
 	}
 	if len(r.Selector) > maxSelector {
 		return store.BindingRule{}, invalidf("the selector holds %d bytes at most", maxSelector)

@@ -149,7 +149,6 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...str
 	bin := buildNopsBinary(t)
 	tokenFile := writeNopsToken(t, managedNamespaces(env))
 
-	usersFile := writeUsersFile(t, e2eUser, e2ePassword)
 	dbPath := filepath.Join(t.TempDir(), "nops.db")
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
 
@@ -162,8 +161,7 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, env ...str
 		"NOPS_GIT_BRANCH=main",
 		"NOPS_DB_PATH="+dbPath,
 		"NOPS_LISTEN_ADDR="+listenAddr,
-		"NOPS_AUTH_MODE=basic",
-		"NOPS_USERS_FILE="+usersFile,
+		nopsConfig(t, ""),
 		"NOPS_PUBLIC_URL="+scheme+"://"+listenAddr,
 		"NOPS_GIT_POLL_INTERVAL=200ms",
 		"NOPS_DRIFT_INTERVAL=200ms",
@@ -278,6 +276,18 @@ func writeUsersFile(t *testing.T, username, password string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// nopsConfig writes the -config file of a test, the auth block of the e2eUser
+// login followed by blocks, and returns the variable that names it.
+func nopsConfig(t *testing.T, blocks string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "nops.hcl")
+	auth := fmt.Sprintf("auth \"basic\" {\n  type       = \"basic\"\n  users_file = %q\n}\n", writeUsersFile(t, e2eUser, e2ePassword))
+	if err := os.WriteFile(file, []byte(auth+blocks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return "NOPS_CONFIG=" + file
 }
 
 // freePort asks the OS for a free TCP port by binding to :0 and releasing

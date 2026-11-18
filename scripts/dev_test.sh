@@ -35,7 +35,13 @@ check users "$admin_user" "$(cat "$dir/users")"
 check groups 'admin: admin' "$(cat "$dir/groups")"
 check token nops_stub "$(cat "$dir/bootstrap.token")"
 check token-mode "$dir/bootstrap.token" "$(find "$dir/bootstrap.token" -perm 600)"
-check config "acl {
+check config "auth \"basic\" {
+  type        = \"basic\"
+  users_file  = \"$dir/users\"
+  groups_file = \"$dir/groups\"
+}
+
+acl {
   enabled              = true
   bootstrap_token_file = \"$dir/bootstrap.token\"
 }" "$(cat "$dir/nops.hcl")"
