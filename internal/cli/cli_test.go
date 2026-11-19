@@ -402,7 +402,7 @@ func TestTheRootCommand(t *testing.T) {
 		t.Errorf("unknown command: exit %d, stderr %q", code, errOut)
 	}
 	// The old form of the server's command line says where the flags went.
-	if code, _, errOut := run(t, nil, "", "-git-url", "https://x"); code != 2 || !strings.Contains(errOut, "nops serve") {
+	if code, _, errOut := run(t, nil, "", "-db-path", "nops.db"); code != 2 || !strings.Contains(errOut, "nops serve") {
 		t.Errorf("a server flag: exit %d, stderr %q, want a hint to nops serve", code, errOut)
 	}
 	if code, _, _ := run(t, nil, "", "approve", "-h"); code != 0 {

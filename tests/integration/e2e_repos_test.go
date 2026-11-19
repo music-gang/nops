@@ -12,10 +12,10 @@ import (
 	"github.com/music-gang/nops/internal/store"
 )
 
-// TestE2EJobFromASecondRepository runs nops on two repositories: the default
-// one of NOPS_GIT_URL, and "apps" from a repository block of NOPS_CONFIG. A job
-// in apps runs a hook kept in the default repository, and its deployment
-// records the repository it came from.
+// TestE2EJobFromASecondRepository runs nops on two repositories: "default" and
+// "apps", each a repository block of NOPS_CONFIG. A job in apps runs a hook
+// kept in the default repository, and its deployment records the repository
+// it came from.
 func TestE2EJobFromASecondRepository(t *testing.T) {
 	apps := newScratchRepo(t)
 	apps.commit(t, "the jobs directory", map[string]string{"nomad/README.md": "jobs\n"})

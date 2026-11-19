@@ -34,9 +34,6 @@ import (
 	"github.com/music-gang/nops/internal/secret"
 )
 
-// DefaultRepository is the name of the repository the -git-* options describe.
-const DefaultRepository = "default"
-
 // The default timeouts of the dashboard's server, set by the listen block.
 const (
 	defaultReadHeaderTimeout = 10 * time.Second
@@ -49,7 +46,7 @@ const (
 const defaultNomadAddr = "http://127.0.0.1:4646"
 
 // The default deadlines of the calls to Nomad (the nomad block) and of a poll
-// of a repository (the repository block, -git-timeout for the default one).
+// of a repository (the repository block).
 const (
 	defaultNomadTimeout      = 30 * time.Second
 	defaultRepositoryTimeout = 2 * time.Minute
@@ -83,21 +80,10 @@ type Config struct {
 	// NomadTimeout is how long a request to Nomad may take.
 	NomadTimeout time.Duration
 
-	// The -git-* options: the repository named DefaultRepository, when GitURL
-	// is set.
-	GitURL       string
-	GitBranch    string
-	GitPath      string // subdirectory holding the job files; "" is the root
-	GitUsername  string
-	GitTokenFile string
-	GitToken     string // content of GitTokenFile, read by Load
-	GitTimeout   time.Duration
-
 	// ConfigFile is the HCL file of -config, "" without one.
 	ConfigFile string
-	// Repositories are the repositories nops reads: DefaultRepository first
-	// when GitURL is set, then the file's repository blocks in their order.
-	// Load makes sure there is at least one.
+	// Repositories are the repositories nops reads, the repository blocks of
+	// the -config file in their order. Load makes sure there is at least one.
 	Repositories []Repository
 
 	DBPath     string
@@ -222,22 +208,6 @@ var options = []option{
 
 	{name: "config", usage: "HCL `file` of the options a flag can't hold",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
-	{name: "git-url", usage: "URL of the git repository named default (required without a repository block in -config)",
-		set: func(c *Config, v string) error { c.GitURL = v; return nil }},
-	{name: "git-branch", def: "main", usage: "branch to read",
-		set: func(c *Config, v string) (err error) { c.GitBranch, err = required(v); return }},
-	{name: "git-path", usage: "subdirectory of the repository holding the job files (empty: root)",
-		set: func(c *Config, v string) (err error) { c.GitPath, err = gitPath(v); return }},
-	{name: "git-username", def: "git", usage: "username sent with the git token",
-		set: func(c *Config, v string) error { c.GitUsername = v; return nil }},
-	{name: "git-token-file", usage: "`file` holding the git HTTPS token (empty: public repository)",
-		set: func(c *Config, v string) (err error) {
-			c.GitTokenFile = v
-			c.GitToken, err = secretFile(v)
-			return
-		}},
-	{name: "git-timeout", def: "2m", usage: "how long a poll of the default repository may take, the clone included",
-		set: func(c *Config, v string) (err error) { c.GitTimeout, err = positiveDuration(v); return }},
 
 	{name: "db-path", def: "nops.db", usage: "SQLite database `file`",
 		set: func(c *Config, v string) (err error) { c.DBPath, err = required(v); return }},
@@ -321,6 +291,18 @@ var removedOptions = []removedOption{
 	{name: "nomad-client-cert", replacedBy: nomadReplacement("client_cert")},
 	{name: "nomad-client-key", replacedBy: nomadReplacement("client_key")},
 	{name: "nomad-tls-skip-verify", boolean: true, replacedBy: nomadReplacement("tls_skip_verify")},
+	{name: "git-url", replacedBy: repositoryReplacement("url")},
+	{name: "git-branch", replacedBy: repositoryReplacement("branch")},
+	{name: "git-path", replacedBy: repositoryReplacement("path")},
+	{name: "git-username", replacedBy: repositoryReplacement("username")},
+	{name: "git-token-file", valueEnv: "NOPS_GIT_TOKEN", replacedBy: repositoryReplacement("token_file")},
+	{name: "git-timeout", replacedBy: repositoryReplacement("timeout")},
+}
+
+// repositoryReplacement says which attribute of a repository block replaces a
+// removed -git-* option.
+func repositoryReplacement(attr string) string {
+	return attr + ` in a repository block of -config: name it "default" to keep the repository's name (docs/configuration.md#repositories)`
 }
 
 // nomadReplacement says which attribute of the nomad block replaces a removed
@@ -428,7 +410,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	fc, fileErr := readConfigFile(c.ConfigFile)
 	// The nomad block first: a repository's jobs must match its namespaces.
 	errs = append(errs, c.loadNomad(fc, explicit)...)
-	errs = append(errs, c.loadRepositories(explicit, fc, fileErr)...)
+	errs = append(errs, c.loadRepositories(fc, fileErr)...)
 	errs = append(errs, c.loadListen(fc)...)
 	errs = append(errs, c.loadAuth(fc, fileErr)...)
 	errs = append(errs, c.loadACL(fc)...)
@@ -453,8 +435,6 @@ type secretValue struct {
 }
 
 var secretValues = []secretValue{
-	{envVar: "NOPS_GIT_TOKEN",
-		get: func(c *Config) string { return c.GitToken }, set: func(c *Config, v string) { c.GitToken = v }},
 	{envVar: "NOPS_WEBHOOK_SECRET",
 		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
 }
@@ -494,15 +474,11 @@ func (c *Config) check() []error {
 		if r.Token == "" {
 			continue
 		}
-		url, username := "-git-url", "-git-username"
-		if r.Name != DefaultRepository || c.GitURL == "" { // a repository block
-			url, username = fmt.Sprintf("url in repository %q", r.Name), fmt.Sprintf("username in repository %q", r.Name)
-		}
 		if r.URL != "" && !strings.HasPrefix(strings.ToLower(r.URL), "https://") {
-			errs = append(errs, fmt.Errorf("a git token needs an https:// %s, got %q", url, r.URL))
+			errs = append(errs, fmt.Errorf("a git token needs an https:// url in repository %q, got %q", r.Name, r.URL))
 		}
 		if r.Username == "" {
-			errs = append(errs, fmt.Errorf("a git token needs a non-empty %s", username))
+			errs = append(errs, fmt.Errorf("a git token needs a non-empty username in repository %q", r.Name))
 		}
 	}
 	return errs
@@ -586,50 +562,29 @@ type fileRepository struct {
 	Timeout   *string   `hcl:"timeout,optional"`
 }
 
-// loadRepositories fills c.Repositories from the -git-* options and the
-// repository blocks of c.ConfigFile. explicit tells the -git-* options given
-// by flag or variable from their defaults: without -git-url they describe no
-// repository, so one given is an error rather than ignored. fc is the decoded
-// -config file, nil without one, and fileErr why it could not be read.
-func (c *Config) loadRepositories(explicit map[string]bool, fc *fileConfig, fileErr error) []error {
+// loadRepositories fills c.Repositories from the repository blocks of fc, the
+// decoded -config file, nil without one. fileErr is why the file could not be
+// read: it is reported here, once.
+func (c *Config) loadRepositories(fc *fileConfig, fileErr error) []error {
 	var errs []error
-	if c.GitURL != "" {
-		c.Repositories = append(c.Repositories, Repository{
-			Name: DefaultRepository, URL: c.GitURL, Branch: c.GitBranch, Path: c.GitPath,
-			Username: c.GitUsername, TokenFile: c.GitTokenFile, Token: c.GitToken,
-			Timeout: c.GitTimeout,
-		})
-	} else {
-		for _, name := range []string{"git-branch", "git-path", "git-username", "git-token-file", "git-timeout"} {
-			if explicit[name] {
-				errs = append(errs, fmt.Errorf("-%s is set without -git-url", name))
-			}
-		}
-		if c.GitToken != "" && !explicit["git-token-file"] {
-			errs = append(errs, errors.New("NOPS_GIT_TOKEN is set without -git-url"))
-		}
-	}
 	if fileErr != nil {
 		errs = append(errs, fileErr)
 	}
 	if fc != nil {
 		repos, repoErrs := repositoriesOf(fc, c.ConfigFile, c.NomadNamespaces)
-		c.Repositories = append(c.Repositories, repos...)
+		c.Repositories = repos
 		errs = append(errs, repoErrs...)
 	}
 
 	seen := make(map[string]bool, len(c.Repositories))
 	for _, r := range c.Repositories {
-		switch {
-		case seen[r.Name] && r.Name == DefaultRepository && c.GitURL != "":
-			errs = append(errs, fmt.Errorf("-config %s: repository %q is the one of -git-url: set one or the other", c.ConfigFile, r.Name))
-		case seen[r.Name]:
+		if seen[r.Name] {
 			errs = append(errs, fmt.Errorf("-config %s: repository %q is declared twice", c.ConfigFile, r.Name))
 		}
 		seen[r.Name] = true
 	}
 	if len(c.Repositories) == 0 && len(errs) == 0 {
-		errs = append(errs, errors.New("-git-url or a repository block in -config is required"))
+		errs = append(errs, errors.New("a repository block in -config is required (docs/configuration.md#repositories)"))
 	}
 	return errs
 }
@@ -1092,8 +1047,9 @@ func required(v string) (string, error) {
 	return v, nil
 }
 
-// gitPath validates -git-path: a relative path inside the repository
-// (gitwatch joins it to the tree it reads), or empty for the root.
+// gitPath validates the path of a repository block: a relative path inside
+// the repository (gitwatch joins it to the tree it reads), or empty for the
+// root.
 func gitPath(v string) (string, error) {
 	if v == "" {
 		return "", nil

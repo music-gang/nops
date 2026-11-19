@@ -6,7 +6,8 @@
 #   scripts/dev.sh [--reset] [nops serve flags...]
 #
 # --reset deletes .dev/ first. The repository of jobs is .dev/jobs, made from
-# examples/approval; NOPS_DEV_GIT_URL replaces it. The dashboard is on
+# examples/approval; NOPS_DEV_GIT_URL replaces it when .dev/nops.hcl is
+# written, so set it with --reset. The dashboard is on
 # http://127.0.0.1:8080, login admin/admin; Nomad on http://127.0.0.1:14646.
 # The jobs' ports are on the address of the default route, so the network
 # there reaches them.
@@ -36,6 +37,10 @@ setup_state() {
   fi
   if [ ! -f "$dir/nops.hcl" ]; then
     cat >"$dir/nops.hcl" <<EOF
+repository "default" {
+  url = "${NOPS_DEV_GIT_URL:-file://$dir/jobs}"
+}
+
 auth "basic" {
   type        = "basic"
   users_file  = "$dir/users"
@@ -211,7 +216,6 @@ EOF
   set -m
   "$dir/bin/nops" serve \
     -nomad-addr="$nomad_addr" \
-    -git-url="${NOPS_DEV_GIT_URL:-file://$dir/jobs}" \
     -git-poll-interval=10s \
     -listen-addr=127.0.0.1:8080 \
     -config="$dir/nops.hcl" \
