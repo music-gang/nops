@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,11 +171,6 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad
 		"NOPS_LISTEN_ADDR="+listenAddr,
 		config,
 		"NOPS_PUBLIC_URL="+scheme+"://"+listenAddr,
-		"NOPS_GIT_POLL_INTERVAL=200ms",
-		"NOPS_DRIFT_INTERVAL=200ms",
-		"NOPS_ENGINE_INTERVAL=200ms",
-		"NOPS_HOOK_POLL_INTERVAL=200ms",
-		"NOPS_APPLY_TIMEOUT=30s",
 	)
 	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdout = os.Stderr
@@ -216,10 +212,21 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad
 	return nil
 }
 
-// withServerBlocks adds the repository "default" at repoURL and the nomad block
-// of n, with tokenFile, to the -config file of env (the last NOPS_CONFIG, as
-// for the process), or to a new one without, and returns the variable that
-// names it.
+// e2eTopLevel are the top-level attributes startNops gives its nops, short so a
+// test does not wait for the production defaults. A test sets one of them
+// itself in the file of nopsConfig.
+var e2eTopLevel = []struct{ name, value string }{
+	{"git_poll_interval", "200ms"},
+	{"drift_interval", "200ms"},
+	{"engine_interval", "200ms"},
+	{"hook_poll_interval", "200ms"},
+	{"apply_timeout", "30s"},
+}
+
+// withServerBlocks adds the repository "default" at repoURL, the nomad block of
+// n with tokenFile, and the e2eTopLevel attributes the file does not set, to the
+// -config file of env (the last NOPS_CONFIG, as for the process), or to a new
+// one without, and returns the variable that names it.
 func withServerBlocks(t *testing.T, env []string, repoURL string, n e2eNomad, tokenFile string) string {
 	t.Helper()
 	config := nopsConfig(t, "")
@@ -234,7 +241,17 @@ func withServerBlocks(t *testing.T, env []string, repoURL string, n e2eNomad, to
 	}
 	block := fmt.Sprintf("\nrepository \"default\" {\n  url = %q\n}\n\nnomad {\n  namespaces = [%s]\n  token_file = %q\n  ui_url     = %q\n}\n",
 		repoURL, strings.Join(quoted, ", "), tokenFile, n.uiURL)
-	f, err := os.OpenFile(strings.TrimPrefix(config, "NOPS_CONFIG="), os.O_APPEND|os.O_WRONLY, 0)
+	path := strings.TrimPrefix(config, "NOPS_CONFIG=")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range e2eTopLevel {
+		if !regexp.MustCompile(`(?m)^` + a.name + `\s*=`).Match(content) {
+			block += fmt.Sprintf("%s = %q\n", a.name, a.value)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

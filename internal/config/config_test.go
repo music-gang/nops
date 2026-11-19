@@ -151,17 +151,20 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadPrecedence(t *testing.T) {
+	withAddr := writeConfig(t, defaultRepo+"listen {\n  addr = \"127.0.0.1:7000\"\n}\n")
 	tests := []struct {
-		name string
-		args []string
-		env  map[string]string
-		want time.Duration
+		name   string
+		config string // "" is baseConfig, with no address
+		args   []string
+		env    map[string]string
+		want   string
 	}{
-		{"default", nil, nil, 10 * time.Minute},
-		{"env over default", nil, map[string]string{"NOPS_APPLY_TIMEOUT": "20m"}, 20 * time.Minute},
-		{"flag over env", []string{"-apply-timeout", "30m"}, map[string]string{"NOPS_APPLY_TIMEOUT": "20m"}, 30 * time.Minute},
-		{"empty env is unset", nil, map[string]string{"NOPS_APPLY_TIMEOUT": ""}, 10 * time.Minute},
-		{"flag over invalid env", []string{"-apply-timeout=1m"}, map[string]string{"NOPS_APPLY_TIMEOUT": "nope"}, time.Minute},
+		{"default", "", nil, nil, ":8080"},
+		{"file over default", withAddr, nil, nil, "127.0.0.1:7000"},
+		{"env over file", withAddr, nil, map[string]string{"NOPS_LISTEN_ADDR": ":9000"}, ":9000"},
+		{"flag over env", withAddr, []string{"-listen-addr", ":9100"}, map[string]string{"NOPS_LISTEN_ADDR": ":9000"}, ":9100"},
+		{"empty env is unset", withAddr, nil, map[string]string{"NOPS_LISTEN_ADDR": ""}, "127.0.0.1:7000"},
+		{"flag over invalid env", "", []string{"-listen-addr=:9100"}, map[string]string{"NOPS_LISTEN_ADDR": "nope"}, ":9100"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,14 +172,23 @@ func TestLoadPrecedence(t *testing.T) {
 			for k, v := range tt.env {
 				env[k] = v
 			}
+			if tt.config != "" {
+				env["NOPS_CONFIG"] = tt.config
+			}
 			c, err := Load(tt.args, envOf(env), io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.ApplyTimeout != tt.want {
-				t.Errorf("ApplyTimeout = %s, want %s", c.ApplyTimeout, tt.want)
+			if c.ListenAddr != tt.want {
+				t.Errorf("ListenAddr = %s, want %s", c.ListenAddr, tt.want)
 			}
 		})
+	}
+
+	// An invalid addr the flag overrides is not read.
+	bad := writeConfig(t, defaultRepo+"listen {\n  addr = \"8080\"\n}\n")
+	if _, err := Load([]string{"-config", bad, "-listen-addr", ":9100"}, envOf(nil), io.Discard); err != nil {
+		t.Errorf("addr overridden by the flag: %v", err)
 	}
 }
 
@@ -198,27 +210,14 @@ acl {
   bootstrap_token_file = "`+bootstrapTok+`"
 }
 `)
-	webhookSecret := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
-
-	tokyo, err := time.LoadLocation("Asia/Tokyo")
-	if err != nil {
-		t.Skipf("no tz database: %v", err)
-	}
 
 	values := map[string]string{
-		"nomad-addr":            "https://nomad.example.com:4646",
-		"config":                configFile,
-		"db-path":               "/var/lib/nops/nops.db",
-		"listen-addr":           "127.0.0.1:9000",
-		"webhook-secret-file":   webhookSecret,
-		"public-url":            "https://nops.example.com/",
-		"git-poll-interval":     "2m",
-		"drift-interval":        "15m",
-		"engine-interval":       "7s",
-		"hook-poll-interval":    "3s",
-		"apply-timeout":         "1h",
-		"sync-window-time-zone": "Asia/Tokyo", // no daylight saving: two loads of it are equal
-		"log-level":             "debug",
+		"nomad-addr":  "https://nomad.example.com:4646",
+		"config":      configFile,
+		"db-path":     "/var/lib/nops/nops.db",
+		"listen-addr": "127.0.0.1:9000",
+		"public-url":  "https://nops.example.com/",
+		"log-level":   "debug",
 	}
 	want := Config{
 		NomadAddr: "https://nomad.example.com:4646",
@@ -238,19 +237,18 @@ acl {
 		IdleTimeout:       2 * time.Minute,
 		// The auth and acl blocks are the file's too.
 		Auth:                  authWant(),
-		WebhookSecretFile:     webhookSecret,
-		WebhookSecret:         "webhook-shared-secret",
 		ACL:                   true,
 		ACLBootstrapTokenFile: bootstrapTok,
 		ACLBootstrapToken:     bootstrap,
 		PublicURL:             "https://nops.example.com",
-		GitPollInterval:       2 * time.Minute,
-		DriftInterval:         15 * time.Minute,
-		EngineInterval:        7 * time.Second,
-		HookPollInterval:      3 * time.Second,
-		ApplyTimeout:          time.Hour,
-		SyncWindowLocation:    tokyo,
-		LogLevel:              slog.LevelDebug,
+		// So are the intervals and the time zone: the defaults stand.
+		GitPollInterval:    time.Minute,
+		DriftInterval:      5 * time.Minute,
+		EngineInterval:     5 * time.Second,
+		HookPollInterval:   5 * time.Second,
+		ApplyTimeout:       10 * time.Minute,
+		SyncWindowLocation: time.UTC,
+		LogLevel:           slog.LevelDebug,
 	}
 
 	if len(values) != len(options) {
@@ -303,14 +301,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
 		{"public-url", "nops.example.com", "not an http"},
-		{"git-poll-interval", "-1m", "must be positive"},
-		{"drift-interval", "soon", "invalid duration"},
-		{"engine-interval", "0", "must be positive"},
-		{"hook-poll-interval", "", "invalid duration"},
-		{"apply-timeout", "1d", "unknown unit"},
-		{"sync-window-time-zone", "Mars/Olympus", "unknown time zone"},
-		{"sync-window-time-zone", "Rome", "unknown time zone"},
-		{"sync-window-time-zone", "Local", "not an IANA time zone"},
 		{"log-level", "verbose", "unknown name"},
 	}
 	for _, tt := range tests {
@@ -509,11 +499,11 @@ func TestLoadRemovedOptions(t *testing.T) {
 }
 
 func TestLoadReportsEveryError(t *testing.T) {
-	_, err := Load([]string{"-config", writeConfig(t, ""), "-apply-timeout=0s", "-log-level=loud"}, envOf(nil), io.Discard)
+	_, err := Load([]string{"-config", writeConfig(t, `apply_timeout = "0s"`+"\n"), "-listen-addr=8080", "-log-level=loud"}, envOf(nil), io.Discard)
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"a repository block in -config is required", "flag -apply-timeout:", "flag -log-level:"} {
+	for _, want := range []string{"a repository block in -config is required", "apply_timeout:", "flag -listen-addr:", "flag -log-level:"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -582,13 +572,6 @@ func TestNoOptionTakesAClientVariable(t *testing.T) {
 		for _, v := range cli.Variables {
 			if o.env() == v {
 				t.Errorf("option -%s reads %s, which the client reads too", o.name, o.env())
-			}
-		}
-	}
-	for _, sv := range secretValues {
-		for _, v := range cli.Variables {
-			if sv.envVar == v {
-				t.Errorf("the secret variable %s is one of the client's", v)
 			}
 		}
 	}
@@ -672,91 +655,6 @@ func TestNomadCarriesSettings(t *testing.T) {
 	}
 	if got := c.Nomad(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Nomad() = %+v, want %+v", got, want)
-	}
-}
-
-func TestSecretValueFallback(t *testing.T) {
-	tests := []struct {
-		envVar string
-		value  string
-		get    func(*Config) string
-		extra  map[string]string // other env needed for a cross-check (e.g. a URL for a token)
-	}{
-		{"NOPS_WEBHOOK_SECRET", "plain-webhook-secret", func(c *Config) string { return c.WebhookSecret }, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.envVar, func(t *testing.T) {
-			env := map[string]string{tt.envVar: tt.value}
-			for k, v := range tt.extra {
-				env[k] = v
-			}
-			c, err := Load(nil, envOf(env), io.Discard)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := tt.get(c); got != tt.value {
-				t.Errorf("%s = %q, want %q", tt.envVar, got, tt.value)
-			}
-		})
-	}
-}
-
-func TestSecretValueFallbackLosesToFile(t *testing.T) {
-	tok := writeFile(t, "webhook-secret-file", "from-file")
-	env := map[string]string{"NOPS_WEBHOOK_SECRET_FILE": tok, "NOPS_WEBHOOK_SECRET": "from-plain-env"}
-	c, err := Load(nil, envOf(env), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.WebhookSecret != "from-file" {
-		t.Errorf("WebhookSecret = %q, want the file to win", c.WebhookSecret)
-	}
-
-	// A flag file also wins over the plain env var.
-	c, err = Load([]string{"-webhook-secret-file", tok}, envOf(map[string]string{"NOPS_WEBHOOK_SECRET": "from-plain-env"}), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.WebhookSecret != "from-file" {
-		t.Errorf("WebhookSecret = %q, want the flag file to win", c.WebhookSecret)
-	}
-}
-
-func TestSecretValueFallbackInvalid(t *testing.T) {
-	tests := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{"whitespace only", map[string]string{"NOPS_WEBHOOK_SECRET": "   "}, "NOPS_WEBHOOK_SECRET: is empty"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{}
-			for k, v := range tt.env {
-				env[k] = v
-			}
-			_, err := Load(nil, envOf(env), io.Discard)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want %q", err, tt.want)
-			}
-			if strings.Contains(fmt.Sprint(err), "secret") && strings.Contains(err.Error(), "discord.com/api/webhooks/1/secret") {
-				t.Errorf("error echoes the URL: %v", err)
-			}
-		})
-	}
-}
-
-func TestSecretValuesAreDocumented(t *testing.T) {
-	b, err := os.ReadFile("../../docs/configuration.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := string(b)
-	for _, sv := range secretValues {
-		if !strings.Contains(doc, sv.envVar) {
-			t.Errorf("docs/configuration.md does not mention %s", sv.envVar)
-		}
 	}
 }
 
@@ -850,44 +748,6 @@ func TestDocTablesMatchTheOptions(t *testing.T) {
 	}
 }
 
-// TestDocSecretsTableMatchesTheSecretValues checks the "secrets without a file"
-// table of docs/configuration.md against secretValues, in both directions.
-func TestDocSecretsTableMatchesTheSecretValues(t *testing.T) {
-	b, err := os.ReadFile("../../docs/configuration.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := regexp.MustCompile("^\\| `(NOPS_[A-Z0-9_]+_FILE)` \\(`-([a-z0-9-]+)`\\) \\| `(NOPS_[A-Z0-9_]+)` \\|")
-	byName := make(map[string]option, len(options))
-	for _, o := range options {
-		byName[o.name] = o
-	}
-	documented := map[string]bool{}
-	for _, line := range strings.Split(string(b), "\n") {
-		m := row.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		fileVar, flagName, plain := m[1], m[2], m[3]
-		documented[plain] = true
-		if o, ok := byName[flagName]; !ok || o.env() != fileVar {
-			t.Errorf("docs/configuration.md: %s (-%s) is not an option and its variable", fileVar, flagName)
-		}
-		if plain != strings.TrimSuffix(fileVar, "_FILE") {
-			t.Errorf("docs/configuration.md: the plain variable of %s is %s, want %s", fileVar, plain, strings.TrimSuffix(fileVar, "_FILE"))
-		}
-	}
-	for _, sv := range secretValues {
-		if !documented[sv.envVar] {
-			t.Errorf("docs/configuration.md has no row for %s in the secrets table", sv.envVar)
-		}
-		delete(documented, sv.envVar)
-	}
-	for extra := range documented {
-		t.Errorf("docs/configuration.md lists %s as a secret variable, which is not one", extra)
-	}
-}
-
 // TestLoadSyncWindowTimeZone: a sync window is read in UTC unless the operator
 // names a zone, and what is named is an IANA zone that Load resolves, so a
 // typo stops the start rather than shifting every window.
@@ -899,9 +759,9 @@ func TestLoadSyncWindowTimeZone(t *testing.T) {
 	if _, err := time.LoadLocation("Europe/Rome"); err != nil {
 		t.Skipf("no tz database: %v", err)
 	}
-	c, err = Load([]string{"-sync-window-time-zone", "Europe/Rome"}, envOf(nil), io.Discard)
+	c, err = Load([]string{"-config", writeConfig(t, defaultRepo+`sync_window_time_zone = "Europe/Rome"`+"\n")}, envOf(nil), io.Discard)
 	if err != nil || c.SyncWindowLocation.String() != "Europe/Rome" {
-		t.Errorf("-sync-window-time-zone Europe/Rome = %v, %v", c.SyncWindowLocation, err)
+		t.Errorf("sync_window_time_zone Europe/Rome = %v, %v", c.SyncWindowLocation, err)
 	}
 }
 
@@ -1049,7 +909,7 @@ func TestLoadListenInvalid(t *testing.T) {
 		{"zero", listen(`idle_timeout = "0s"`), `listen: idle_timeout: duration "0s" must be positive`},
 		{"negative", listen(`write_timeout = "-1m"`), `listen: write_timeout: duration "-1m" must be positive`},
 		{"a number", listen(`read_header_timeout = 10`), "read_header_timeout"},
-		{"the address belongs to a flag", listen(`addr = ":9090"`), "Unsupported argument"},
+		{"an address without a port", listen(`addr = "8080"`), `listen: addr: invalid address "8080"`},
 		{"two blocks", listen("") + listen(""), "Duplicate listen block"},
 		{"tls with no files", listen("tls {\n}"), `Missing required argument`},
 		{"tls with a certificate alone", listen("tls {\ncert_file = \"nops.crt\"\n}"), `"key_file" is required`},
@@ -1729,6 +1589,148 @@ func TestLoadGitOptionsRemoved(t *testing.T) {
 			}
 			for source, err := range errs {
 				if err == nil || !strings.Contains(err.Error(), source+" was removed: "+tt.want) || !strings.Contains(err.Error(), `name it "default"`) {
+					t.Errorf("%s: err = %v, want it removed, replaced by %s", source, err, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadTopLevelFromTheFile(t *testing.T) {
+	secretFile := writeFile(t, "webhook-secret", "webhook-shared-secret\n")
+	file := writeConfig(t, defaultRepo+`
+log_level             = "debug"
+db_path               = "/var/lib/nops/nops.db"
+public_url            = "https://nops.example.com/nops/"
+git_poll_interval     = "2m"
+drift_interval        = "15m"
+engine_interval       = "7s"
+hook_poll_interval    = "3s"
+apply_timeout         = "1h"
+sync_window_time_zone = "UTC"
+webhook_secret_file   = "`+secretFile+`"
+`)
+	c, err := Load(nil, envOf(map[string]string{"NOPS_CONFIG": file, "NOPS_PUBLIC_URL": ""}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []any{c.LogLevel, c.DBPath, c.PublicURL, c.BasePath, c.GitPollInterval, c.DriftInterval, c.EngineInterval,
+		c.HookPollInterval, c.ApplyTimeout, c.SyncWindowLocation, c.WebhookSecretFile, c.WebhookSecret}
+	want := []any{slog.LevelDebug, "/var/lib/nops/nops.db", "https://nops.example.com/nops", "/nops", 2 * time.Minute, 15 * time.Minute, 7 * time.Second,
+		3 * time.Second, time.Hour, time.UTC, secretFile, "webhook-shared-secret"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("\n got %v\nwant %v", got, want)
+	}
+}
+
+// The attributes of the flags that stay yield to the flag and to its
+// variable; an invalid one that the flag overrides is not read.
+func TestLoadTopLevelPrecedence(t *testing.T) {
+	file := writeConfig(t, defaultRepo+`
+log_level  = "warn"
+db_path    = "from-file.db"
+public_url = "https://from-file.example.com"
+`)
+	read := func(c *Config) [3]string { return [3]string{c.LogLevel.String(), c.DBPath, c.PublicURL} }
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want [3]string
+	}{
+		{"the file over the default", nil, nil, [3]string{"WARN", "from-file.db", "https://from-file.example.com"}},
+		{"the variable over the file", nil, map[string]string{"NOPS_LOG_LEVEL": "error", "NOPS_DB_PATH": "from-env.db", "NOPS_PUBLIC_URL": "https://from-env.example.com"},
+			[3]string{"ERROR", "from-env.db", "https://from-env.example.com"}},
+		{"the flag over the variable", []string{"-log-level", "debug", "-db-path", "from-flag.db", "-public-url", "https://from-flag.example.com"},
+			map[string]string{"NOPS_LOG_LEVEL": "error", "NOPS_DB_PATH": "from-env.db", "NOPS_PUBLIC_URL": "https://from-env.example.com"},
+			[3]string{"DEBUG", "from-flag.db", "https://from-flag.example.com"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{"NOPS_CONFIG": file, "NOPS_PUBLIC_URL": ""}
+			for k, v := range tt.env {
+				env[k] = v
+			}
+			c, err := Load(tt.args, envOf(env), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := read(c); got != tt.want {
+				t.Errorf("log level, db path, public URL = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	bad := writeConfig(t, defaultRepo+`
+log_level  = "loud"
+db_path    = ""
+public_url = "nops.example.com"
+`)
+	if _, err := Load([]string{"-config", bad, "-log-level", "info", "-db-path", "nops.db", "-public-url", "https://nops.example.com"}, envOf(nil), io.Discard); err != nil {
+		t.Errorf("attributes overridden by the flags: %v", err)
+	}
+}
+
+func TestLoadTopLevelInvalid(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	empty := writeFile(t, "empty", " \n")
+	tests := []struct {
+		attr, value, want string
+	}{
+		{"log_level", `"verbose"`, "log_level: slog: level string"},
+		{"db_path", `""`, "db_path: required"},
+		{"public_url", `"nops.example.com"`, `public_url: "nops.example.com" is not an http`},
+		{"git_poll_interval", `"-1m"`, `git_poll_interval: duration "-1m" must be positive`},
+		{"drift_interval", `"soon"`, "drift_interval: time: invalid duration"},
+		{"engine_interval", `"0s"`, `engine_interval: duration "0s" must be positive`},
+		{"hook_poll_interval", `""`, "hook_poll_interval: time: invalid duration"},
+		{"apply_timeout", `"1d"`, "apply_timeout: time: unknown unit"},
+		{"apply_timeout", `600`, "apply_timeout"},
+		{"sync_window_time_zone", `"Mars/Olympus"`, "sync_window_time_zone: unknown time zone"},
+		{"sync_window_time_zone", `"Local"`, "sync_window_time_zone: \"Local\" is not an IANA time zone"},
+		{"webhook_secret_file", `"` + missing + `"`, "webhook_secret_file: open " + missing},
+		{"webhook_secret_file", `"` + empty + `"`, "webhook_secret_file: " + empty + " is empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.attr+"="+tt.value, func(t *testing.T) {
+			file := writeConfig(t, defaultRepo+tt.attr+" = "+tt.value+"\n")
+			_, err := Load([]string{"-config", file}, envOf(map[string]string{"NOPS_PUBLIC_URL": ""}), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want one containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The options without a flag that stays moved to the top level of the file:
+// each one, its variable, and the variable that held the webhook secret stop
+// Nops, naming the attribute that replaces it.
+func TestLoadTopLevelOptionsRemoved(t *testing.T) {
+	secretFile := writeFile(t, "webhook-secret", "secret")
+	tests := []struct {
+		flag, value, valueEnv, want string
+	}{
+		{"webhook-secret-file", secretFile, "NOPS_WEBHOOK_SECRET", "webhook_secret_file at the top level of -config (docs/configuration.md#dashboard)"},
+		{"git-poll-interval", "1m", "", "git_poll_interval at the top level"},
+		{"drift-interval", "5m", "", "drift_interval at the top level"},
+		{"engine-interval", "5s", "", "engine_interval at the top level"},
+		{"hook-poll-interval", "5s", "", "hook_poll_interval at the top level"},
+		{"apply-timeout", "10m", "", "apply_timeout at the top level"},
+		{"sync-window-time-zone", "UTC", "", "sync_window_time_zone at the top level of -config (docs/configuration.md#storage-intervals-and-timeouts)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			vars := []string{removedOption{name: tt.flag}.env()}
+			if tt.valueEnv != "" {
+				vars = append(vars, tt.valueEnv)
+			}
+			_, err := Load([]string{"-" + tt.flag, tt.value}, envOf(nil), io.Discard)
+			errs := map[string]error{"flag -" + tt.flag: err}
+			for _, v := range vars {
+				_, errs[v] = Load(nil, envOf(map[string]string{v: tt.value}), io.Discard)
+			}
+			for source, err := range errs {
+				if err == nil || !strings.Contains(err.Error(), source+" was removed: "+tt.want) {
 					t.Errorf("%s: err = %v, want it removed, replaced by %s", source, err, tt.want)
 				}
 			}

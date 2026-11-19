@@ -37,6 +37,8 @@ setup_state() {
   fi
   if [ ! -f "$dir/nops.hcl" ]; then
     cat >"$dir/nops.hcl" <<EOF
+git_poll_interval = "10s"
+
 repository "default" {
   url = "${NOPS_DEV_GIT_URL:-file://$dir/jobs}"
 }
@@ -216,7 +218,6 @@ EOF
   set -m
   "$dir/bin/nops" serve \
     -nomad-addr="$nomad_addr" \
-    -git-poll-interval=10s \
     -listen-addr=127.0.0.1:8080 \
     -config="$dir/nops.hcl" \
     -db-path="$dir/nops.db" \

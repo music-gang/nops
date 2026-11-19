@@ -326,7 +326,7 @@ job %q {
 // completes and runs its post-hook.
 func TestE2EApplyWaitsForCanaryPromotion(t *testing.T) {
 	const applyTimeout = 8 * time.Second
-	e := newE2E(t, "NOPS_APPLY_TIMEOUT="+applyTimeout.String())
+	e := newE2E(t, nopsConfig(t, fmt.Sprintf("apply_timeout = %q\n", applyTimeout)))
 	jobID := uniqueID(t, e.raw, "canarysvc")
 	hookID := uniqueID(t, e.raw, "canaryhook")
 	marker := filepath.Join(t.TempDir(), "post-hook-ran")
@@ -388,7 +388,7 @@ func TestE2EApplyWaitsForCanaryPromotion(t *testing.T) {
 // post-hook without anyone touching Nomad.
 func TestE2EPromoteFromTheDashboard(t *testing.T) {
 	const nomadUI = "https://nomad-ui.example.test/nomad" // where a person opens Nomad, not where nops does
-	e := newE2EWithNomad(t, e2eNomad{uiURL: nomadUI}, "NOPS_APPLY_TIMEOUT=8s")
+	e := newE2EWithNomad(t, e2eNomad{uiURL: nomadUI}, nopsConfig(t, `apply_timeout = "8s"`+"\n"))
 	jobID := uniqueID(t, e.raw, "promotesvc")
 	hookID := uniqueID(t, e.raw, "promotehook")
 	marker := filepath.Join(t.TempDir(), "post-hook-ran")

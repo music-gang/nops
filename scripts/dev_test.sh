@@ -36,7 +36,9 @@ check users "$admin_user" "$(cat "$dir/users")"
 check groups 'admin: admin' "$(cat "$dir/groups")"
 check token nops_stub "$(cat "$dir/bootstrap.token")"
 check token-mode "$dir/bootstrap.token" "$(find "$dir/bootstrap.token" -perm 600)"
-check config "repository \"default\" {
+check config "git_poll_interval = \"10s\"
+
+repository \"default\" {
   url = \"file://$dir/jobs\"
 }
 

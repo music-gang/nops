@@ -33,7 +33,7 @@ nops_sync_window_duration = "9h"          # and stays open until 18:00
 
 - The cron expression says when the window opens, with the syntax of Nomad's
   `periodic`. The duration says how long it stays open.
-- Nops reads windows in [`-sync-window-time-zone`](configuration.md#storage-intervals-and-timeouts),
+- Nops reads windows in [`sync_window_time_zone`](configuration.md#storage-intervals-and-timeouts),
   UTC by default.
 - Outside the window, Nops still shows the drift but starts no deployment: the
   job is **Held**. When the window opens, Nops plans again from git.

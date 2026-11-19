@@ -6,10 +6,11 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
 
 ## Rules
 
-- Every option but the blocks of the
-  [configuration file](#configuration-file) has a flag and
-  an environment variable: `NOPS_` plus the flag name in upper case, dashes
-  as underscores (`-apply-timeout` → `NOPS_APPLY_TIMEOUT`).
+- Every option is in the [configuration file](#configuration-file). Only
+  `-config`, `-listen-addr`, `-public-url`, `-db-path`, `-nomad-addr` and
+  `-log-level` are also flags, each with an environment variable: `NOPS_`
+  plus the flag name in upper case, dashes as underscores
+  (`-db-path` → `NOPS_DB_PATH`).
 - Precedence: flag, then variable, then the
   [configuration file](#configuration-file), then default. An empty variable
   counts as unset.
@@ -21,17 +22,9 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
 
 ### Secrets
 
-Every secret is read from a file, through a `-X-file` flag or its
-`NOPS_X_FILE` variable, so it never shows up in `ps`. You can also pass the
-value itself in an environment variable without `_FILE`, for tools that
-inject secrets into the environment. These variables have no flag.
-
-| From a file (flag) | Value in the environment |
-|---|---|
-| `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
-
-A secret of the [configuration file](#configuration-file) is read only from
-the file its `*_file` attribute names.
+Every secret is read from the file a `*_file` attribute of the
+[configuration file](#configuration-file) names, so it never shows up in
+`ps` or in the environment.
 
 ## Nomad
 
@@ -64,14 +57,11 @@ nomad {
 | `tls_skip_verify` | `false` | Skip server certificate checks. Testing only. |
 | `timeout` | `30s` | How long a request to Nomad may take, the answer included. |
 
-Nops refuses to start with another `-nomad-*` flag, its variable, or
-`NOPS_NOMAD_TOKEN`, and names the attribute that replaces it.
-
 ## Configuration file
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
-| `-config` | `NOPS_CONFIG` | none | HCL file of the options a flag can't hold. |
+| `-config` | `NOPS_CONFIG` | none | HCL file of the options. |
 
 ### Repositories
 
@@ -112,11 +102,13 @@ SSH. The release image can't read `file://` URLs.
 
 ### Listen
 
-The `listen` block sets the timeouts of the dashboard's server and its
-[TLS](#certificate-and-key). It has no flag or variable, and one block at most:
+The `listen` block sets the address of the dashboard's server, its timeouts,
+and its [TLS](#certificate-and-key). Only `addr` has a flag, `-listen-addr`,
+which wins. One block at most:
 
 ```hcl
 listen {
+  addr                = ":8080"
   read_header_timeout = "10s"
   read_timeout        = "1m"
   write_timeout       = "1m"
@@ -126,6 +118,7 @@ listen {
 
 | Attribute | Default | Meaning |
 |---|---|---|
+| `addr` | `:8080` | Address of the dashboard and the git webhook. |
 | `read_header_timeout` | `10s` | How long a client has to send the request headers. |
 | `read_timeout` | `1m` | How long a client has to send the whole request. |
 | `write_timeout` | `1m` | How long Nops has to write the response. |
@@ -157,7 +150,7 @@ listen {
   If the reload fails, Nops keeps the current pair and logs an ERROR.
 - Every answer carries `Strict-Transport-Security`, so a browser reaches the
   host only over HTTPS for a year.
-- Without `-public-url`, the URL derived from `-listen-addr` starts with
+- Without a public URL, the one derived from the listen address starts with
   `https://`.
 
 ## Dashboard
@@ -166,10 +159,19 @@ listen {
 |---|---|---|---|
 | `-listen-addr` | `NOPS_LISTEN_ADDR` | `:8080` | Address of the dashboard and the git webhook. |
 | `-public-url` | `NOPS_PUBLIC_URL` | derived from `-listen-addr` | URL people use to reach the dashboard, with its [sub path](running-nops.md#under-a-sub-path) if any. Set it behind a proxy or with OIDC. |
-| `-webhook-secret-file` | `NOPS_WEBHOOK_SECRET_FILE` | none | File holding the [git webhook](running-nops.md#the-git-webhook) secret. Unset: no webhook. |
 
-Nops refuses to start with `-metrics-token-file` or `NOPS_METRICS_TOKEN`.
-Give Prometheus a [token with the `metrics` capability](metrics.md#scraping).
+Top-level attributes of the [configuration file](#configuration-file). Only
+`public_url` has a flag, `-public-url`, which wins:
+
+```hcl
+public_url          = "https://nops.example.com"
+webhook_secret_file = "/secrets/webhook"
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `public_url` | derived from the listen address | URL people use to reach the dashboard. |
+| `webhook_secret_file` | none | File holding the [git webhook](running-nops.md#the-git-webhook) secret. Unset: no webhook. |
 
 ## Authentication
 
@@ -200,13 +202,6 @@ auth "authentik" {
 - The name, made of letters, digits, `-` and `_`, is how
   [binding rules](acl.md#binding-rules) name the auth method.
 - A second block, or an attribute of the other type, stops Nops.
-- Nops refuses to start with `-auth-mode`, an `-oidc-*` flag, `-users-file`,
-  `-groups-file`, or their variables, and names the attribute that replaces
-  it.
-
-Nops refuses to start with `-oidc-allowed-users` or `-oidc-allowed-groups`.
-Limit who can log in at the identity provider, or with
-[binding rules](acl.md#binding-rules) and the [ACL](#access-control) on.
 
 ## Access control
 
@@ -224,9 +219,6 @@ acl {
 |---|---|---|
 | `enabled` | `false` | Turn on the ACL. Off, every token can do everything. |
 | `bootstrap_token_file` | none, **required** with `enabled` | File holding the [bootstrap token](acl.md#tokens), made by `nops secret generate`. |
-
-Nops refuses to start with `-acl`, `-acl-bootstrap-token-file`, or a
-`NOPS_ACL*` variable, and names the attribute that replaces it.
 
 ## Notifications
 
@@ -258,21 +250,33 @@ notify "alerts" {
 - The name, made of letters, digits, `-` and `_`, labels the adapter in the
   log and in [metrics](metrics.md).
 - A name used twice, or an attribute of another type, stops Nops.
-- Nops refuses to start with a `-notify-*` flag or a `NOPS_NOTIFY_*`
-  variable, and names the attribute that replaces it.
 
 ## Storage, intervals, and timeouts
 
 | Flag | Variable | Default | Meaning |
 |---|---|---|---|
 | `-db-path` | `NOPS_DB_PATH` | `nops.db` | SQLite database file. Keep it on persistent storage. |
-| `-git-poll-interval` | `NOPS_GIT_POLL_INTERVAL` | `1m` | How often Nops polls each repository. |
-| `-drift-interval` | `NOPS_DRIFT_INTERVAL` | `5m` | How often Nops checks Nomad for drift without a new commit. |
-| `-engine-interval` | `NOPS_ENGINE_INTERVAL` | `5s` | How often the engine advances active deployments. |
-| `-hook-poll-interval` | `NOPS_HOOK_POLL_INTERVAL` | `5s` | How often Nops checks a running hook. |
-| `-apply-timeout` | `NOPS_APPLY_TIMEOUT` | `10m` | How long an [apply](architecture.md#the-apply-timeout) may take. Covers the register and the wait for health. |
-| `-sync-window-time-zone` | `NOPS_SYNC_WINDOW_TIME_ZONE` | `UTC` | IANA time zone of the [sync windows](policies.md#sync-window). |
 | `-log-level` | `NOPS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+
+Top-level attributes of the [configuration file](#configuration-file). Only
+`db_path` and `log_level` have a flag, which wins:
+
+```hcl
+db_path           = "/data/nops.db"
+git_poll_interval = "30s"
+apply_timeout     = "15m"
+```
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `db_path` | `nops.db` | SQLite database file. |
+| `log_level` | `info` | `debug`, `info`, `warn` or `error`. |
+| `git_poll_interval` | `1m` | How often Nops polls each repository. |
+| `drift_interval` | `5m` | How often Nops checks Nomad for drift without a new commit. |
+| `engine_interval` | `5s` | How often the engine advances active deployments. |
+| `hook_poll_interval` | `5s` | How often Nops checks a running hook. |
+| `apply_timeout` | `10m` | How long an [apply](architecture.md#the-apply-timeout) may take. Covers the register and the wait for health. |
+| `sync_window_time_zone` | `UTC` | IANA time zone of the [sync windows](policies.md#sync-window). |
 
 A hook's timeout is set on the hook job with `nops_timeout`
 ([meta keys](meta-keys.md)).

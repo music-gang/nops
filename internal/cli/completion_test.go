@@ -132,8 +132,8 @@ func TestBashCompletion(t *testing.T) {
 		{[]string{"nops", "acl", "policy", "apply", "-token-file", "a.hcl", ""}, nil},
 		{[]string{"nops", "jobs", "-addr", ""}, nil},
 		{[]string{"nops", "job", "-namespace", "x", "-"}, []string{"-addr", "-json", "-namespace", "-token-file"}},
-		{[]string{"nops", "serve", "-webhook-s"}, []string{"-webhook-secret-file"}},
-		{[]string{"nops", "serve", "-webhook-secret-file", "b"}, []string{"b.hcl"}},
+		{[]string{"nops", "serve", "-con"}, []string{"-config"}},
+		{[]string{"nops", "serve", "-config", "b"}, []string{"b.hcl"}},
 		{[]string{"nops", "frobnicate", ""}, nil},
 		{[]string{"nops", "acl", "frobnicate", ""}, nil},
 	} {

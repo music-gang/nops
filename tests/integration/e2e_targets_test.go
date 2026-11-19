@@ -16,7 +16,7 @@ import (
 // once it is registered: a periodic or parameterized job only spawns children
 // (or waits to be dispatched), and a group whose count is 0 places nothing.
 // apply must complete such a deployment instead of waiting for an allocation
-// that never comes until -apply-timeout fails it.
+// that never comes until apply_timeout fails it.
 func TestApplyOfATargetThatNeverHasAnAllocationCompletes(t *testing.T) {
 	cases := map[string]string{
 		"periodic": `
