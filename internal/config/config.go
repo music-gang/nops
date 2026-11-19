@@ -1,12 +1,11 @@
 // Package config reads the nops settings from flags, NOPS_* environment
 // variables and the HCL file of -config, and validates them.
 //
-// Every option has a flag and an environment variable (NOPS_ followed by the
-// flag name in upper case, with dashes as underscores). A flag wins over the
-// variable, the variable over the file, the file over the default. The file
-// holds the repository, listen, nomad, auth, acl and notify blocks; of them,
-// only the nomad block's addr has a flag. nops reads nothing else:
-// the standard NOMAD_* variables are ignored. The reference for users is docs/configuration.md:
+// Every option is in the file. A few also have a flag and an environment
+// variable (NOPS_ followed by the flag name in upper case, with dashes as
+// underscores): a flag wins over the variable, the variable over the file, the
+// file over the default. nops reads nothing else: the standard NOMAD_*
+// variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
 
@@ -62,6 +61,16 @@ const (
 // defaultNotifyTimeout is how long a notification request may take, unless
 // its notify block says otherwise.
 const defaultNotifyTimeout = 10 * time.Second
+
+// The default intervals of the loops and timeout of an apply, set by the
+// top-level attributes of the file.
+const (
+	defaultGitPollInterval  = time.Minute
+	defaultDriftInterval    = 5 * time.Minute
+	defaultEngineInterval   = 5 * time.Second
+	defaultHookPollInterval = 5 * time.Second
+	defaultApplyTimeout     = 10 * time.Minute
+)
 
 // Config holds every setting nops needs. Load fills and validates it.
 type Config struct {
@@ -137,7 +146,7 @@ type Config struct {
 	ApplyTimeout     time.Duration
 
 	// SyncWindowLocation is the time zone the sync windows of the jobs
-	// (nops_sync_window) are read in; UTC unless -sync-window-time-zone says
+	// (nops_sync_window) are read in; UTC unless sync_window_time_zone says
 	// otherwise. See docs/meta-keys.md.
 	SyncWindowLocation *time.Location
 
@@ -206,47 +215,31 @@ var options = []option{
 	{name: "nomad-addr", def: defaultNomadAddr, usage: "Nomad HTTP API address (wins over addr in the nomad block of -config)",
 		set: func(c *Config, v string) (err error) { c.NomadAddr, err = httpURL(v); return }},
 
-	{name: "config", usage: "HCL `file` of the options a flag can't hold",
+	{name: "config", usage: "HCL `file` of the options",
 		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
 
-	{name: "db-path", def: "nops.db", usage: "SQLite database `file`",
+	{name: "db-path", def: "nops.db", usage: "SQLite database `file` (wins over db_path in -config)",
 		set: func(c *Config, v string) (err error) { c.DBPath, err = required(v); return }},
-	{name: "listen-addr", def: ":8080", usage: "address of the dashboard and the git webhook",
-		set: func(c *Config, v string) error {
-			if _, _, err := net.SplitHostPort(v); err != nil {
-				return fmt.Errorf("invalid address %q: %w", v, err)
-			}
-			c.ListenAddr = v
-			return nil
-		}},
-	{name: "webhook-secret-file", usage: "`file` holding the git forge's webhook secret (empty: the git webhook endpoint is off)",
-		set: func(c *Config, v string) (err error) {
-			c.WebhookSecretFile = v
-			c.WebhookSecret, err = secretFile(v)
-			return
-		}},
+	{name: "listen-addr", def: ":8080", usage: "address of the dashboard and the git webhook (wins over addr in the listen block of -config)",
+		set: (*Config).setListenAddr},
 
-	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr)",
+	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr; wins over public_url in -config)",
 		set: func(c *Config, v string) (err error) {
 			c.PublicURL, err = optionalURL(v)
 			return
 		}},
 
-	{name: "git-poll-interval", def: "1m", usage: "how often the repository is fetched",
-		set: func(c *Config, v string) (err error) { c.GitPollInterval, err = positiveDuration(v); return }},
-	{name: "drift-interval", def: "5m", usage: "how often Nomad is checked for drift without a new commit",
-		set: func(c *Config, v string) (err error) { c.DriftInterval, err = positiveDuration(v); return }},
-	{name: "engine-interval", def: "5s", usage: "how often the engine advances active deployments",
-		set: func(c *Config, v string) (err error) { c.EngineInterval, err = positiveDuration(v); return }},
-	{name: "hook-poll-interval", def: "5s", usage: "how often a running hook is checked",
-		set: func(c *Config, v string) (err error) { c.HookPollInterval, err = positiveDuration(v); return }},
-	{name: "apply-timeout", def: "10m", usage: "how long an apply may take, from its start: to register the job and to wait until it is healthy",
-		set: func(c *Config, v string) (err error) { c.ApplyTimeout, err = positiveDuration(v); return }},
-	{name: "sync-window-time-zone", def: "UTC", usage: "IANA time zone (Europe/Rome, America/New_York, UTC) the sync windows of the jobs (nops_sync_window) are read in",
-		set: func(c *Config, v string) (err error) { c.SyncWindowLocation, err = timeZone(v); return }},
-
-	{name: "log-level", def: "info", usage: "log level: debug, info, warn or error",
+	{name: "log-level", def: "info", usage: "log level: debug, info, warn or error (wins over log_level in -config)",
 		set: func(c *Config, v string) error { return c.LogLevel.UnmarshalText([]byte(v)) }},
+}
+
+// setListenAddr sets the address of the dashboard's server, a host and a port.
+func (c *Config) setListenAddr(v string) error {
+	if _, _, err := net.SplitHostPort(v); err != nil {
+		return fmt.Errorf("invalid address %q: %w", v, err)
+	}
+	c.ListenAddr = v
+	return nil
 }
 
 // removedOption is an option that no longer exists. It still parses, so that
@@ -297,6 +290,19 @@ var removedOptions = []removedOption{
 	{name: "git-username", replacedBy: repositoryReplacement("username")},
 	{name: "git-token-file", valueEnv: "NOPS_GIT_TOKEN", replacedBy: repositoryReplacement("token_file")},
 	{name: "git-timeout", replacedBy: repositoryReplacement("timeout")},
+	{name: "webhook-secret-file", valueEnv: "NOPS_WEBHOOK_SECRET", replacedBy: topLevelReplacement("webhook_secret_file", "dashboard")},
+	{name: "git-poll-interval", replacedBy: topLevelReplacement("git_poll_interval", "storage-intervals-and-timeouts")},
+	{name: "drift-interval", replacedBy: topLevelReplacement("drift_interval", "storage-intervals-and-timeouts")},
+	{name: "engine-interval", replacedBy: topLevelReplacement("engine_interval", "storage-intervals-and-timeouts")},
+	{name: "hook-poll-interval", replacedBy: topLevelReplacement("hook_poll_interval", "storage-intervals-and-timeouts")},
+	{name: "apply-timeout", replacedBy: topLevelReplacement("apply_timeout", "storage-intervals-and-timeouts")},
+	{name: "sync-window-time-zone", replacedBy: topLevelReplacement("sync_window_time_zone", "storage-intervals-and-timeouts")},
+}
+
+// topLevelReplacement says which top-level attribute of the file replaces a
+// removed option, and the section of docs/configuration.md that holds it.
+func topLevelReplacement(attr, section string) string {
+	return attr + " at the top level of -config (docs/configuration.md#" + section + ")"
 }
 
 // repositoryReplacement says which attribute of a repository block replaces a
@@ -374,12 +380,18 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	c := &Config{
-		NomadNamespaces:   []string{api.DefaultNamespace},
-		NomadTimeout:      defaultNomadTimeout,
-		ReadHeaderTimeout: defaultReadHeaderTimeout,
-		ReadTimeout:       defaultReadTimeout,
-		WriteTimeout:      defaultWriteTimeout,
-		IdleTimeout:       defaultIdleTimeout,
+		NomadNamespaces:    []string{api.DefaultNamespace},
+		NomadTimeout:       defaultNomadTimeout,
+		ReadHeaderTimeout:  defaultReadHeaderTimeout,
+		ReadTimeout:        defaultReadTimeout,
+		WriteTimeout:       defaultWriteTimeout,
+		IdleTimeout:        defaultIdleTimeout,
+		GitPollInterval:    defaultGitPollInterval,
+		DriftInterval:      defaultDriftInterval,
+		EngineInterval:     defaultEngineInterval,
+		HookPollInterval:   defaultHookPollInterval,
+		ApplyTimeout:       defaultApplyTimeout,
+		SyncWindowLocation: time.UTC,
 	}
 	var errs []error
 	explicit := make(map[string]bool) // the options given by flag or variable
@@ -406,12 +418,12 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 			errs = append(errs, fmt.Errorf("%s was removed: %s", o.valueEnv, o.replacedBy))
 		}
 	}
-	errs = append(errs, resolveSecretValues(c, getenv)...)
 	fc, fileErr := readConfigFile(c.ConfigFile)
+	errs = append(errs, c.loadTopLevel(fc, explicit)...)
 	// The nomad block first: a repository's jobs must match its namespaces.
 	errs = append(errs, c.loadNomad(fc, explicit)...)
 	errs = append(errs, c.loadRepositories(fc, fileErr)...)
-	errs = append(errs, c.loadListen(fc)...)
+	errs = append(errs, c.loadListen(fc, explicit)...)
 	errs = append(errs, c.loadAuth(fc, fileErr)...)
 	errs = append(errs, c.loadACL(fc)...)
 	errs = append(errs, c.loadNotify(fc)...)
@@ -420,45 +432,6 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		return nil, err
 	}
 	return c, nil
-}
-
-// secretValue lets a secret be set with a plain, env-only variable when no
-// file is given: a file (from a flag or its NOPS_<NAME>_FILE variable) always
-// wins over the literal value in envVar. There is no flag for the literal
-// form, so a secret can never reach the command line: only an env var is
-// this permissive, since it never shows in `ps` or `/proc/<pid>/cmdline`
-// (see docs/configuration.md#secrets).
-type secretValue struct {
-	envVar string // always the _FILE option's variable with _FILE dropped
-	get    func(*Config) string
-	set    func(*Config, string)
-}
-
-var secretValues = []secretValue{
-	{envVar: "NOPS_WEBHOOK_SECRET",
-		get: func(c *Config) string { return c.WebhookSecret }, set: func(c *Config, v string) { c.WebhookSecret = v }},
-}
-
-// resolveSecretValues fills every secret still empty after the flag/env-file
-// pass from its plain env var, in place.
-func resolveSecretValues(c *Config, getenv func(string) string) []error {
-	var errs []error
-	for _, sv := range secretValues {
-		if sv.get(c) != "" {
-			continue // a file already provided it
-		}
-		raw := getenv(sv.envVar)
-		if raw == "" {
-			continue // not set: the secret stays off
-		}
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			errs = append(errs, fmt.Errorf("%s: is empty", sv.envVar))
-			continue
-		}
-		sv.set(c, v)
-	}
-	return errs
 }
 
 // check validates the rules that involve more than one option, and fills
@@ -490,6 +463,17 @@ var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // fileConfig is the schema of the -config file.
 type fileConfig struct {
+	LogLevel           *string `hcl:"log_level,optional"`
+	DBPath             *string `hcl:"db_path,optional"`
+	PublicURL          *string `hcl:"public_url,optional"`
+	GitPollInterval    *string `hcl:"git_poll_interval,optional"`
+	DriftInterval      *string `hcl:"drift_interval,optional"`
+	EngineInterval     *string `hcl:"engine_interval,optional"`
+	HookPollInterval   *string `hcl:"hook_poll_interval,optional"`
+	ApplyTimeout       *string `hcl:"apply_timeout,optional"`
+	SyncWindowTimeZone *string `hcl:"sync_window_time_zone,optional"`
+	WebhookSecretFile  string  `hcl:"webhook_secret_file,optional"`
+
 	Repositories []fileRepository `hcl:"repository,block"`
 	Listen       *fileListen      `hcl:"listen,block"`
 	Nomad        *fileNomad       `hcl:"nomad,block"`
@@ -537,6 +521,7 @@ type fileNomad struct {
 }
 
 type fileListen struct {
+	Addr              *string  `hcl:"addr,optional"`
 	ReadHeaderTimeout *string  `hcl:"read_header_timeout,optional"`
 	ReadTimeout       *string  `hcl:"read_timeout,optional"`
 	WriteTimeout      *string  `hcl:"write_timeout,optional"`
@@ -606,13 +591,78 @@ func readConfigFile(file string) (*fileConfig, error) {
 	return &fc, nil
 }
 
-// loadListen sets the timeouts and the TLS files of the listen block of fc,
-// when it has one. Every error names the file and the attribute.
-func (c *Config) loadListen(fc *fileConfig) []error {
+// loadTopLevel reads the top-level attributes of fc, when there is a file. Of
+// those with a flag, an attribute counts only when its option is not in
+// explicit, the options given by flag or variable. Every error names the file
+// and the attribute.
+func (c *Config) loadTopLevel(fc *fileConfig, explicit map[string]bool) []error {
+	if fc == nil {
+		return nil
+	}
+	var errs []error
+	fail := func(attr string, err error) {
+		errs = append(errs, fmt.Errorf("-config %s: %s: %w", c.ConfigFile, attr, err))
+	}
+	var err error
+	if fc.LogLevel != nil && !explicit["log-level"] {
+		if err := c.LogLevel.UnmarshalText([]byte(*fc.LogLevel)); err != nil {
+			fail("log_level", err)
+		}
+	}
+	if fc.DBPath != nil && !explicit["db-path"] {
+		if c.DBPath, err = required(*fc.DBPath); err != nil {
+			fail("db_path", err)
+		}
+	}
+	if fc.PublicURL != nil && !explicit["public-url"] {
+		if c.PublicURL, err = optionalURL(*fc.PublicURL); err != nil {
+			fail("public_url", err)
+		}
+	}
+	for _, a := range []struct {
+		name string
+		in   *string
+		out  *time.Duration
+	}{
+		{"git_poll_interval", fc.GitPollInterval, &c.GitPollInterval},
+		{"drift_interval", fc.DriftInterval, &c.DriftInterval},
+		{"engine_interval", fc.EngineInterval, &c.EngineInterval},
+		{"hook_poll_interval", fc.HookPollInterval, &c.HookPollInterval},
+		{"apply_timeout", fc.ApplyTimeout, &c.ApplyTimeout},
+	} {
+		if a.in == nil {
+			continue
+		}
+		if *a.out, err = positiveDuration(*a.in); err != nil {
+			fail(a.name, err)
+		}
+	}
+	if fc.SyncWindowTimeZone != nil {
+		if c.SyncWindowLocation, err = timeZone(*fc.SyncWindowTimeZone); err != nil {
+			fail("sync_window_time_zone", err)
+		}
+	}
+	c.WebhookSecretFile = fc.WebhookSecretFile
+	if c.WebhookSecret, err = secretFile(fc.WebhookSecretFile); err != nil {
+		fail("webhook_secret_file", err)
+	}
+	return errs
+}
+
+// loadListen sets the address, the timeouts and the TLS files of the listen
+// block of fc, when it has one. Its addr counts only when -listen-addr is not
+// in explicit, the options given by flag or variable. Every error names the
+// file and the attribute.
+func (c *Config) loadListen(fc *fileConfig, explicit map[string]bool) []error {
 	if fc == nil || fc.Listen == nil {
 		return nil
 	}
 	var errs []error
+	if a := fc.Listen.Addr; a != nil && !explicit["listen-addr"] {
+		if err := c.setListenAddr(*a); err != nil {
+			errs = append(errs, fmt.Errorf("-config %s: listen: addr: %w", c.ConfigFile, err))
+		}
+	}
 	for _, a := range []struct {
 		name string
 		in   *string

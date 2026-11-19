@@ -30,9 +30,9 @@ are in [philosophy](philosophy.md).
 Nops moves deployments forward on its own:
 
 1. **Detection** runs at startup, on every new commit, every
-   `-drift-interval`, and after anything that can change a job's state (a
+   `drift_interval`, and after anything that can change a job's state (a
    deployment ending, a reject, a retry, a pause).
-2. **Apply** runs every `-engine-interval` and advances active deployments.
+2. **Apply** runs every `engine_interval` and advances active deployments.
 3. **Recovery** is the first apply cycle after a start: it resumes whatever a
    restart interrupted ([deployment lifecycle](deployment-lifecycle.md#recovery-after-a-crash)).
 
@@ -124,7 +124,7 @@ doesn't become healthy fails; Nops doesn't roll back.
 
 ### The apply timeout
 
-`-apply-timeout` counts from the start of the apply and covers the register
+`apply_timeout` counts from the start of the apply and covers the register
 and the wait for health. When it runs out while no node has room for part of
 the job, its message says what ran out. It pauses while canaries wait for
 someone to promote them, and restarts in full after the promotion. Promote

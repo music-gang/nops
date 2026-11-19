@@ -125,7 +125,7 @@ for each:
 | a task with `csi_plugin` | `csi-register-plugin` in the namespace |
 
 Without the rule, the register fails with a 403 and the deployment fails at
-`-apply-timeout`. Policy names allow only letters, digits, `-` and `*`, so
+`apply_timeout`. Policy names allow only letters, digits, `-` and `*`, so
 match a volume like `nomad_backup_data` with `host_volume "nomad*backup*data"`.
 See Nomad's [ACL policy reference](https://developer.hashicorp.com/nomad/docs/secure/acl/policies).
 
@@ -173,8 +173,8 @@ authorization code flow at your provider:
 ## The git webhook
 
 The webhook makes Nops poll every repository right after a push, instead of
-at the next poll. Generate a random secret into a file, pass it with
-`-webhook-secret-file`, then add a webhook at your forge:
+at the next poll. Generate a random secret into a file, name it in
+`webhook_secret_file`, then add a webhook at your forge:
 
 ```sh
 openssl rand -hex 32 > nops-webhook-secret

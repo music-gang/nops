@@ -1364,7 +1364,7 @@ func TestAFailedDeploymentIsLoggedAtError(t *testing.T) {
 // A target that never has an allocation of its own has nothing to wait for
 // once registered: a periodic or parameterized job only spawns children (or
 // waits to be dispatched), and a job whose groups all have count 0 places
-// nothing. Waiting for an allocation would fail it after -apply-timeout.
+// nothing. Waiting for an allocation would fail it after apply_timeout.
 func TestStepHealthOfATargetThatNeverHasAnAllocationCompletes(t *testing.T) {
 	periodic := managed("web", "auto", nil, taskGroup("g", 1, false))
 	periodic.Periodic = &api.PeriodicConfig{SpecType: strPtr("cron"), Spec: strPtr("0 0 1 1 *")}

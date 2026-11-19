@@ -168,7 +168,7 @@ func TestE2ERetryUnderApprovalStillNeedsApproval(t *testing.T) {
 // The "fetch now" button asks for a poll: a commit pushed just before is picked
 // up without waiting for the (deliberately long) poll interval.
 func TestE2EFetchNow(t *testing.T) {
-	e := newE2E(t, "NOPS_GIT_POLL_INTERVAL=1h")
+	e := newE2E(t, nopsConfig(t, `git_poll_interval = "1h"`+"\n"))
 	jobID := uniqueID(t, e.raw, "fetch")
 
 	e.repo.commit(t, "job "+jobID, map[string]string{
@@ -191,7 +191,7 @@ func TestE2EFetchNow(t *testing.T) {
 // that a deployment asks for when it ends can bring them up to date: In sync
 // after a completed one, Blocked after a failed one.
 func TestE2EJobPageFollowsADeploymentThatEnds(t *testing.T) {
-	e := newE2E(t, "NOPS_DRIFT_INTERVAL=1h")
+	e := newE2E(t, nopsConfig(t, `drift_interval = "1h"`+"\n"))
 	dir := t.TempDir()
 	okJob := uniqueID(t, e.raw, "ends")
 	failJob := uniqueID(t, e.raw, "endsfail")
