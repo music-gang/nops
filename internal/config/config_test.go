@@ -22,17 +22,17 @@ import (
 
 const repo = "https://git.example.com/ops/jobs.git"
 
-// authEnv is what a valid configuration needs besides -git-url: the -config
-// file with the auth block, and the public URL. envOf adds it under every test
+// authEnv is what a valid configuration needs: the -config file with the auth
+// block and a repository, and the public URL. envOf adds it under every test
 // environment, unless the test sets (or blanks) the variable itself. TestMain
 // sets NOPS_CONFIG.
 var authEnv = map[string]string{
 	"NOPS_PUBLIC_URL": "https://nops.example.com",
 }
 
-// authConfig is the -config file of authEnv: authBlock alone. authSecretFile
-// holds its client secret.
-var authConfig, authSecretFile string
+// baseConfig is the -config file of authEnv: authBlock and defaultRepo.
+// authSecretFile holds the client secret.
+var baseConfig, authSecretFile string
 
 // authBlock is the auth block of a valid configuration, which authWant reads.
 func authBlock() string {
@@ -43,6 +43,17 @@ func authBlock() string {
   client_secret_file = "` + authSecretFile + `"
 }
 `
+}
+
+// defaultRepo is the repository of baseConfig, which defaultRepoWant reads.
+const defaultRepo = `repository "default" {
+  url = "` + repo + `"
+}
+`
+
+// defaultRepoWant is c.Repositories from defaultRepo.
+func defaultRepoWant() []Repository {
+	return []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git", Timeout: 2 * time.Minute}}
 }
 
 // authWant is c.Auth from authBlock.
@@ -60,23 +71,23 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	authSecretFile = filepath.Join(dir, "oidc-secret")
-	authConfig = filepath.Join(dir, "auth.hcl")
+	baseConfig = filepath.Join(dir, "nops.hcl")
 	err = os.WriteFile(authSecretFile, []byte("client-secret\n"), 0o600)
 	if err == nil {
-		err = os.WriteFile(authConfig, []byte(authBlock()), 0o600)
+		err = os.WriteFile(baseConfig, []byte(authBlock()+defaultRepo), 0o600)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	authEnv["NOPS_CONFIG"] = authConfig
+	authEnv["NOPS_CONFIG"] = baseConfig
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
 
-// writeConfig writes a -config file of content after authBlock, so that the
-// configuration it is part of is valid.
+// writeConfig writes a -config file of content after authBlock: the
+// configuration is valid once content declares a repository.
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	return writeFile(t, "nops.hcl", authBlock()+content)
@@ -106,20 +117,16 @@ func writeFile(t *testing.T, name, content string) string {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	c, err := Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	c, err := Load(nil, envOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := &Config{
 		NomadAddr:        "http://127.0.0.1:4646",
 		NomadNamespaces:  []string{"default"},
-		GitURL:           repo,
-		GitBranch:        "main",
-		GitUsername:      "git",
-		GitTimeout:       2 * time.Minute,
 		NomadTimeout:     30 * time.Second,
-		Repositories:     []Repository{{Name: "default", URL: repo, Branch: "main", Username: "git", Timeout: 2 * time.Minute}},
-		ConfigFile:       authConfig,
+		Repositories:     defaultRepoWant(),
+		ConfigFile:       baseConfig,
 		DBPath:           "nops.db",
 		ListenAddr:       ":8080",
 		Auth:             authWant(),
@@ -158,7 +165,7 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{"NOPS_GIT_URL": repo}
+			env := map[string]string{}
 			for k, v := range tt.env {
 				env[k] = v
 			}
@@ -177,7 +184,6 @@ func TestLoadPrecedence(t *testing.T) {
 // through its variable, so a typo in a set function or in the env name
 // shows up.
 func TestLoadEveryOption(t *testing.T) {
-	gitTok := writeFile(t, "git-token", "  git-secret\n")
 	appsTok := writeFile(t, "apps-token", "apps-secret\n")
 	bootstrap := secret.New()
 	bootstrapTok := writeFile(t, "bootstrap-token", bootstrap+"\n")
@@ -201,12 +207,6 @@ acl {
 
 	values := map[string]string{
 		"nomad-addr":            "https://nomad.example.com:4646",
-		"git-url":               repo,
-		"git-branch":            "prod",
-		"git-path":              "jobs/apps",
-		"git-username":          "oauth2",
-		"git-token-file":        gitTok,
-		"git-timeout":           "45s",
 		"config":                configFile,
 		"db-path":               "/var/lib/nops/nops.db",
 		"listen-addr":           "127.0.0.1:9000",
@@ -225,16 +225,8 @@ acl {
 		// The rest of the nomad block is the file's, not an option.
 		NomadNamespaces: []string{"default"},
 		NomadTimeout:    30 * time.Second,
-		GitURL:          repo,
-		GitBranch:       "prod",
-		GitPath:         "jobs/apps",
-		GitUsername:     "oauth2",
-		GitTokenFile:    gitTok,
-		GitToken:        "git-secret",
-		GitTimeout:      45 * time.Second,
 		ConfigFile:      configFile,
 		Repositories: []Repository{
-			{Name: "default", URL: repo, Branch: "prod", Path: "jobs/apps", Username: "oauth2", TokenFile: gitTok, Token: "git-secret", Timeout: 45 * time.Second},
 			{Name: "apps", URL: "https://git.example.com/ops/apps.git", Branch: "main", Username: "git", TokenFile: appsTok, Token: "apps-secret", Timeout: 2 * time.Minute},
 		},
 		DBPath:     "/var/lib/nops/nops.db",
@@ -295,7 +287,6 @@ acl {
 func TestLoadInvalid(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "missing")
-	empty := writeFile(t, "empty", " \n")
 	tests := []struct {
 		option string
 		value  string
@@ -308,14 +299,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"nomad-addr", "http://bad host", "invalid character"},
 		{"config", missing, "no such file"},
 		{"config", dir, "is a directory"},
-		{"git-branch", "", "required"},
-		{"git-path", "/etc", "must be a relative path"},
-		{"git-path", "..", "must be a relative path"},
-		{"git-path", "../jobs", "must be a relative path"},
-		{"git-token-file", missing, "no such file"},
-		{"git-token-file", empty, "is empty"},
-		{"git-timeout", "soon", "invalid duration"},
-		{"git-timeout", "0s", "must be positive"},
 		{"db-path", "", "required"},
 		{"listen-addr", "8080", "invalid address"},
 		{"listen-addr", "", "invalid address"},
@@ -341,7 +324,7 @@ func TestLoadInvalid(t *testing.T) {
 			t.Fatalf("unknown option %s", tt.option)
 		}
 		t.Run(tt.option+"="+tt.value, func(t *testing.T) {
-			base := map[string]string{"NOPS_GIT_URL": repo}
+			base := map[string]string{}
 
 			// Through the flag: the error names the flag.
 			_, err := Load([]string{"-" + o.name + "=" + tt.value}, envOf(base), io.Discard)
@@ -350,7 +333,7 @@ func TestLoadInvalid(t *testing.T) {
 			// Through the variable: the error names the variable. An empty
 			// variable is unset, so only a required option without a default
 			// fails that way.
-			env := map[string]string{"NOPS_GIT_URL": repo}
+			env := map[string]string{}
 			env[o.env()] = tt.value
 			_, err = Load(nil, envOf(env), io.Discard)
 			switch {
@@ -373,7 +356,7 @@ func TestLoadInvalid(t *testing.T) {
 // still the operator's call to override for a real provider).
 func TestLoadPublicURLDefault(t *testing.T) {
 	loginArgs := func(extra ...string) []string {
-		return append([]string{"-git-url", repo, "-config", authConfig}, extra...)
+		return append([]string{"-config", baseConfig}, extra...)
 	}
 
 	tests := []struct {
@@ -418,7 +401,7 @@ func TestLoadPublicURLDefault(t *testing.T) {
 // component: there is no separate flag (docs/running-nops.md#under-a-sub-path).
 func TestLoadBasePath(t *testing.T) {
 	args := func(publicURL string) []string {
-		return []string{"-git-url", repo, "-config", authConfig, "-public-url", publicURL}
+		return []string{"-config", baseConfig, "-public-url", publicURL}
 	}
 	tests := []struct {
 		publicURL string
@@ -443,7 +426,7 @@ func TestLoadBasePath(t *testing.T) {
 	}
 
 	// No -public-url at all: the derived default has no path either.
-	c, err := Load([]string{"-git-url", repo, "-config", authConfig}, rawEnvOf(nil), io.Discard)
+	c, err := Load([]string{"-config", baseConfig}, rawEnvOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,39 +448,24 @@ func checkErr(t *testing.T, err error, prefix, want string) {
 	t.Errorf("error %q has no line starting with %q containing %q", err, prefix, want)
 }
 
-func TestLoadCrossChecks(t *testing.T) {
+// A git token goes only over https; without one, any URL is accepted: a public
+// repository needs no auth. The errors are in TestLoadRepositoriesInvalid.
+func TestLoadRepositoryURLs(t *testing.T) {
 	tok := writeFile(t, "token", "secret")
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"token with ssh url", []string{"-git-url", "git@git.example.com:ops/jobs.git", "-git-token-file", tok}, "needs an https:// -git-url"},
-		{"token with http url", []string{"-git-url", "http://git.example.com/jobs.git", "-git-token-file", tok}, "needs an https:// -git-url"},
-		{"token without username", []string{"-git-url", repo, "-git-token-file", tok, "-git-username="}, "needs a non-empty -git-username"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(tt.args, envOf(nil), io.Discard)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want %q", err, tt.want)
-			}
-		})
-	}
-
-	// Without a token, an ssh URL is accepted: a public repo needs no auth.
-	if _, err := Load([]string{"-git-url", "git@git.example.com:ops/jobs.git"}, envOf(nil), io.Discard); err != nil {
-		t.Errorf("ssh url without token: %v", err)
-	}
-	// Uppercase scheme is still https.
-	if _, err := Load([]string{"-git-url", "HTTPS://git.example.com/jobs.git", "-git-token-file", tok}, envOf(nil), io.Discard); err != nil {
-		t.Errorf("uppercase https: %v", err)
+	for name, body := range map[string]string{
+		"ssh url without token":  `url = "git@git.example.com:ops/jobs.git"`,
+		"uppercase https, token": `url = "HTTPS://git.example.com/jobs.git"` + "\n" + `token_file = "` + tok + `"`,
+	} {
+		file := writeConfig(t, "repository \"apps\" {\n"+body+"\n}\n")
+		if _, err := Load([]string{"-config", file}, envOf(nil), io.Discard); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
 // The options that are gone stop Nops, and say what replaces them.
 func TestLoadRemovedOptions(t *testing.T) {
-	full := map[string]string{"NOPS_GIT_URL": repo}
+	full := map[string]string{}
 
 	// The allowlist options are gone: Nops refuses them and says what replaces them.
 	for name, set := range map[string]func(env map[string]string, args *[]string){
@@ -541,11 +509,11 @@ func TestLoadRemovedOptions(t *testing.T) {
 }
 
 func TestLoadReportsEveryError(t *testing.T) {
-	_, err := Load([]string{"-apply-timeout=0s", "-log-level=loud"}, envOf(map[string]string{"NOPS_DB_PATH": ""}), io.Discard)
+	_, err := Load([]string{"-config", writeConfig(t, ""), "-apply-timeout=0s", "-log-level=loud"}, envOf(nil), io.Discard)
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"-git-url or a repository block in -config is required", "flag -apply-timeout:", "flag -log-level:"} {
+	for _, want := range []string{"a repository block in -config is required", "flag -apply-timeout:", "flag -log-level:"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -553,7 +521,7 @@ func TestLoadReportsEveryError(t *testing.T) {
 }
 
 func TestLoadArguments(t *testing.T) {
-	env := envOf(map[string]string{"NOPS_GIT_URL": repo})
+	env := envOf(map[string]string{})
 
 	var out strings.Builder
 	if _, err := Load([]string{"-h"}, env, &out); !errors.Is(err, flag.ErrHelp) {
@@ -666,7 +634,7 @@ func TestNomadIgnoresNomadEnv(t *testing.T) {
 	t.Setenv("NOMAD_CACERT", "/leak/ca.pem")
 	t.Setenv("NOMAD_SKIP_VERIFY", "true")
 
-	c, err := Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	c, err := Load(nil, envOf(nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,11 +682,11 @@ func TestSecretValueFallback(t *testing.T) {
 		get    func(*Config) string
 		extra  map[string]string // other env needed for a cross-check (e.g. a URL for a token)
 	}{
-		{"NOPS_GIT_TOKEN", "plain-git-token", func(c *Config) string { return c.GitToken }, nil},
+		{"NOPS_WEBHOOK_SECRET", "plain-webhook-secret", func(c *Config) string { return c.WebhookSecret }, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.envVar, func(t *testing.T) {
-			env := map[string]string{"NOPS_GIT_URL": repo, tt.envVar: tt.value}
+			env := map[string]string{tt.envVar: tt.value}
 			for k, v := range tt.extra {
 				env[k] = v
 			}
@@ -734,23 +702,23 @@ func TestSecretValueFallback(t *testing.T) {
 }
 
 func TestSecretValueFallbackLosesToFile(t *testing.T) {
-	tok := writeFile(t, "git-token-file", "from-file")
-	env := map[string]string{"NOPS_GIT_URL": repo, "NOPS_GIT_TOKEN_FILE": tok, "NOPS_GIT_TOKEN": "from-plain-env"}
+	tok := writeFile(t, "webhook-secret-file", "from-file")
+	env := map[string]string{"NOPS_WEBHOOK_SECRET_FILE": tok, "NOPS_WEBHOOK_SECRET": "from-plain-env"}
 	c, err := Load(nil, envOf(env), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.GitToken != "from-file" {
-		t.Errorf("GitToken = %q, want the file to win", c.GitToken)
+	if c.WebhookSecret != "from-file" {
+		t.Errorf("WebhookSecret = %q, want the file to win", c.WebhookSecret)
 	}
 
 	// A flag file also wins over the plain env var.
-	c, err = Load([]string{"-git-url", repo, "-git-token-file", tok}, envOf(map[string]string{"NOPS_GIT_TOKEN": "from-plain-env"}), io.Discard)
+	c, err = Load([]string{"-webhook-secret-file", tok}, envOf(map[string]string{"NOPS_WEBHOOK_SECRET": "from-plain-env"}), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.GitToken != "from-file" {
-		t.Errorf("GitToken = %q, want the flag file to win", c.GitToken)
+	if c.WebhookSecret != "from-file" {
+		t.Errorf("WebhookSecret = %q, want the flag file to win", c.WebhookSecret)
 	}
 }
 
@@ -760,11 +728,11 @@ func TestSecretValueFallbackInvalid(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"whitespace only", map[string]string{"NOPS_GIT_TOKEN": "   "}, "NOPS_GIT_TOKEN: is empty"},
+		{"whitespace only", map[string]string{"NOPS_WEBHOOK_SECRET": "   "}, "NOPS_WEBHOOK_SECRET: is empty"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{"NOPS_GIT_URL": repo}
+			env := map[string]string{}
 			for k, v := range tt.env {
 				env[k] = v
 			}
@@ -924,14 +892,14 @@ func TestDocSecretsTableMatchesTheSecretValues(t *testing.T) {
 // names a zone, and what is named is an IANA zone that Load resolves, so a
 // typo stops the start rather than shifting every window.
 func TestLoadSyncWindowTimeZone(t *testing.T) {
-	c, err := Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	c, err := Load(nil, envOf(nil), io.Discard)
 	if err != nil || c.SyncWindowLocation != time.UTC {
 		t.Fatalf("default = %v, %v, want UTC", c.SyncWindowLocation, err)
 	}
 	if _, err := time.LoadLocation("Europe/Rome"); err != nil {
 		t.Skipf("no tz database: %v", err)
 	}
-	c, err = Load([]string{"-git-url", repo, "-sync-window-time-zone", "Europe/Rome"}, envOf(nil), io.Discard)
+	c, err = Load([]string{"-sync-window-time-zone", "Europe/Rome"}, envOf(nil), io.Discard)
 	if err != nil || c.SyncWindowLocation.String() != "Europe/Rome" {
 		t.Errorf("-sync-window-time-zone Europe/Rome = %v, %v", c.SyncWindowLocation, err)
 	}
@@ -997,6 +965,7 @@ repository "infra" {
 func TestLoadRepositoriesInvalid(t *testing.T) {
 	dir := t.TempDir()
 	tok := writeFile(t, "token", "secret")
+	empty := writeFile(t, "empty", " \n")
 	block := func(name, body string) string { return "repository \"" + name + "\" {\n" + body + "\n}\n" }
 	apps := block("apps", `url = "https://git.example.com/ops/apps.git"`)
 	tests := []struct {
@@ -1006,14 +975,8 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"no repository", "", nil, nil, "-git-url or a repository block in -config is required"},
-		{"an empty file", " ", nil, nil, "-git-url or a repository block in -config is required"},
-		{"a -git-* option without -git-url", apps, []string{"-git-branch=prod"}, nil, "-git-branch is set without -git-url"},
-		{"a -git-* variable without -git-url", apps, nil, map[string]string{"NOPS_GIT_PATH": "jobs"}, "-git-path is set without -git-url"},
-		{"a git token without -git-url", apps, nil, map[string]string{"NOPS_GIT_TOKEN": "secret"}, "NOPS_GIT_TOKEN is set without -git-url"},
-		{"a git token file without -git-url", apps, []string{"-git-token-file=" + tok}, nil, "-git-token-file is set without -git-url"},
-		{"a git timeout without -git-url", apps, []string{"-git-timeout=1m"}, nil, "-git-timeout is set without -git-url"},
-		{"default next to -git-url", block("default", `url = "https://git.example.com/x.git"`), []string{"-git-url=" + repo}, nil, `repository "default" is the one of -git-url`},
+		{"no -config", "", nil, map[string]string{"NOPS_CONFIG": ""}, "a repository block in -config is required"},
+		{"no repository", " ", nil, nil, "a repository block in -config is required"},
 		{"a name twice", apps + apps, nil, nil, `repository "apps" is declared twice`},
 		{"a bad name", block("my apps", `url = "https://git.example.com/x.git"`), nil, nil, "the name may hold only letters, digits, - and _"},
 		{"no url", block("apps", `branch = "main"`), nil, nil, `Missing required argument`},
@@ -1021,6 +984,7 @@ func TestLoadRepositoriesInvalid(t *testing.T) {
 		{"an empty branch", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`branch = ""`), nil, nil, `repository "apps": branch: required`},
 		{"a path outside", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`path = "../x"`), nil, nil, `repository "apps": path: "../x" must be a relative path`},
 		{"a missing token file", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token_file = "`+filepath.Join(dir, "missing")+`"`), nil, nil, `repository "apps": token_file: open`},
+		{"an empty token file", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`token_file = "`+empty+`"`), nil, nil, `repository "apps": token_file: ` + empty + ` is empty`},
 		{"a token over http", block("apps", `url = "http://git.example.com/x.git"`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs an https:// url in repository "apps"`},
 		{"a token without username", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`username = ""`+"\n"+`token_file = "`+tok+`"`), nil, nil, `a git token needs a non-empty username in repository "apps"`},
 		{"an empty jobs", block("apps", `url = "https://git.example.com/x.git"`+"\n"+`jobs = []`), nil, nil, `repository "apps": jobs: is empty`},
@@ -1237,8 +1201,8 @@ nomad {
 	}
 
 	// An invalid addr the flag overrides is not read.
-	bad := writeConfig(t, "nomad {\n  addr = \"nomad:4646\"\n}\n")
-	if _, err := Load([]string{"-git-url", repo, "-config", bad, "-nomad-addr", "http://from-flag:4646"}, envOf(nil), io.Discard); err != nil {
+	bad := writeConfig(t, defaultRepo+"nomad {\n  addr = \"nomad:4646\"\n}\n")
+	if _, err := Load([]string{"-config", bad, "-nomad-addr", "http://from-flag:4646"}, envOf(nil), io.Discard); err != nil {
 		t.Errorf("addr overridden by the flag: %v", err)
 	}
 }
@@ -1319,7 +1283,7 @@ func TestLoadNomadOptionsRemoved(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(append([]string{"-git-url", repo}, tt.args...), envOf(tt.env), io.Discard)
+			_, err := Load(tt.args, envOf(tt.env), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.name+" was removed") || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want %s removed, replaced by %s", err, tt.name, tt.want)
 			}
@@ -1434,7 +1398,7 @@ client_secret_file = "`+secretFile+`"
 	}
 
 	// Without -config at all, the error says where the block goes.
-	_, err := Load([]string{"-git-url", repo}, rawEnvOf(nil), io.Discard)
+	_, err := Load(nil, rawEnvOf(nil), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "an auth block in -config is required") {
 		t.Errorf("no -config: err = %v, want the auth block required", err)
 	}
@@ -1458,16 +1422,16 @@ func TestLoadAuthOptionsRemoved(t *testing.T) {
 		{"users-file", "/secrets/users", "NOPS_USERS_FILE", `users_file in an auth block of type "basic"`},
 		{"groups-file", "/secrets/groups", "NOPS_GROUPS_FILE", `groups_file in an auth block of type "basic"`},
 	} {
-		_, err := Load([]string{"-git-url", repo, "-" + tt.flag, tt.value}, envOf(nil), io.Discard)
+		_, err := Load([]string{"-" + tt.flag, tt.value}, envOf(nil), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "flag -"+tt.flag+" was removed: "+tt.want) {
 			t.Errorf("-%s: err = %v, want it removed for %q", tt.flag, err, tt.want)
 		}
-		_, err = Load([]string{"-git-url", repo}, envOf(map[string]string{tt.env: tt.value}), io.Discard)
+		_, err = Load(nil, envOf(map[string]string{tt.env: tt.value}), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), tt.env+" was removed: "+tt.want) {
 			t.Errorf("%s: err = %v, want it removed for %q", tt.env, err, tt.want)
 		}
 	}
-	_, err := Load([]string{"-git-url", repo}, envOf(map[string]string{"NOPS_OIDC_CLIENT_SECRET": "s3cret"}), io.Discard)
+	_, err := Load(nil, envOf(map[string]string{"NOPS_OIDC_CLIENT_SECRET": "s3cret"}), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), `NOPS_OIDC_CLIENT_SECRET was removed: client_secret_file in an auth block of type "oidc"`) {
 		t.Errorf("NOPS_OIDC_CLIENT_SECRET: err = %v, want it removed", err)
 	}
@@ -1537,7 +1501,7 @@ notify "gotify" {
 	}
 
 	// Without a block, no adapter is on.
-	c, err = Load([]string{"-git-url", repo}, envOf(nil), io.Discard)
+	c, err = Load(nil, envOf(nil), io.Discard)
 	if err != nil || len(c.Notify) != 0 {
 		t.Errorf("without a block: Notify = %v, %v", c.Notify, err)
 	}
@@ -1631,10 +1595,10 @@ func TestLoadNotifyOptionsRemoved(t *testing.T) {
 			if tt.valueEnv != "" {
 				vars = append(vars, tt.valueEnv)
 			}
-			_, err := Load([]string{"-git-url", repo, "-" + tt.flag, "x"}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-" + tt.flag, "x"}, envOf(nil), io.Discard)
 			errs := map[string]error{"flag -" + tt.flag: err}
 			for _, v := range vars {
-				_, errs[v] = Load([]string{"-git-url", repo}, envOf(map[string]string{v: "x"}), io.Discard)
+				_, errs[v] = Load(nil, envOf(map[string]string{v: "x"}), io.Discard)
 			}
 			for source, err := range errs {
 				if err == nil || !strings.Contains(err.Error(), source+" was removed") || !strings.Contains(err.Error(), tt.want) {
@@ -1668,8 +1632,8 @@ acl {
 
 	// Without a block, or with an empty one, the ACL is off.
 	for _, args := range [][]string{
-		{"-git-url", repo},
-		{"-git-url", repo, "-config", writeConfig(t, "acl {}\n")},
+		nil,
+		{"-config", writeConfig(t, defaultRepo+"acl {}\n")},
 	} {
 		c, err := Load(args, envOf(nil), io.Discard)
 		if err != nil || c.ACL || c.ACLBootstrapToken != "" {
@@ -1701,7 +1665,7 @@ bootstrap_token_file = "` + empty + `"`), "acl: bootstrap_token_file: " + empty 
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load([]string{"-git-url", repo, "-config", writeConfig(t, tt.file)}, envOf(nil), io.Discard)
+			_, err := Load([]string{"-config", writeConfig(t, defaultRepo+tt.file)}, envOf(nil), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
@@ -1729,9 +1693,44 @@ func TestLoadACLOptionsRemoved(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(append([]string{"-git-url", repo}, tt.args...), envOf(tt.env), io.Discard)
+			_, err := Load(tt.args, envOf(tt.env), io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tt.name+" was removed") || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want %s removed, replaced by %s", err, tt.name, tt.want)
+			}
+		})
+	}
+}
+
+// The -git-* options but -git-poll-interval moved into the repository block:
+// each one, its variable, and the variable that held the token stop Nops,
+// naming the attribute that replaces it.
+func TestLoadGitOptionsRemoved(t *testing.T) {
+	tok := writeFile(t, "token", "secret")
+	tests := []struct {
+		flag, value, valueEnv, want string
+	}{
+		{"git-url", repo, "", "url in a repository block"},
+		{"git-branch", "prod", "", "branch in a repository block"},
+		{"git-path", "jobs", "", "path in a repository block"},
+		{"git-username", "oauth2", "", "username in a repository block"},
+		{"git-token-file", tok, "NOPS_GIT_TOKEN", "token_file in a repository block"},
+		{"git-timeout", "1m", "", "timeout in a repository block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			vars := []string{removedOption{name: tt.flag}.env()}
+			if tt.valueEnv != "" {
+				vars = append(vars, tt.valueEnv)
+			}
+			_, err := Load([]string{"-" + tt.flag, tt.value}, envOf(nil), io.Discard)
+			errs := map[string]error{"flag -" + tt.flag: err}
+			for _, v := range vars {
+				_, errs[v] = Load(nil, envOf(map[string]string{v: tt.value}), io.Discard)
+			}
+			for source, err := range errs {
+				if err == nil || !strings.Contains(err.Error(), source+" was removed: "+tt.want) || !strings.Contains(err.Error(), `name it "default"`) {
+					t.Errorf("%s: err = %v, want it removed, replaced by %s", source, err, tt.want)
+				}
 			}
 		})
 	}

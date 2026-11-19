@@ -28,7 +28,6 @@ inject secrets into the environment. These variables have no flag.
 
 | From a file (flag) | Value in the environment |
 |---|---|
-| `NOPS_GIT_TOKEN_FILE` (`-git-token-file`) | `NOPS_GIT_TOKEN` |
 | `NOPS_WEBHOOK_SECRET_FILE` (`-webhook-secret-file`) | `NOPS_WEBHOOK_SECRET` |
 
 A secret of the [configuration file](#configuration-file) is read only from
@@ -68,23 +67,6 @@ nomad {
 Nops refuses to start with another `-nomad-*` flag, its variable, or
 `NOPS_NOMAD_TOKEN`, and names the attribute that replaces it.
 
-## Git
-
-The `-git-*` options are the repository named `default`. Set without
-`-git-url`, they stop Nops.
-
-| Flag | Variable | Default | Meaning |
-|---|---|---|---|
-| `-git-url` | `NOPS_GIT_URL` | none | URL of the `default` repository. Required without a `repository` block. |
-| `-git-branch` | `NOPS_GIT_BRANCH` | `main` | Branch to read. |
-| `-git-path` | `NOPS_GIT_PATH` | none | Subdirectory holding the job files. Unset: the root. |
-| `-git-username` | `NOPS_GIT_USERNAME` | `git` | Username sent with the token: `oauth2` for GitLab, the user name for Gitea. |
-| `-git-token-file` | `NOPS_GIT_TOKEN_FILE` | none | File holding the HTTPS token. Unset: public repository. |
-| `-git-timeout` | `NOPS_GIT_TIMEOUT` | `2m` | How long a poll of the repository may take, the clone included. |
-
-Nops reads private repositories over HTTPS with a token. It doesn't support
-SSH. The release image can't read `file://` URLs.
-
 ## Configuration file
 
 | Flag | Variable | Default | Meaning |
@@ -93,7 +75,7 @@ SSH. The release image can't read `file://` URLs.
 
 ### Repositories
 
-Each `repository` block is one more repository of jobs:
+Each `repository` block is a repository of jobs. Nops needs at least one:
 
 ```hcl
 repository "apps" {
@@ -110,7 +92,7 @@ repository "apps" {
 | `url` | **required** | URL of the repository. |
 | `branch` | `main` | Branch to read. |
 | `path` | none | Subdirectory holding the job files. Unset: the root. |
-| `username` | `git` | Username sent with the token. |
+| `username` | `git` | Username sent with the token: `oauth2` for GitLab, the user name for Gitea. |
 | `token_file` | none | File holding the HTTPS token. Unset: public repository. |
 | `jobs` | none | The jobs the repository may declare, as `<namespace>/<job ID>` patterns. Unset: any job. |
 | `timeout` | `2m` | How long a poll of the repository may take, the clone included. |
@@ -122,9 +104,11 @@ repository "apps" {
   `default` namespace, and `api-*` doesn't match `api`. Nops
   [refuses](architecture.md#rules-detection-keeps) a file whose job no
   pattern matches.
-- A name used twice, a `repository "default"` block next to `-git-url`, an
-  empty `jobs`, or a pattern that is malformed or matches no managed
-  namespace stops Nops.
+- A name used twice, an empty `jobs`, or a pattern that is malformed or
+  matches no managed namespace stops Nops.
+
+Nops reads private repositories over HTTPS with a token. It doesn't support
+SSH. The release image can't read `file://` URLs.
 
 ### Listen
 

@@ -158,7 +158,7 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad
 	if n.namespaces == nil {
 		n.namespaces = []string{"default"}
 	}
-	config := withNomadBlock(t, env, n, writeNopsToken(t, n.namespaces))
+	config := withServerBlocks(t, env, repoURL, n, writeNopsToken(t, n.namespaces))
 
 	dbPath := filepath.Join(t.TempDir(), "nops.db")
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
@@ -166,8 +166,6 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad
 	cmd := exec.Command(bin, "serve")
 	cmd.Env = append(os.Environ(),
 		"NOPS_NOMAD_ADDR="+addr,
-		"NOPS_GIT_URL="+repoURL,
-		"NOPS_GIT_BRANCH=main",
 		"NOPS_DB_PATH="+dbPath,
 		"NOPS_LISTEN_ADDR="+listenAddr,
 		config,
@@ -218,10 +216,11 @@ func startNopsTLS(t *testing.T, repoURL string, roots *x509.CertPool, n e2eNomad
 	return nil
 }
 
-// withNomadBlock adds the nomad block of n, with tokenFile, to the -config
-// file of env (the last NOPS_CONFIG, as for the process), or to a new one
-// without, and returns the variable that names it.
-func withNomadBlock(t *testing.T, env []string, n e2eNomad, tokenFile string) string {
+// withServerBlocks adds the repository "default" at repoURL and the nomad block
+// of n, with tokenFile, to the -config file of env (the last NOPS_CONFIG, as
+// for the process), or to a new one without, and returns the variable that
+// names it.
+func withServerBlocks(t *testing.T, env []string, repoURL string, n e2eNomad, tokenFile string) string {
 	t.Helper()
 	config := nopsConfig(t, "")
 	for _, kv := range env {
@@ -233,8 +232,8 @@ func withNomadBlock(t *testing.T, env []string, n e2eNomad, tokenFile string) st
 	for i, ns := range n.namespaces {
 		quoted[i] = strconv.Quote(ns)
 	}
-	block := fmt.Sprintf("\nnomad {\n  namespaces = [%s]\n  token_file = %q\n  ui_url     = %q\n}\n",
-		strings.Join(quoted, ", "), tokenFile, n.uiURL)
+	block := fmt.Sprintf("\nrepository \"default\" {\n  url = %q\n}\n\nnomad {\n  namespaces = [%s]\n  token_file = %q\n  ui_url     = %q\n}\n",
+		repoURL, strings.Join(quoted, ", "), tokenFile, n.uiURL)
 	f, err := os.OpenFile(strings.TrimPrefix(config, "NOPS_CONFIG="), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)

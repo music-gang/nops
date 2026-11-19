@@ -28,6 +28,7 @@ mkdir "$tmp/examples"
 echo 'job "web" {}' >"$tmp/examples/web.nomad.hcl"
 echo 'count = 1' >"$tmp/examples/web.vars.hcl"
 dir=$tmp/state
+unset NOPS_DEV_GIT_URL
 
 setup_state "$dir" "$tmp/nops" "$tmp/examples" || { echo "FAIL setup: exit $?"; failed=1; }
 
@@ -35,7 +36,11 @@ check users "$admin_user" "$(cat "$dir/users")"
 check groups 'admin: admin' "$(cat "$dir/groups")"
 check token nops_stub "$(cat "$dir/bootstrap.token")"
 check token-mode "$dir/bootstrap.token" "$(find "$dir/bootstrap.token" -perm 600)"
-check config "auth \"basic\" {
+check config "repository \"default\" {
+  url = \"file://$dir/jobs\"
+}
+
+auth \"basic\" {
   type        = \"basic\"
   users_file  = \"$dir/users\"
   groups_file = \"$dir/groups\"

@@ -178,7 +178,7 @@ acl {
 // flip without the token that administers it.
 func TestE2EACLRefusesToStartWithoutABootstrapToken(t *testing.T) {
 	cmd := exec.Command(buildNopsBinary(t), "serve")
-	cmd.Env = append(os.Environ(), nopsConfig(t, "acl {\n  enabled = true\n}\n"), "NOPS_GIT_URL=https://git.example.com/x.git")
+	cmd.Env = append(os.Environ(), nopsConfig(t, "repository \"default\" {\n  url = \"https://git.example.com/x.git\"\n}\n\nacl {\n  enabled = true\n}\n"))
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "acl: bootstrap_token_file: required with enabled = true") {
 		t.Errorf("err %v, output %q, want a refusal that names the bootstrap token", err, out)
