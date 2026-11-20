@@ -4,7 +4,8 @@
 // Every option is in the file. A few also have a flag and an environment
 // variable (NOPS_ followed by the flag name in upper case, with dashes as
 // underscores): a flag wins over the variable, the variable over the file, the
-// file over the default. nops reads nothing else: the standard NOMAD_*
+// file over the default. The variables are deprecated: Load lists the ones set
+// in Config.DeprecatedVariables. nops reads nothing else: the standard NOMAD_*
 // variables are ignored. The reference for users is docs/configuration.md:
 // keep it aligned with the options table and the file's schema here.
 package config
@@ -151,6 +152,18 @@ type Config struct {
 	SyncWindowLocation *time.Location
 
 	LogLevel slog.Level
+
+	// DeprecatedVariables are the NOPS_* variables set, whether a flag wins
+	// over them or not, in the order of the options. nops serve logs a WARN
+	// for each.
+	DeprecatedVariables []DeprecatedVariable
+}
+
+// DeprecatedVariable is a NOPS_* variable of nops serve that is set, and what
+// replaces it.
+type DeprecatedVariable struct {
+	Name       string
+	ReplacedBy string
 }
 
 // Repository is one repository of jobs.
@@ -205,6 +218,8 @@ type option struct {
 	def   string
 	usage string
 	set   func(c *Config, v string) error
+	// replacedBy says what replaces the deprecated env var.
+	replacedBy string
 }
 
 func (o option) env() string {
@@ -212,24 +227,30 @@ func (o option) env() string {
 }
 
 var options = []option{
-	{name: "nomad-addr", def: defaultNomadAddr, usage: "Nomad HTTP API address (wins over addr in the nomad block of -config)",
+	{name: "nomad-addr", replacedBy: nomadReplacement("addr"),
+		def: defaultNomadAddr, usage: "Nomad HTTP API address (wins over addr in the nomad block of -config)",
 		set: func(c *Config, v string) (err error) { c.NomadAddr, err = httpURL(v); return }},
 
-	{name: "config", usage: "HCL `file` of the options",
-		set: func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
+	{name: "config", replacedBy: "the -config flag",
+		usage: "HCL `file` of the options",
+		set:   func(c *Config, v string) (err error) { c.ConfigFile, err = readableFile(v); return }},
 
-	{name: "db-path", def: "nops.db", usage: "SQLite database `file` (wins over db_path in -config)",
+	{name: "db-path", replacedBy: topLevelReplacement("db_path", "storage-intervals-and-timeouts"),
+		def: "nops.db", usage: "SQLite database `file` (wins over db_path in -config)",
 		set: func(c *Config, v string) (err error) { c.DBPath, err = required(v); return }},
-	{name: "listen-addr", def: ":8080", usage: "address of the dashboard and the git webhook (wins over addr in the listen block of -config)",
+	{name: "listen-addr", replacedBy: "addr in the listen block of -config (docs/configuration.md#listen)",
+		def: ":8080", usage: "address of the dashboard and the git webhook (wins over addr in the listen block of -config)",
 		set: (*Config).setListenAddr},
 
-	{name: "public-url", usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr; wins over public_url in -config)",
+	{name: "public-url", replacedBy: topLevelReplacement("public_url", "dashboard"),
+		usage: "external URL of the dashboard: the OIDC redirect URL and the links in notifications are built on it, and its own path (if any) becomes the dashboard's base path (default: derived from -listen-addr; wins over public_url in -config)",
 		set: func(c *Config, v string) (err error) {
 			c.PublicURL, err = optionalURL(v)
 			return
 		}},
 
-	{name: "log-level", def: "info", usage: "log level: debug, info, warn or error (wins over log_level in -config)",
+	{name: "log-level", replacedBy: topLevelReplacement("log_level", "storage-intervals-and-timeouts"),
+		def: "info", usage: "log level: debug, info, warn or error (wins over log_level in -config)",
 		set: func(c *Config, v string) error { return c.LogLevel.UnmarshalText([]byte(v)) }},
 }
 
@@ -397,10 +418,14 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	explicit := make(map[string]bool) // the options given by flag or variable
 	for i, o := range options {
 		v, source := o.def, "-"+o.name+" / "+o.env()
+		e := getenv(o.env())
+		if e != "" {
+			c.DeprecatedVariables = append(c.DeprecatedVariables, DeprecatedVariable{Name: o.env(), ReplacedBy: o.replacedBy})
+		}
 		if set[o.name] {
 			v, source = vals[i].s, "flag -"+o.name
 			explicit[o.name] = true
-		} else if e := getenv(o.env()); e != "" {
+		} else if e != "" {
 			v, source = e, o.env()
 			explicit[o.name] = true
 		}

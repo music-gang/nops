@@ -8,9 +8,10 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
 
 - Every option is in the [configuration file](#configuration-file). Only
   `-config`, `-listen-addr`, `-public-url`, `-db-path`, `-nomad-addr` and
-  `-log-level` are also flags, each with an environment variable: `NOPS_`
-  plus the flag name in upper case, dashes as underscores
-  (`-db-path` → `NOPS_DB_PATH`).
+  `-log-level` are also flags. Each still reads an environment variable,
+  `NOPS_` plus the flag name in upper case, dashes as underscores
+  (`-db-path` → `NOPS_DB_PATH`), but logs a WARN at start naming the
+  attribute that replaces it.
 - Precedence: flag, then variable, then the
   [configuration file](#configuration-file), then default. An empty variable
   counts as unset.

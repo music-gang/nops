@@ -76,6 +76,9 @@ func main() {
 // client secret and the webhook secret.
 func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	log.Info("starting", startupAttrs(cfg)...)
+	for _, v := range cfg.DeprecatedVariables {
+		log.Warn(v.Name + " is deprecated: use " + v.ReplacedBy)
+	}
 	if cfg.NomadTLSSkipVerify {
 		log.Warn("Nomad server certificate verification is disabled (tls_skip_verify in the nomad block)")
 	}
