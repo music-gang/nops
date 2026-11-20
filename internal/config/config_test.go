@@ -145,6 +145,7 @@ func TestLoadDefaults(t *testing.T) {
 		SyncWindowLocation: time.UTC,
 		LogLevel:           slog.LevelInfo,
 	}
+	c.DeprecatedVariables = nil // envOf sets two: TestLoadDeprecatedVariables
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults:\n got %+v\nwant %+v", c, want)
 	}
@@ -275,6 +276,7 @@ acl {
 			if err != nil {
 				t.Fatal(err)
 			}
+			c.DeprecatedVariables = nil // TestLoadDeprecatedVariables
 			if !reflect.DeepEqual(c, &want) {
 				t.Errorf("\n got %+v\nwant %+v", c, &want)
 			}
@@ -580,7 +582,7 @@ func TestNoOptionTakesAClientVariable(t *testing.T) {
 func TestOptionsTable(t *testing.T) {
 	seen := make(map[string]bool)
 	for _, o := range options {
-		if o.name == "" || o.usage == "" || o.set == nil {
+		if o.name == "" || o.usage == "" || o.set == nil || o.replacedBy == "" {
 			t.Errorf("option %+v is incomplete", o)
 		}
 		if seen[o.name] {
@@ -1668,6 +1670,39 @@ public_url = "nops.example.com"
 `)
 	if _, err := Load([]string{"-config", bad, "-log-level", "info", "-db-path", "nops.db", "-public-url", "https://nops.example.com"}, envOf(nil), io.Discard); err != nil {
 		t.Errorf("attributes overridden by the flags: %v", err)
+	}
+}
+
+// Every NOPS_* variable set is deprecated, also when its flag wins, and names
+// what replaces it.
+func TestLoadDeprecatedVariables(t *testing.T) {
+	file := writeConfig(t, defaultRepo)
+	env := map[string]string{
+		"NOPS_CONFIG": file, "NOPS_PUBLIC_URL": "https://nops.example.com", "NOPS_NOMAD_ADDR": "https://nomad.example.com:4646",
+		"NOPS_DB_PATH": "env.db", "NOPS_LISTEN_ADDR": ":9090", "NOPS_LOG_LEVEL": "warn",
+	}
+	c, err := Load([]string{"-db-path", "flag.db"}, rawEnvOf(env), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []DeprecatedVariable{
+		{"NOPS_NOMAD_ADDR", "addr in the nomad block of -config (docs/configuration.md#nomad)"},
+		{"NOPS_CONFIG", "the -config flag"},
+		{"NOPS_DB_PATH", "db_path at the top level of -config (docs/configuration.md#storage-intervals-and-timeouts)"},
+		{"NOPS_LISTEN_ADDR", "addr in the listen block of -config (docs/configuration.md#listen)"},
+		{"NOPS_PUBLIC_URL", "public_url at the top level of -config (docs/configuration.md#dashboard)"},
+		{"NOPS_LOG_LEVEL", "log_level at the top level of -config (docs/configuration.md#storage-intervals-and-timeouts)"},
+	}
+	if !reflect.DeepEqual(c.DeprecatedVariables, want) {
+		t.Errorf("deprecated variables = %q, want %q", c.DeprecatedVariables, want)
+	}
+
+	c, err = Load([]string{"-config", file}, rawEnvOf(map[string]string{"NOPS_DB_PATH": ""}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DeprecatedVariables != nil {
+		t.Errorf("without variables, deprecated variables = %q, want none", c.DeprecatedVariables)
 	}
 }
 

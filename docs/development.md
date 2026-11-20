@@ -290,6 +290,6 @@ The words of [the glossary](glossary.md), plus:
 - Consumers define small interfaces.
 - No `init()` with side effects, no global state; inject time.
 - Log with `log/slog`.
-- Every flag has its `NOPS_*` variable; every interval and timeout is
-  configurable.
+- Every option is in the configuration file, and a new flag gets no
+  `NOPS_*` variable; every interval and timeout is configurable.
 - Prefer an established package to writing a new library.

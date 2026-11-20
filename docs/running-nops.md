@@ -49,6 +49,7 @@ group "nops" {
     config {
       image = "ghcr.io/music-gang/nops:0.15"
       ports = ["http"]
+      args  = ["serve", "-config", "${NOMAD_TASK_DIR}/nops.hcl"]
     }
 
     volume_mount {
@@ -72,6 +73,13 @@ group "nops" {
       destination = "local/nops.hcl"
       change_mode = "restart"
       data        = <<EOF
+public_url = "https://nops.example.com"
+db_path    = "/data/nops.db"
+
+nomad {
+  addr = "https://nomad.service.consul:4646"
+}
+
 repository "default" {
   url        = "https://git.example.com/ops/jobs.git"
   token_file = "/secrets/git-token"
@@ -84,13 +92,6 @@ auth "oidc" {
   client_secret_file = "/secrets/oidc-secret"
 }
 EOF
-    }
-
-    env {
-      NOPS_CONFIG     = "${NOMAD_TASK_DIR}/nops.hcl"
-      NOPS_PUBLIC_URL = "https://nops.example.com"
-      NOPS_NOMAD_ADDR = "https://nomad.service.consul:4646"
-      NOPS_DB_PATH    = "/data/nops.db"
     }
   }
 }
