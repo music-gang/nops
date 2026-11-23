@@ -4,6 +4,68 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.16.0
+
+### Breaking changes
+
+- `config`: `nops serve` reads its options from the `-config` file. Only
+  `-config`, `-listen-addr`, `-public-url`, `-db-path`, `-nomad-addr` and
+  `-log-level` stay flags. Nops refuses to start without an `auth` block, or
+  with any other flag or `NOPS_*` variable, and names the attribute that
+  replaces it. Move them as the [upgrade notes](#upgrade-notes) say
+  ([configuration](docs/configuration.md),
+  [#325](https://github.com/music-gang/nops/pull/325),
+  [#326](https://github.com/music-gang/nops/pull/326),
+  [#327](https://github.com/music-gang/nops/pull/327),
+  [#331](https://github.com/music-gang/nops/pull/331),
+  [#332](https://github.com/music-gang/nops/pull/332),
+  [#333](https://github.com/music-gang/nops/pull/333)).
+
+### Upgrade notes
+
+1. Write the `-config` file with what your flags and variables set, each
+   secret in the file a `*_file` attribute names. Three names keep what
+   Nops has recorded: `repository "default"` for the repository of
+   `-git-url`, so the deployments keep their repository; `auth "oidc"` or
+   `auth "basic"`, so the binding rules keep matching; a `notify` block named
+   after its type, such as `notify "slack"`, so the `adapter` label of
+   `nops_notifications_failed_total` keeps its value.
+2. In the Nops job, remove the other flags and variables, pass `-config`,
+   and move the image to `0.16`. The
+   [example job](docs/running-nops.md#as-a-nomad-job) shows the result.
+
+### Features
+
+- `config`: two `notify` blocks of the same type can run side by side, each
+  with its own timeout ([notifications](docs/configuration.md#notifications),
+  [#325](https://github.com/music-gang/nops/pull/325)).
+- `config`: each `NOPS_*` variable that `nops serve` still reads is
+  deprecated, and logs a WARN at start naming the attribute that replaces it
+  ([rules](docs/configuration.md#rules),
+  [#334](https://github.com/music-gang/nops/pull/334)).
+- `engine`: after `spec_retention`, 30 days by default, a deployment that
+  has ended loses its job spec, its file and var-file, and its hooks' specs,
+  except the latest completed one of each job. The database and its backups
+  no longer grow for good, nor keep secrets that nothing reads. The plan
+  diff, the events, and the hook runs stay. The first detection cycle after
+  the upgrade drops the specs of the deployments that ended over 30 days
+  ago: set `spec_retention = "0"` before upgrading to keep them
+  ([storage](docs/configuration.md#storage-intervals-and-timeouts),
+  [#335](https://github.com/music-gang/nops/pull/335)).
+- Dismiss an orphan job from its page, the Overview, the API, or
+  `nops dismiss`: Nops stops reporting it and leaves it running, until a new
+  deployment of the job completes. It takes the new `dismiss` capability,
+  which `policy = "write"` grants
+  ([orphan jobs](docs/architecture.md#orphan-jobs),
+  [#336](https://github.com/music-gang/nops/pull/336)).
+
+### Other changes
+
+- The dependencies are updated: `golang.org/x/crypto` moves to v0.59.0
+  ([#330](https://github.com/music-gang/nops/pull/330)).
+- The image's base, `distroless/static-debian13`, moves to a newer digest
+  ([#328](https://github.com/music-gang/nops/pull/328)).
+
 ## v0.15.6
 
 ### Fixes
