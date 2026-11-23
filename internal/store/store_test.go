@@ -484,8 +484,8 @@ func TestReopenKeepsState(t *testing.T) {
 func TestSchemaVersion(t *testing.T) {
 	s := newTestStore(t)
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 21 {
-		t.Errorf("user_version = %d, %v; want 21", v, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 22 {
+		t.Errorf("user_version = %d, %v; want 22", v, err)
 	}
 }
 
@@ -1036,7 +1036,7 @@ func TestDeploymentRecordsItsRepository(t *testing.T) {
 	}
 }
 
-func TestLatestCompletedPerJob(t *testing.T) {
+func TestOrphanCandidates(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	end := func(d *Deployment, to State) *Deployment {
@@ -1047,7 +1047,7 @@ func TestLatestCompletedPerJob(t *testing.T) {
 		return d
 	}
 
-	if got, err := s.LatestCompletedPerJob(ctx, "default"); err != nil || len(got) != 0 {
+	if got, err := s.OrphanCandidates(ctx, "default"); err != nil || len(got) != 0 {
 		t.Fatalf("on an empty store = %+v, %v", got, err)
 	}
 
@@ -1062,7 +1062,7 @@ func TestLatestCompletedPerJob(t *testing.T) {
 	other.Namespace = "staging"
 	end(mustCreate(t, s, other), StateCompleted)
 
-	got, err := s.LatestCompletedPerJob(ctx, "default")
+	got, err := s.OrphanCandidates(ctx, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1072,12 +1072,12 @@ func TestLatestCompletedPerJob(t *testing.T) {
 	}
 	want := []string{"db=" + db.ID, "web=" + newWeb.ID}
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
-		t.Errorf("LatestCompletedPerJob(default) = %v, want %v (the last completed of each job, by job ID; oldWeb=%s is not it)", ids, want, oldWeb.ID)
+		t.Errorf("OrphanCandidates(default) = %v, want %v (the last completed of each job, by job ID; oldWeb=%s is not it)", ids, want, oldWeb.ID)
 	}
 
-	staging, err := s.LatestCompletedPerJob(ctx, "staging")
+	staging, err := s.OrphanCandidates(ctx, "staging")
 	if err != nil || len(staging) != 1 || staging[0].Namespace != "staging" {
-		t.Errorf("LatestCompletedPerJob(staging) = %+v, %v, want only the staging deployment", staging, err)
+		t.Errorf("OrphanCandidates(staging) = %+v, %v, want only the staging deployment", staging, err)
 	}
 }
 
@@ -1104,9 +1104,9 @@ func TestLatestPerJobOnlyMovesForward(t *testing.T) {
 	if err != nil || len(latest) != 1 || latest[0].ID != newest.ID {
 		t.Errorf("LatestPerJob = %v, %v; want [%s]", ids(latest), err, newest.ID)
 	}
-	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	completed, err := s.OrphanCandidates(ctx, "default")
 	if err != nil || len(completed) != 1 || completed[0].ID != newest.ID {
-		t.Errorf("LatestCompletedPerJob = %v, %v; want [%s]", ids(completed), err, newest.ID)
+		t.Errorf("OrphanCandidates = %v, %v; want [%s]", ids(completed), err, newest.ID)
 	}
 }
 
@@ -1155,9 +1155,9 @@ func TestLatestPerJobFromBeforeTheUpgrade(t *testing.T) {
 	if want := []string{"db-1", "web-3", "staging-1"}; err != nil || !slices.Equal(ids(latest), want) {
 		t.Errorf("LatestPerJob after the upgrade = %v, %v; want %v", ids(latest), err, want)
 	}
-	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	completed, err := s.OrphanCandidates(ctx, "default")
 	if want := []string{"web-2"}; err != nil || !slices.Equal(ids(completed), want) {
-		t.Errorf("LatestCompletedPerJob after the upgrade = %v, %v; want %v", ids(completed), err, want)
+		t.Errorf("OrphanCandidates after the upgrade = %v, %v; want %v", ids(completed), err, want)
 	}
 
 	next := mustCreate(t, s, newDep("db"))
@@ -1168,9 +1168,9 @@ func TestLatestPerJobFromBeforeTheUpgrade(t *testing.T) {
 	if want := []string{next.ID, "web-3", "staging-1"}; err != nil || !slices.Equal(ids(latest), want) {
 		t.Errorf("LatestPerJob after a new deployment = %v, %v; want %v", ids(latest), err, want)
 	}
-	completed, err = s.LatestCompletedPerJob(ctx, "default")
+	completed, err = s.OrphanCandidates(ctx, "default")
 	if want := []string{next.ID, "web-2"}; err != nil || !slices.Equal(ids(completed), want) {
-		t.Errorf("LatestCompletedPerJob after a new deployment = %v, %v; want %v", ids(completed), err, want)
+		t.Errorf("OrphanCandidates after a new deployment = %v, %v; want %v", ids(completed), err, want)
 	}
 }
 
@@ -1267,9 +1267,9 @@ func TestTimestampsFromBeforeTheUpgrade(t *testing.T) {
 	if want := []string{"web-3"}; err != nil || !slices.Equal(ids(latest), want) {
 		t.Errorf("LatestPerJob after the upgrade = %v, %v; want %v", ids(latest), err, want)
 	}
-	completed, err := s.LatestCompletedPerJob(ctx, "default")
+	completed, err := s.OrphanCandidates(ctx, "default")
 	if want := []string{"web-2"}; err != nil || !slices.Equal(ids(completed), want) {
-		t.Errorf("LatestCompletedPerJob after the upgrade = %v, %v; want %v", ids(completed), err, want)
+		t.Errorf("OrphanCandidates after the upgrade = %v, %v; want %v", ids(completed), err, want)
 	}
 	stored := map[string]string{}
 	rows, err := s.db.Query(`SELECT id, created_at FROM deployments`)
@@ -1308,7 +1308,7 @@ func TestLatestPerJobDoesNotScanTheHistory(t *testing.T) {
 		args      []any
 	}{
 		{"LatestPerJob", latestPerJobSQL, nil},
-		{"LatestCompletedPerJob", latestCompletedPerJobSQL, []any{"default"}},
+		{"OrphanCandidates", orphanCandidatesSQL, []any{"default"}},
 	} {
 		rows, err := s.db.Query("EXPLAIN QUERY PLAN "+q.sql, q.args...)
 		if err != nil {
@@ -1326,7 +1326,8 @@ func TestLatestPerJobDoesNotScanTheHistory(t *testing.T) {
 		rows.Close()
 		for _, step := range plan {
 			byID := strings.HasPrefix(step, "SEARCH deployments ") && strings.HasSuffix(step, "(id=?)")
-			ofJobs := strings.HasPrefix(step, "SCAN latest_deployments") || strings.HasPrefix(step, "SEARCH latest_deployments")
+			ofJobs := strings.HasPrefix(step, "SCAN latest_deployments") || strings.HasPrefix(step, "SEARCH latest_deployments") ||
+				strings.HasPrefix(step, "SEARCH orphan_dismissals USING PRIMARY KEY")
 			if (strings.HasPrefix(step, "SCAN ") || strings.HasPrefix(step, "SEARCH ")) && !byID && !ofJobs {
 				t.Errorf("%s reads more than one deployment per job: %q in %q", q.name, step, plan)
 			}

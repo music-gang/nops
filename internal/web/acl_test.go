@@ -115,7 +115,7 @@ func (ts *testServer) page(method, target string, form url.Values) *httptest.Res
 func TestNoACLWithoutApproveOnTheNamespaceApproves(t *testing.T) {
 	for name, rules := range map[string]string{
 		"read only":                  `namespace "default" { policy = "read" }`,
-		"every capability but it":    `namespace "default" { capabilities = ["read", "promote", "retry", "deploy-now", "pause"] }`,
+		"every capability but it":    `namespace "default" { capabilities = ["read", "promote", "retry", "deploy-now", "pause", "dismiss"] }`,
 		"write on another namespace": `namespace "prod" { policy = "write" }`,
 		"a glob that misses":         `namespace "pr*" { policy = "write" }`,
 		"a deny on the namespace":    "namespace \"*\" { policy = \"write\" }\nnamespace \"default\" { policy = \"deny\" }",
@@ -204,6 +204,8 @@ func TestEveryActionNeedsItsCapability(t *testing.T) {
 		{"pause", "/api/jobs/default/web/pause", ``, acl.Pause, false},
 		{"resume", "/api/jobs/default/web/resume", ``, acl.Pause, false},
 		{"deploy now", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, acl.DeployNow, false},
+		{"dismiss", "/api/jobs/default/web/dismiss", `{"deployment_id":"d1"}`, acl.Dismiss, false},
+		{"undismiss", "/api/jobs/default/web/undismiss", ``, acl.Dismiss, false},
 		{"fetch", "/api/fetch", ``, acl.Fetch, true},
 		{"pause every job", "/api/pause", ``, acl.Pause, true},
 		{"resume every job", "/api/resume", ``, acl.Pause, true},
@@ -212,7 +214,7 @@ func TestEveryActionNeedsItsCapability(t *testing.T) {
 			rules := `namespace "default" { capabilities = ["` + string(c.need) + `"] }`
 			// Everything else the namespace has to give, and the global fetch if it is not the one.
 			var rest []string
-			for _, o := range []acl.Capability{acl.Read, acl.Approve, acl.Promote, acl.Retry, acl.DeployNow, acl.Pause} {
+			for _, o := range []acl.Capability{acl.Read, acl.Approve, acl.Promote, acl.Retry, acl.DeployNow, acl.Pause, acl.Dismiss} {
 				if o != c.need {
 					rest = append(rest, `"`+string(o)+`"`)
 				}

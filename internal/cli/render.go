@@ -57,7 +57,8 @@ type job struct {
 		Reason string `json:"reason"`
 		By     string `json:"by"`
 	} `json:"hold"`
-	LastDeployment *deployment `json:"last_deployment"`
+	LastDeployment     *deployment `json:"last_deployment"`
+	OrphanDeploymentID string      `json:"orphan_deployment_id"`
 }
 
 type jobDetail struct {
@@ -68,8 +69,12 @@ type jobDetail struct {
 		Key      string `json:"key"`
 		Message  string `json:"message"`
 	} `json:"issues"`
-	Diff        json.RawMessage `json:"diff"`
-	Deployments []deployment    `json:"deployments"`
+	Diff      json.RawMessage `json:"diff"`
+	Dismissed *struct {
+		By string    `json:"by"`
+		At time.Time `json:"at"`
+	} `json:"dismissed"`
+	Deployments []deployment `json:"deployments"`
 }
 
 func table(w io.Writer) *tabwriter.Writer { return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0) }
@@ -175,6 +180,9 @@ func writeJob(w io.Writer, j jobDetail) error {
 	field(w, "Blocked by", j.BlockedBy)
 	if h := j.Hold; h != nil {
 		field(w, "Held", h.Kind+": "+h.Reason)
+	}
+	if d := j.Dismissed; d != nil {
+		field(w, "Dismissed", "by "+d.By+" at "+stamp(d.At))
 	}
 	if len(j.Issues) > 0 {
 		fmt.Fprintln(w, "\nIssues")

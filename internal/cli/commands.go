@@ -25,6 +25,8 @@ var commands = []command{
 	{name: "pause", arg: "<job>", why: true, all: true, help: "pause a job, or every job with -all", run: runPause},
 	{name: "resume", arg: "<job>", all: true, help: "resume a paused job, or every job with -all", run: runResume},
 	{name: "deploy-now", arg: "<job>", yes: true, help: "deploy a held job outside its sync window", run: runDeployNow},
+	{name: "dismiss", arg: "<job>", help: "stop reporting a job removed from git that still runs in Nomad", run: runDismiss},
+	{name: "undismiss", arg: "<job>", help: "undo the dismissal of a job", run: action(http.MethodPost, jobAction("undismiss"), "undismissed")},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
 	{name: "backup", arg: "<file>", help: "save a backup of the database to a file", run: runBackup},
 	{name: "login", own: true, flags: loginFlags, help: "log in and save the session", run: runLogin},
@@ -255,6 +257,25 @@ func runDeployNow(k *call) error {
 		return err
 	}
 	return printNewDeployment(k, raw)
+}
+
+// runDismiss sends the last completed deployment of the orphan as it read it,
+// so a job deployed again since is refused as on the dashboard.
+func runDismiss(k *call) error {
+	var j jobDetail
+	if _, err := k.client.get(k.ctx, jobPath(k.namespace, k.arg), &j); err != nil {
+		return err
+	}
+	if j.OrphanDeploymentID == "" {
+		return fmt.Errorf("%s/%s is not an orphan: it is not removed from git and running in Nomad", k.namespace, k.arg)
+	}
+	if _, err := k.client.do(k.ctx, http.MethodPost, jobPath(k.namespace, k.arg)+"/dismiss", map[string]string{"deployment_id": j.OrphanDeploymentID}); err != nil {
+		return err
+	}
+	if !k.asJSON {
+		fmt.Fprintf(k.out, "dismissed %s\n", k.arg)
+	}
+	return nil
 }
 
 // printNewDeployment prints the ID the API answers for a retry or a Deploy

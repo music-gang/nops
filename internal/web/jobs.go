@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -384,6 +385,17 @@ func hooksOf(refs []engine.HookRef) []hookView {
 type orphanView struct {
 	NomadStatus string
 	StopCommand string
+	// DismissPath is where the "Dismiss" form posts, with DeploymentID, the
+	// job's last completed deployment; "" without the capability.
+	DismissPath, DeploymentID string
+}
+
+// dismissalView is the dismissal of an orphan as its page shows it.
+type dismissalView struct {
+	By string
+	At timeView
+	// UndoPath is where the "Undo" button posts; "" without the capability.
+	UndoPath string
 }
 
 // pauseView is the pause of a job as its page shows it.
@@ -437,9 +449,10 @@ type jobData struct {
 	SyncLabel, SyncClass    string
 	File                    string
 	Observed                timeView
-	PreHooks, PostHooks     []hookView  // in the order they run
-	Orphan                  *orphanView // set when the job is gone from git but still runs in Nomad
-	NomadError              string      // what failed in Nomad in the last cycle, if anything
+	PreHooks, PostHooks     []hookView     // in the order they run
+	Orphan                  *orphanView    // set when the job is gone from git but still runs in Nomad
+	Dismissed               *dismissalView // set when a person dismissed the orphan the job was
+	NomadError              string         // what failed in Nomad in the last cycle, if anything
 	Blocked                 bool
 	BlockedReason           string
 	BlockedBy               string
@@ -528,8 +541,24 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	data.NomadURL = s.nomadJobURL(ns, id)
 	if orphan != nil {
 		data.Orphan = &orphanView{NomadStatus: orphan.NomadStatus, StopCommand: "nomad job stop -namespace " + orphan.Namespace + " " + orphan.JobID}
+		if allows(r, ns, acl.Dismiss) {
+			data.Orphan.DismissPath, data.Orphan.DeploymentID = s.jobPath(ns, id)+"/dismiss", orphan.LastDeploymentID
+		}
 		data.Sync, data.SyncLabel, data.SyncClass = syncOrphan, syncOrphan.label(), syncOrphan.class()
 		data.Policy = meta.Policy(orphan.Policy)
+	}
+	if obs == nil && orphan == nil {
+		d, err := s.store.DismissalOf(r.Context(), ns, id)
+		switch {
+		case err == nil:
+			data.Dismissed = &dismissalView{By: d.DismissedBy, At: s.when(d.DismissedAt)}
+			if allows(r, ns, acl.Dismiss) {
+				data.Dismissed.UndoPath = s.jobPath(ns, id) + "/undismiss"
+			}
+		case !errors.Is(err, store.ErrNotFound):
+			s.serverError(w, r, "read the dismissal of a job", err)
+			return
+		}
 	}
 	if obs != nil {
 		diff, err := nomadx.ParseDiff(obs.PlanDiff)
@@ -604,6 +633,9 @@ type attentionItem struct {
 	RetryPath string
 	// ResumePath, when set, is where the "Resume" button of a paused job posts.
 	ResumePath string
+	// DismissPath, when set, is where the "Dismiss" button of an orphan posts,
+	// with DismissDeployment, its last completed deployment.
+	DismissPath, DismissDeployment string
 }
 
 // attention collects what needs a person, most urgent first: approvals (oldest
@@ -698,10 +730,14 @@ func (s *server) attention(r *http.Request, obs []engine.Observation, active []*
 	// Least urgent: nothing is broken, a service nobody asked for keeps
 	// running. The operator decides; nops never stops it.
 	for _, o := range s.orphans(r) {
-		items = append(items, attentionItem{
+		it := attentionItem{
 			Kind: "orphan", KindLabel: "Not in git", KindClass: "state-pending", Title: o.Namespace + "/" + o.JobID,
 			Path: s.jobPath(o.Namespace, o.JobID), Detail: "Removed from git, still running in Nomad",
-		})
+		}
+		if allows(r, o.Namespace, acl.Dismiss) {
+			it.DismissPath, it.DismissDeployment = s.jobPath(o.Namespace, o.JobID)+"/dismiss", o.LastDeploymentID
+		}
+		items = append(items, it)
 	}
 	return items
 }

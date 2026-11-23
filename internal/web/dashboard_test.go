@@ -1123,8 +1123,11 @@ func TestOverviewNeedsAttentionListsOrphansLast(t *testing.T) {
 			t.Errorf("%q comes after %q", pair[0], pair[1])
 		}
 	}
-	// Reported, never acted on: no button that stops or retries anything.
-	mustNotContain(t, page, `action="/jobs/default/old`)
+	// Nops never stops it: the one button dismisses the report.
+	mustContain(t, page, `action="/jobs/default/old/dismiss"`)
+	if strings.Count(page, `action="/jobs/default/old`) != 1 {
+		t.Errorf("the orphan has another button than Dismiss")
+	}
 }
 
 func refusedStatus() engine.Status {

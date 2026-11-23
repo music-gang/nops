@@ -58,9 +58,9 @@ type Store interface {
 	ActiveDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	ListActive(ctx context.Context) ([]*store.Deployment, error)
 	LatestDeployment(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
-	// LatestCompletedPerJob is used by the orphan check (see
+	// OrphanCandidates is used by the orphan check (see
 	// docs/archive/engine-detection.md#orphan-jobs).
-	LatestCompletedPerJob(ctx context.Context, namespace string) ([]*store.Deployment, error)
+	OrphanCandidates(ctx context.Context, namespace string) ([]*store.Deployment, error)
 	// DeploymentHooks and HookRevisionsInUse are used by the hook revisions
 	// (see docs/archive/engine-detection.md#hook-revisions).
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
@@ -105,6 +105,10 @@ type Store interface {
 	RequestWindowLift(ctx context.Context, namespace, jobID, specHash, actor string) error
 	WindowLifts(ctx context.Context) ([]store.WindowLift, error)
 	DropWindowLift(ctx context.Context, namespace, jobID string) (bool, error)
+	// DismissOrphan and UndismissOrphan are used by the dismissal of an
+	// orphan (see docs/architecture.md#orphan-jobs).
+	DismissOrphan(ctx context.Context, namespace, jobID, deploymentID, actor string) error
+	UndismissOrphan(ctx context.Context, namespace, jobID string) error
 }
 
 // Hooks is what apply needs to run a deployment's hooks. *hooks.Runner
@@ -200,8 +204,8 @@ type HookRef struct {
 
 // Orphan is a job nops has deployed that is no longer in the repository but is
 // still there in Nomad and not stopped: something the operator has to decide
-// about. nops only reports it, it never stops it (see
-// docs/archive/engine-detection.md#orphan-jobs). Like Observation it is kept
+// about. nops only reports it, it never stops it, and a person can dismiss it
+// (see docs/archive/engine-detection.md#orphan-jobs and DismissOrphan). Like Observation it is kept
 // only in memory and rebuilt every cycle.
 type Orphan struct {
 	JobID     string

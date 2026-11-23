@@ -194,6 +194,50 @@ func TestDeployNowSendsTheSpecHashOfTheJob(t *testing.T) {
 	}
 }
 
+func TestDismissSendsTheLastCompletedDeploymentOfTheOrphan(t *testing.T) {
+	s, addr := newStub(t, nil)
+	s.answers = map[string]answer{
+		"GET /api/jobs/default/old": {200, `{"namespace":"default","job":"old","policy":"auto","sync":"orphan",` +
+			`"orphan_deployment_id":"d9","last_deployment":{"id":"d10","state":"superseded"},"deployments":[]}`},
+		"POST /api/jobs/default/old/dismiss": {204, ""},
+	}
+	code, out, errOut := run(t, envFor(addr), "", "dismiss", "old")
+	if code != 0 || out != "dismissed old\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if got := s.seen[len(s.seen)-1].body; got != `{"deployment_id":"d9"}` {
+		t.Errorf("body = %s, want the orphan's last completed deployment", got)
+	}
+}
+
+func TestDismissRefusesAJobThatIsNotAnOrphan(t *testing.T) {
+	s, addr := newStub(t, nil)
+	s.answers = map[string]answer{
+		"GET /api/jobs/default/web": {200, `{"namespace":"default","job":"web","policy":"auto","sync":"sync","deployments":[]}`},
+	}
+	code, _, errOut := run(t, envFor(addr), "", "dismiss", "web")
+	if code != 1 || !strings.Contains(errOut, "default/web is not an orphan") {
+		t.Errorf("exit %d, stderr %q", code, errOut)
+	}
+	for _, r := range s.seen {
+		if r.method == "POST" {
+			t.Errorf("it posted %s", r.path)
+		}
+	}
+}
+
+func TestJobShowsItsDismissal(t *testing.T) {
+	s, addr := newStub(t, nil)
+	s.answers = map[string]answer{
+		"GET /api/jobs/default/old": {200, `{"namespace":"default","job":"old","policy":"auto","sync":"",` +
+			`"dismissed":{"by":"alice","at":"2026-10-05T10:00:00Z"},"deployments":[]}`},
+	}
+	code, out, errOut := run(t, envFor(addr), "", "job", "old")
+	if code != 0 || !strings.Contains(out, "Dismissed:   by alice at ") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+}
+
 func TestJobShowsANomadError(t *testing.T) {
 	s, addr := newStub(t, nil)
 	s.answers = map[string]answer{
@@ -254,6 +298,7 @@ func TestActionsPostToTheirEndpoint(t *testing.T) {
 		{[]string{"pause", "-all", "-reason", "nomad upgrade"}, "/api/pause", `{"reason":"nomad upgrade"}`, answer{204, ""}, "paused every job\n"},
 		{[]string{"pause", "-all"}, "/api/pause", "", answer{204, ""}, "paused every job\n"},
 		{[]string{"resume", "-all"}, "/api/resume", "", answer{204, ""}, "resumed every job\n"},
+		{[]string{"undismiss", "old"}, "/api/jobs/default/old/undismiss", "", answer{204, ""}, "undismissed old\n"},
 		{[]string{"fetch"}, "/api/fetch", "", answer{202, ""}, "asked for a poll\n"},
 	}
 	for _, tt := range tests {

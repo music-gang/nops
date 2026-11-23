@@ -90,8 +90,9 @@ period, except from the latest completed deployment of each job.
 ### Orphan jobs
 
 Nops never stops a job it deployed. If you remove a deployed job from git and
-it still runs in Nomad, the dashboard lists it as an orphan until you stop it
-or put the file back.
+it still runs in Nomad, the dashboard lists it as an orphan until you stop it,
+put the file back, or dismiss it. A dismissed job runs on unmanaged until a new
+deployment of it completes; its page shows who dismissed it, with an undo.
 
 ## Apply
 

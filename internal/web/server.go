@@ -49,12 +49,13 @@ type Store interface {
 	ListHookRuns(ctx context.Context, deploymentID string) ([]*store.HookRun, error)
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 	RetryOf(ctx context.Context, id string) (*store.Deployment, error)
+	DismissalOf(ctx context.Context, namespace, jobID string) (store.Dismissal, error)
 }
 
 // Engine is what the dashboard calls to decide a pending deployment, to
 // retry a failed or rejected one, to pause and resume a job or every job, to deploy a job held by its
 // sync window, to promote the canaries of a
-// deployment that waits for it and to read the drift of "none"-policy jobs.
+// deployment that waits for it, to dismiss an orphan and to read the drift of "none"-policy jobs.
 // *engine.Engine implements it.
 type Engine interface {
 	Approve(ctx context.Context, id, specHash, actor string) error
@@ -70,6 +71,8 @@ type Engine interface {
 	PauseAll(ctx context.Context, actor, reason string) error
 	ResumeAll(ctx context.Context, actor string) error
 	PausedAll() *engine.Hold
+	DismissOrphan(ctx context.Context, namespace, jobID, deploymentID, actor string) error
+	UndismissOrphan(ctx context.Context, namespace, jobID, actor string) error
 	Status() engine.Status
 }
 
@@ -337,6 +340,8 @@ func (s *server) pageRoutes() []route {
 		{"POST /jobs/{namespace}/{job}/pause", inNamespace(acl.Pause), s.pause},
 		{"POST /jobs/{namespace}/{job}/resume", inNamespace(acl.Pause), s.resume},
 		{"POST /jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.deployNow},
+		{"POST /jobs/{namespace}/{job}/dismiss", inNamespace(acl.Dismiss), s.dismiss},
+		{"POST /jobs/{namespace}/{job}/undismiss", inNamespace(acl.Dismiss), s.undismiss},
 		{"POST /pause", globally(acl.Pause), s.pauseAll},
 		{"POST /resume", globally(acl.Pause), s.resumeAll},
 		{"GET /admin", anyToken(), s.adminPage},

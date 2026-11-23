@@ -78,6 +78,7 @@ capability of their own:
 | `retry` | Retry a failed or rejected deployment. |
 | `deploy-now` | Deploy a job outside its sync window. |
 | `pause` | Pause and resume a job. |
+| `dismiss` | Dismiss an [orphan](architecture.md#orphan-jobs) and undo it. |
 
 The top-level `capabilities` list holds the ones that belong to no namespace:
 

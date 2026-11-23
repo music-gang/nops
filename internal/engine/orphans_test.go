@@ -311,7 +311,7 @@ func TestOrphanCheckStoreFailureStopsTheCycle(t *testing.T) {
 
 type failingLatestCompleted struct{ Store }
 
-func (failingLatestCompleted) LatestCompletedPerJob(context.Context, string) ([]*store.Deployment, error) {
+func (failingLatestCompleted) OrphanCandidates(context.Context, string) ([]*store.Deployment, error) {
 	return nil, fmt.Errorf("disk on fire")
 }
 

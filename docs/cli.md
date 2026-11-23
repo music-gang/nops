@@ -37,6 +37,8 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops retry <id>` | Retry a failed or rejected deployment and print the new ID. |
 | `nops pause <job>` | [Pause](policies.md#pausing-a-job) a job, or every job with `-all`. `-reason` says why. |
 | `nops resume <job>` | Resume a job, or every job with `-all`. |
+| `nops dismiss <job>` | Dismiss an [orphan](architecture.md#orphan-jobs). |
+| `nops undismiss <job>` | Undo a dismissal. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
 | `nops backup <file>` | Save a [backup](running-nops.md#backups) of the database to the file. |
