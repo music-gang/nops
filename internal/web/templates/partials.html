@@ -411,6 +411,7 @@
       {{if .Deployment.WindowLiftedBy}}<dt>Deployed now</dt><dd title="{{.Deployment.WindowLiftedBy}}">outside its sync window, asked by {{.Deployment.WindowLiftedBy}}</dd>{{end}}
       {{if .Deployment.RetryOfPath}}<dt>Retry of</dt><dd><a href="{{.Deployment.RetryOfPath}}">the earlier deployment</a></dd>{{end}}
       {{if .Deployment.RetriedBy}}<dt>Retried</dt><dd title="{{.Deployment.RetriedBy}}">{{.Deployment.RetriedBy}} {{template "time" .Deployment.RetriedAt}}{{with .RetriedAs}} as <a href="{{.Path}}">{{.StateLabel}}</a>{{end}}</dd>{{end}}
+      {{if .Deployment.SpecsDropped.ISO}}<dt>Spec</dt><dd title="The job's spec, its file and var-file, and its hooks' specs">dropped after the retention period, {{template "time" .Deployment.SpecsDropped}}</dd>{{end}}
     </dl>
   </section>
 </div>

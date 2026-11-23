@@ -177,6 +177,9 @@ type deploymentCard struct {
 	RetriedAt timeView
 	CreatedAt timeView
 	UpdatedAt timeView
+	// SpecsDropped is when the spec, the job file and var-file, and the hooks'
+	// specs were dropped after the retention period; zero while kept.
+	SpecsDropped timeView
 }
 
 func (s *server) card(d *store.Deployment) deploymentCard {
@@ -211,6 +214,7 @@ func (s *server) card(d *store.Deployment) deploymentCard {
 		RetriedAt:      s.when(d.RetriedAt),
 		CreatedAt:      s.when(d.CreatedAt),
 		UpdatedAt:      s.when(d.UpdatedAt),
+		SpecsDropped:   s.when(d.SpecsDroppedAt),
 	}
 	if d.RetryOf != "" {
 		c.RetryOfPath = s.deploymentPath(d.RetryOf)

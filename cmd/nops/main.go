@@ -145,7 +145,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	eng := engine.New(engine.Options{
 		Store: st, Nomad: nomadClient, Snapshots: repos, Notifier: notifier, Hooks: hooksRunner,
 		Namespaces: cfg.NomadNamespaces, RepositoryJobs: repositoryJobs(cfg.Repositories), DriftInterval: cfg.DriftInterval,
-		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, SyncWindowLocation: cfg.SyncWindowLocation, Log: log,
+		EngineInterval: cfg.EngineInterval, ApplyTimeout: cfg.ApplyTimeout, SpecRetention: cfg.SpecRetention, SyncWindowLocation: cfg.SyncWindowLocation, Log: log,
 	})
 
 	auth, err := newAuthenticator(cfg, log)

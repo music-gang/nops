@@ -895,6 +895,18 @@ func TestDeploymentPageNotPending(t *testing.T) {
 	mustNotContain(t, page, "Approve", "Reject", "Run the pre-hook", specMarker)
 }
 
+// A deployment whose specs were dropped says so, and when.
+func TestDeploymentPageSaysItsSpecsWereDropped(t *testing.T) {
+	d := sampleDeployment()
+	d.State = store.StateFailed
+	d.SpecsDroppedAt = testNow.Add(-2 * time.Hour)
+	page := newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "").get("/deployments/d1")
+	mustContain(t, page, "<dt>Spec</dt>", "dropped after the retention period", "2h ago")
+
+	d.SpecsDroppedAt = time.Time{}
+	mustNotContain(t, newTestServer(t, &fakeStore{deployment: d}, &fakeEngine{}, "").get("/deployments/d1"), "retention period")
+}
+
 // The diff is open to be reviewed and folded once there is nothing to decide,
 // so a finished deployment's hooks and timeline are not pushed off the page.
 func TestDeploymentPageFoldsTheDiffOnceDecided(t *testing.T) {

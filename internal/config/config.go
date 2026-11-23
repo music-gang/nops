@@ -71,6 +71,7 @@ const (
 	defaultEngineInterval   = 5 * time.Second
 	defaultHookPollInterval = 5 * time.Second
 	defaultApplyTimeout     = 10 * time.Minute
+	defaultSpecRetention    = 30 * 24 * time.Hour
 )
 
 // Config holds every setting nops needs. Load fills and validates it.
@@ -145,6 +146,9 @@ type Config struct {
 	EngineInterval   time.Duration
 	HookPollInterval time.Duration
 	ApplyTimeout     time.Duration
+	// SpecRetention is how long a deployment that has ended keeps its spec,
+	// job file, var-file and hooks' specs; 0 keeps them forever.
+	SpecRetention time.Duration
 
 	// SyncWindowLocation is the time zone the sync windows of the jobs
 	// (nops_sync_window) are read in; UTC unless sync_window_time_zone says
@@ -412,6 +416,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 		EngineInterval:     defaultEngineInterval,
 		HookPollInterval:   defaultHookPollInterval,
 		ApplyTimeout:       defaultApplyTimeout,
+		SpecRetention:      defaultSpecRetention,
 		SyncWindowLocation: time.UTC,
 	}
 	var errs []error
@@ -496,6 +501,7 @@ type fileConfig struct {
 	EngineInterval     *string `hcl:"engine_interval,optional"`
 	HookPollInterval   *string `hcl:"hook_poll_interval,optional"`
 	ApplyTimeout       *string `hcl:"apply_timeout,optional"`
+	SpecRetention      *string `hcl:"spec_retention,optional"`
 	SyncWindowTimeZone *string `hcl:"sync_window_time_zone,optional"`
 	WebhookSecretFile  string  `hcl:"webhook_secret_file,optional"`
 
@@ -660,6 +666,11 @@ func (c *Config) loadTopLevel(fc *fileConfig, explicit map[string]bool) []error 
 		}
 		if *a.out, err = positiveDuration(*a.in); err != nil {
 			fail(a.name, err)
+		}
+	}
+	if fc.SpecRetention != nil {
+		if c.SpecRetention, err = nonNegativeDuration(*fc.SpecRetention); err != nil {
+			fail("spec_retention", err)
 		}
 	}
 	if fc.SyncWindowTimeZone != nil {
