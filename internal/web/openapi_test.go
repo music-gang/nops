@@ -170,6 +170,8 @@ func TestOpenAPISchemasMatchTheAnswers(t *testing.T) {
 		"DeploymentDetail": reflect.TypeOf(apiDeploymentDetail{}),
 		"SpecHash":         reflect.TypeOf(specBody{}),
 		"Pause":            reflect.TypeOf(pauseBody{}),
+		"Dismissal":        reflect.TypeOf(dismissBody{}),
+		"DismissedBy":      reflect.TypeOf(apiDismissal{}),
 		"ACLPolicy":        reflect.TypeOf(apiACLPolicy{}),
 		"ACLPolicyBody":    reflect.TypeOf(policyBody{}),
 		"ACLToken":         reflect.TypeOf(apiACLToken{}),

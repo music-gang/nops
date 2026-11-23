@@ -49,6 +49,8 @@ and `/api/backup` answers the database file.
 | `POST /api/jobs/{namespace}/{job}/pause` | [Pause](policies.md#pausing-a-job) a job. Optional body: `{"reason": "..."}`. |
 | `POST /api/jobs/{namespace}/{job}/resume` | Resume a job. |
 | `POST /api/jobs/{namespace}/{job}/deploy-now` | [Deploy now](policies.md#sync-window). Body: `{"spec_hash": "..."}`. Answers `{"deployment_id": "..."}`, empty when the next detection cycle starts it. |
+| `POST /api/jobs/{namespace}/{job}/dismiss` | Dismiss an [orphan](architecture.md#orphan-jobs). Body: `{"deployment_id": "..."}`, the job's `orphan_deployment_id`. |
+| `POST /api/jobs/{namespace}/{job}/undismiss` | Undo a dismissal. |
 | `POST /api/pause` | [Pause every job](policies.md#pausing-a-job). Optional body: `{"reason": "..."}`. |
 | `POST /api/resume` | Resume every job. |
 | `POST /api/fetch` | Ask for a poll of every repository now. |

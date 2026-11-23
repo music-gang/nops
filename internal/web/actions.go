@@ -181,6 +181,65 @@ func (s *server) deployNow(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// dismiss is POST /jobs/{namespace}/{job}/dismiss: stop reporting an orphan
+// (Engine.DismissOrphan). It does not touch Nomad. The form's "deployment_id"
+// is the job's last completed deployment as the page showed it.
+func (s *server) dismiss(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	ns, job := r.PathValue("namespace"), r.PathValue("job")
+	err := s.engine.DismissOrphan(r.Context(), ns, job, r.FormValue("deployment_id"), actor)
+	switch {
+	case err == nil:
+		s.backToJob(w, r, ns, job)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This job does not exist.")
+	case errors.Is(err, engine.ErrNotOrphan):
+		s.conflict(w, r, "Not an orphan", "This job is no longer reported as removed from git and running in Nomad, or a newer deployment of it completed, since the page was rendered.")
+	case errors.Is(err, store.ErrAlreadyDismissed):
+		s.conflict(w, r, "Already dismissed", "This job is already dismissed: someone dismissed it since the page was rendered.")
+	default:
+		s.serverError(w, r, "dismiss orphan", err)
+	}
+}
+
+// undismiss is POST /jobs/{namespace}/{job}/undismiss: undo a dismissal
+// (Engine.UndismissOrphan). The next detection cycle reports the job again if
+// it is still an orphan.
+func (s *server) undismiss(w http.ResponseWriter, r *http.Request) {
+	actor, ok := UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	ns, job := r.PathValue("namespace"), r.PathValue("job")
+	err := s.engine.UndismissOrphan(r.Context(), ns, job, actor)
+	switch {
+	case err == nil:
+		s.backToJob(w, r, ns, job)
+	case errors.Is(err, store.ErrNotFound):
+		s.notFoundMessage(w, r, "This job does not exist.")
+	case errors.Is(err, store.ErrNotDismissed):
+		s.conflict(w, r, "Not dismissed", "This job is not dismissed: the dismissal was undone, or a new deployment of the job ended it, since the page was rendered.")
+	default:
+		s.serverError(w, r, "undo orphan dismissal", err)
+	}
+}
+
+// backToJob sends a dismissal back to the job's page, or to the Overview for
+// "overview". The action succeeded, so the job is one nops knows: an orphan,
+// or one with a dismissal on record.
+func (s *server) backToJob(w http.ResponseWriter, r *http.Request, namespace, jobID string) {
+	to := s.jobPath(namespace, jobID)
+	if r.FormValue("back") == "overview" {
+		to = s.basePath + "/"
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
 // conflict renders the 409 page of an action that found the job in another
 // state than the page it was sent from said.
 func (s *server) conflict(w http.ResponseWriter, r *http.Request, title, message string) {

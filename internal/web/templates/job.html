@@ -20,9 +20,24 @@
 </div>
 
 {{with .Orphan}}
-<section class="flash flash--warn">
-  <p><strong>Removed from git, still running in Nomad</strong>{{if .NomadStatus}} (status <span class="mono">{{.NomadStatus}}</span>){{end}}. Nops deployed this job and does not stop it on its own: the operator decides.</p>
-  <p>To stop it: <code>{{.StopCommand}}</code>. To keep it, put its file back in the repository. This notice goes away by itself once either is done.</p>
+<section class="flash flash--warn{{if .DismissPath}} flash--action{{end}}">
+  <div>
+    <p><strong>Removed from git, still running in Nomad</strong>{{if .NomadStatus}} (status <span class="mono">{{.NomadStatus}}</span>){{end}}. Nops deployed this job and does not stop it on its own: the operator decides.</p>
+    <p>To stop it: <code>{{.StopCommand}}</code>. To keep it, put its file back in the repository. This notice goes away by itself once either is done.{{if .DismissPath}} If it was removed on purpose and should keep running, dismiss it.{{end}}</p>
+  </div>
+  {{if .DismissPath}}<form method="post" action="{{.DismissPath}}">
+    <input type="hidden" name="deployment_id" value="{{.DeploymentID}}">
+    <button type="submit" class="btn btn--sm">Dismiss</button>
+  </form>{{end}}
+</section>
+{{end}}
+
+{{with .Dismissed}}
+<section class="flash flash--warn{{if .UndoPath}} flash--action{{end}}">
+  <div><strong>Dismissed by {{.By}}</strong> {{template "time" .At}}. Nops does not report this job, removed from git and running in Nomad, until a new deployment of it completes.</div>
+  {{if .UndoPath}}<form method="post" action="{{.UndoPath}}">
+    <button type="submit" class="btn btn--sm">Undo</button>
+  </form>{{end}}
 </section>
 {{end}}
 

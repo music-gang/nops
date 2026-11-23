@@ -54,6 +54,8 @@ func (s *server) apiEndpoints() []route {
 		{"POST /api/jobs/{namespace}/{job}/pause", inNamespace(acl.Pause), s.apiPause},
 		{"POST /api/jobs/{namespace}/{job}/resume", inNamespace(acl.Pause), s.apiResume},
 		{"POST /api/jobs/{namespace}/{job}/deploy-now", inNamespace(acl.DeployNow), s.apiDeployNow},
+		{"POST /api/jobs/{namespace}/{job}/dismiss", inNamespace(acl.Dismiss), s.apiDismiss},
+		{"POST /api/jobs/{namespace}/{job}/undismiss", inNamespace(acl.Dismiss), s.apiUndismiss},
 		{"POST /api/pause", globally(acl.Pause), s.apiPauseAll},
 		{"POST /api/resume", globally(acl.Pause), s.apiResumeAll},
 		{"GET /api/backup", globally(acl.Backup), s.apiBackup},
@@ -231,6 +233,9 @@ type apiJob struct {
 	BlockedBy      string         `json:"blocked_by,omitempty"`
 	Hold           *apiHold       `json:"hold,omitempty"`
 	LastDeployment *apiDeployment `json:"last_deployment,omitempty"`
+	// OrphanDeploymentID is the last completed deployment of an orphan: what a
+	// dismissal asks for.
+	OrphanDeploymentID string `json:"orphan_deployment_id,omitempty"`
 }
 
 func jobOf(o engine.Observation, latest *store.Deployment) apiJob {
@@ -249,7 +254,7 @@ func jobOf(o engine.Observation, latest *store.Deployment) apiJob {
 }
 
 func orphanJob(o engine.Orphan, latest *store.Deployment) apiJob {
-	j := apiJob{Namespace: o.Namespace, Job: o.JobID, Policy: string(o.Policy), Sync: string(syncOrphan)}
+	j := apiJob{Namespace: o.Namespace, Job: o.JobID, Policy: string(o.Policy), Sync: string(syncOrphan), OrphanDeploymentID: o.LastDeploymentID}
 	if latest != nil {
 		d := deploymentOf(latest)
 		j.LastDeployment = &d
@@ -319,7 +324,13 @@ type apiJobDetail struct {
 	// Diff is the redacted plan diff of the drift, as Nomad's JSON; absent without drift.
 	Diff        json.RawMessage `json:"diff,omitempty"`
 	Issues      []apiIssue      `json:"issues,omitempty"`
+	Dismissed   *apiDismissal   `json:"dismissed,omitempty"` // set while nops no longer reports the orphan
 	Deployments []apiDeployment `json:"deployments"`
+}
+
+type apiDismissal struct {
+	By string    `json:"by"`
+	At time.Time `json:"at"`
 }
 
 // apiGetJob is GET /api/jobs/{namespace}/{job}.
@@ -360,9 +371,17 @@ func (s *server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "this job does not exist")
 		return
 	}
-	if detail == nil { // gone from git and from Nomad, with a past
+	if detail == nil { // gone from git and from Nomad, or dismissed, with a past
 		last := deploymentOf(latest)
 		detail = &apiJobDetail{apiJob: apiJob{Namespace: ns, Job: id, Policy: string(latest.Policy), LastDeployment: &last}}
+		d, err := s.store.DismissalOf(r.Context(), ns, id)
+		switch {
+		case err == nil:
+			detail.Dismissed = &apiDismissal{By: d.DismissedBy, At: d.DismissedAt}
+		case !errors.Is(err, store.ErrNotFound):
+			s.apiServerError(w, r, "read the dismissal of a job", err)
+			return
+		}
 	}
 	detail.Deployments = deploymentsOf(deps)
 	replyJSON(w, http.StatusOK, detail)
@@ -632,6 +651,51 @@ func (s *server) apiDeployNow(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusConflict, "this job can no longer be deployed outside its sync window: the window opened, a deployment started, the job is paused or blocked, or git has another spec for it now")
 	default:
 		s.apiServerError(w, r, "deploy job now", err)
+	}
+}
+
+// dismissBody is the body of a dismissal.
+type dismissBody struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+func (s *server) apiDismiss(w http.ResponseWriter, r *http.Request) {
+	var b dismissBody
+	if !readBody(w, r, &b) {
+		return
+	}
+	if b.DeploymentID == "" {
+		apiError(w, http.StatusBadRequest, `"deployment_id" is required: the orphan_deployment_id of the job you read`)
+		return
+	}
+	actor, _ := UserFrom(r.Context())
+	err := s.engine.DismissOrphan(r.Context(), r.PathValue("namespace"), r.PathValue("job"), b.DeploymentID, actor)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotFound):
+		apiError(w, http.StatusNotFound, "this job does not exist")
+	case errors.Is(err, engine.ErrNotOrphan):
+		apiError(w, http.StatusConflict, "this job is not an orphan with that last completed deployment")
+	case errors.Is(err, store.ErrAlreadyDismissed):
+		apiError(w, http.StatusConflict, "this job is already dismissed")
+	default:
+		s.apiServerError(w, r, "dismiss orphan", err)
+	}
+}
+
+func (s *server) apiUndismiss(w http.ResponseWriter, r *http.Request) {
+	actor, _ := UserFrom(r.Context())
+	err := s.engine.UndismissOrphan(r.Context(), r.PathValue("namespace"), r.PathValue("job"), actor)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotFound):
+		apiError(w, http.StatusNotFound, "this job does not exist")
+	case errors.Is(err, store.ErrNotDismissed):
+		apiError(w, http.StatusConflict, "this job is not dismissed")
+	default:
+		s.apiServerError(w, r, "undo orphan dismissal", err)
 	}
 }
 

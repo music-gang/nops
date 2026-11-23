@@ -258,6 +258,41 @@
         }
       }
     },
+    "/api/jobs/{namespace}/{job}/dismiss": {
+      "post": {
+        "summary": "Dismiss an orphan job",
+        "operationId": "dismissJob",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Dismissal" } } }
+        },
+        "responses": {
+          "204": { "description": "Dismissed." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/jobs/{namespace}/{job}/undismiss": {
+      "post": {
+        "summary": "Undo the dismissal of an orphan job",
+        "operationId": "undismissJob",
+        "parameters": [{ "$ref": "#/components/parameters/Namespace" }, { "$ref": "#/components/parameters/Job" }],
+        "responses": {
+          "204": { "description": "The dismissal is undone." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/pause": {
       "post": {
         "summary": "Pause every job",
@@ -659,6 +694,19 @@
         "type": "object",
         "properties": { "reason": { "type": "string", "maxLength": 500, "description": "At most 500 bytes." } }
       },
+      "Dismissal": {
+        "type": "object",
+        "required": ["deployment_id"],
+        "properties": { "deployment_id": { "type": "string", "description": "The orphan_deployment_id of the job you read." } }
+      },
+      "DismissedBy": {
+        "type": "object",
+        "required": ["by", "at"],
+        "properties": {
+          "by": { "type": "string" },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      },
       "DeploymentID": {
         "type": "object",
         "required": ["deployment_id"],
@@ -716,7 +764,8 @@
           "spec_hash": { "type": "string", "description": "What a deployment of the job would have now: the hash Deploy now asks for." },
           "blocked_by": { "type": "string" },
           "hold": { "$ref": "#/components/schemas/Hold" },
-          "last_deployment": { "$ref": "#/components/schemas/Deployment" }
+          "last_deployment": { "$ref": "#/components/schemas/Deployment" },
+          "orphan_deployment_id": { "type": "string", "description": "The last completed deployment of an orphan: what a dismissal asks for." }
         }
       },
       "Issue": {
@@ -739,6 +788,7 @@
               "file": { "type": "string" },
               "diff": { "type": "object", "description": "The redacted plan diff of the drift, as Nomad's JSON. Absent without drift." },
               "issues": { "type": "array", "items": { "$ref": "#/components/schemas/Issue" } },
+              "dismissed": { "$ref": "#/components/schemas/DismissedBy", "description": "Set while Nops no longer reports the job, gone from git and running in Nomad, because a person dismissed it." },
               "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
             }
           }

@@ -17,15 +17,16 @@ import (
 // "hands off", not "removed", and two files claiming one ID are both still
 // there. Only the jobs nops has a completed deployment for are candidates, and
 // each is looked up in Nomad, in its own namespace: gone (purged) or stopped
-// or dead is not an orphan. Each managed namespace is checked. It never changes
-// anything in Nomad.
+// or dead is not an orphan. A job dismissed for that deployment
+// (DismissOrphan) is no candidate, so it is not looked up. Each managed
+// namespace is checked. It never changes anything in Nomad.
 //
 // A Nomad failure on one candidate is an ERROR and skips that job; a store
 // failure is returned (never swallow a SQLite error).
 func (e *Engine) findOrphans(ctx context.Context, present map[jobKey]bool) ([]Orphan, error) {
 	var orphans []Orphan
 	for _, ns := range e.namespaces {
-		deployed, err := e.store.LatestCompletedPerJob(ctx, ns)
+		deployed, err := e.store.OrphanCandidates(ctx, ns)
 		if err != nil {
 			return nil, fmt.Errorf("list deployed jobs of namespace %s: %w", ns, err)
 		}

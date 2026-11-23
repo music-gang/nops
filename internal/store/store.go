@@ -371,9 +371,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
+// isUniqueViolation reports whether err is a UNIQUE or PRIMARY KEY conflict.
 func isUniqueViolation(err error) bool {
 	var se *sqlite.Error
-	return errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+	return errors.As(err, &se) && (se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || se.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
 
 func parseTime(s string) (time.Time, error) {
@@ -846,8 +847,12 @@ const (
 	latestPerJobSQL = `SELECT ` + deploymentCols + ` FROM deployments
 		WHERE id IN (SELECT latest_id FROM latest_deployments)
 		ORDER BY namespace, job_id`
-	latestCompletedPerJobSQL = `SELECT ` + deploymentCols + ` FROM deployments
-		WHERE id IN (SELECT completed_id FROM latest_deployments WHERE namespace = ?)
+	orphanCandidatesSQL = `SELECT ` + deploymentCols + ` FROM deployments
+		WHERE id IN (SELECT completed_id FROM latest_deployments
+			WHERE namespace = ? AND NOT EXISTS (SELECT 1 FROM orphan_dismissals
+				WHERE orphan_dismissals.namespace = latest_deployments.namespace
+				  AND orphan_dismissals.job_id = latest_deployments.job_id
+				  AND orphan_dismissals.deployment_id = latest_deployments.completed_id))
 		ORDER BY job_id`
 )
 
@@ -857,12 +862,13 @@ func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
 	return s.queryDeployments(ctx, latestPerJobSQL)
 }
 
-// LatestCompletedPerJob returns, for every job of a namespace that ever had a
-// `completed` deployment, the most recent of those, ordered by job ID. It is
-// what nops has put into production: the jobs it is answerable for, and the
-// only ones it looks for after they leave the repository.
-func (s *Store) LatestCompletedPerJob(ctx context.Context, namespace string) ([]*Deployment, error) {
-	return s.queryDeployments(ctx, latestCompletedPerJobSQL, namespace)
+// OrphanCandidates returns, for every job of a namespace that ever had a
+// `completed` deployment, the most recent of those, ordered by job ID, except
+// the jobs dismissed for it (DismissOrphan). It is what nops has put into
+// production and still answers for: the only jobs it looks for after they
+// leave the repository. A dismissal costs nothing to the read.
+func (s *Store) OrphanCandidates(ctx context.Context, namespace string) ([]*Deployment, error) {
+	return s.queryDeployments(ctx, orphanCandidatesSQL, namespace)
 }
 
 // DeploymentHooks returns the hooks a deployment froze, pre before post and by

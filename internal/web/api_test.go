@@ -211,6 +211,8 @@ func TestAPIActionsActAsTheToken(t *testing.T) {
 		{"pause every job", "/api/pause", `{"reason":"nomad upgrade"}`, http.StatusNoContent, ""},
 		{"resume every job", "/api/resume", "", http.StatusNoContent, ""},
 		{"deploy now", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h2"}`, http.StatusOK, `{"deployment_id":"d3"}`},
+		{"dismiss", "/api/jobs/default/web/dismiss", `{"deployment_id":"d9"}`, http.StatusNoContent, ""},
+		{"undismiss", "/api/jobs/default/web/undismiss", "", http.StatusNoContent, ""},
 	} {
 		rec := ts.api("POST", c.target, token, c.body)
 		if rec.Code != c.status {
@@ -247,6 +249,12 @@ func TestAPIActionsActAsTheToken(t *testing.T) {
 	}
 	if got, want := fmt.Sprint(en.deployNowCalls), fmt.Sprint([]deployNowCall{{"default", "web", "h2", "carol"}}); got != want {
 		t.Errorf("deploy now calls = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(en.dismissCalls), fmt.Sprint([]dismissCall{{"default", "web", "d9", "carol"}}); got != want {
+		t.Errorf("dismiss calls = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(en.undismissCalls), fmt.Sprint([]resumeCall{{"default", "web", "carol"}}); got != want {
+		t.Errorf("undismiss calls = %s, want %s", got, want)
 	}
 }
 
@@ -330,6 +338,13 @@ func TestAPIAnswersWhatTheEngineRefuses(t *testing.T) {
 		{"resume every job, store down", "/api/resume", "", func(e *fakeEngine, err error) { e.resumeAllErr = err }, errors.New("disk on fire"), 500},
 		{"deploy now, not deployable", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.deployNowErr = err }, engine.ErrNotDeployable, 409},
 		{"deploy now, unknown", "/api/jobs/default/web/deploy-now", `{"spec_hash":"h"}`, func(e *fakeEngine, err error) { e.deployNowErr = err }, store.ErrNotFound, 404},
+		{"dismiss, not an orphan", "/api/jobs/default/web/dismiss", `{"deployment_id":"d1"}`, func(e *fakeEngine, err error) { e.dismissErr = err }, engine.ErrNotOrphan, 409},
+		{"dismiss, already dismissed", "/api/jobs/default/web/dismiss", `{"deployment_id":"d1"}`, func(e *fakeEngine, err error) { e.dismissErr = err }, store.ErrAlreadyDismissed, 409},
+		{"dismiss, unknown", "/api/jobs/default/web/dismiss", `{"deployment_id":"d1"}`, func(e *fakeEngine, err error) { e.dismissErr = err }, store.ErrNotFound, 404},
+		{"dismiss, no deployment", "/api/jobs/default/web/dismiss", `{}`, func(e *fakeEngine, err error) {}, nil, 400},
+		{"dismiss, store down", "/api/jobs/default/web/dismiss", `{"deployment_id":"d1"}`, func(e *fakeEngine, err error) { e.dismissErr = err }, errors.New("disk on fire"), 500},
+		{"undismiss, not dismissed", "/api/jobs/default/web/undismiss", "", func(e *fakeEngine, err error) { e.undismissErr = err }, store.ErrNotDismissed, 409},
+		{"undismiss, unknown", "/api/jobs/default/web/undismiss", "", func(e *fakeEngine, err error) { e.undismissErr = err }, store.ErrNotFound, 404},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			en := &fakeEngine{}

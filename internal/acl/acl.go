@@ -25,7 +25,8 @@ const (
 	Promote   Capability = "promote"
 	Retry     Capability = "retry"
 	DeployNow Capability = "deploy-now"
-	Pause     Capability = "pause" // pause and resume
+	Pause     Capability = "pause"   // pause and resume
+	Dismiss   Capability = "dismiss" // dismiss an orphan and undo it
 )
 
 // The capabilities that belong to no namespace. Fetch asks for a git poll,
@@ -43,7 +44,7 @@ var globalCapabilities = []Capability{Fetch, Pause, Backup, Metrics}
 
 // namespaceCapabilities is what the shorthand "write" stands for. A new
 // capability of a namespace joins it, so a list written by hand never gains one.
-var namespaceCapabilities = []Capability{Read, Approve, Promote, Retry, DeployNow, Pause}
+var namespaceCapabilities = []Capability{Read, Approve, Promote, Retry, DeployNow, Pause, Dismiss}
 
 // The shorthands of a namespace block.
 const (

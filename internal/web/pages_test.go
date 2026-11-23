@@ -44,6 +44,14 @@ type fakeStore struct {
 	hooksErr   error
 	retryOf    *store.Deployment // what RetryOf returns, ErrNotFound if nil
 	retryOfErr error
+	dismissal  *store.Dismissal // what DismissalOf returns, whatever the job; ErrNotFound if nil
+}
+
+func (f *fakeStore) DismissalOf(ctx context.Context, namespace, jobID string) (store.Dismissal, error) {
+	if f.dismissal == nil {
+		return store.Dismissal{}, store.ErrNotFound
+	}
+	return *f.dismissal, nil
 }
 
 func (f *fakeStore) RetryOf(ctx context.Context, id string) (*store.Deployment, error) {
@@ -200,6 +208,8 @@ type promoteCall struct{ id, actor string }
 type pauseCall struct{ namespace, job, actor, reason string }
 type resumeCall struct{ namespace, job, actor string }
 
+type dismissCall struct{ namespace, job, deploymentID, actor string }
+
 type pauseAllCall struct{ actor, reason string }
 
 type fakeEngine struct {
@@ -218,6 +228,10 @@ type fakeEngine struct {
 	resumeAllCalls []string // the actor of each ResumeAll
 	deployNowErr   error
 	deployNowNext  string // what DeployNow answers: the deployment it created, none if empty
+	dismissErr     error
+	undismissErr   error
+	dismissCalls   []dismissCall
+	undismissCalls []resumeCall
 	pauseCalls     []pauseCall
 	resumeCalls    []resumeCall
 	deployNowCalls []deployNowCall
@@ -278,6 +292,16 @@ func (f *fakeEngine) Pause(ctx context.Context, namespace, jobID, actor, reason 
 func (f *fakeEngine) Resume(ctx context.Context, namespace, jobID, actor string) error {
 	f.resumeCalls = append(f.resumeCalls, resumeCall{namespace, jobID, actor})
 	return f.resumeErr
+}
+
+func (f *fakeEngine) DismissOrphan(ctx context.Context, namespace, jobID, deploymentID, actor string) error {
+	f.dismissCalls = append(f.dismissCalls, dismissCall{namespace, jobID, deploymentID, actor})
+	return f.dismissErr
+}
+
+func (f *fakeEngine) UndismissOrphan(ctx context.Context, namespace, jobID, actor string) error {
+	f.undismissCalls = append(f.undismissCalls, resumeCall{namespace, jobID, actor})
+	return f.undismissErr
 }
 
 func (f *fakeEngine) PauseAll(ctx context.Context, actor, reason string) error {
