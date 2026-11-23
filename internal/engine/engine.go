@@ -65,6 +65,9 @@ type Store interface {
 	// (see docs/archive/engine-detection.md#hook-revisions).
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
 	HookRevisionsInUse(ctx context.Context, namespace string) ([]string, error)
+	// DropEndedSpecs is used by the detection cycle once spec_retention has
+	// passed (see docs/architecture.md#detection).
+	DropEndedSpecs(ctx context.Context, before time.Time) (int, error)
 	// GetHookRun is used by the hook step to time a registration that keeps
 	// failing from the end of the previous hook.
 	GetHookRun(ctx context.Context, deploymentID, phase string, position int) (*store.HookRun, error)
@@ -268,6 +271,7 @@ type Engine struct {
 	driftInterval  time.Duration
 	engineInterval time.Duration
 	applyTimeout   time.Duration
+	specRetention  time.Duration
 	syncLoc        *time.Location // the zone the sync windows are read in
 	now            func() time.Time
 
@@ -320,6 +324,9 @@ type Options struct {
 	// ApplyTimeout is how long an apply may wait for the Nomad deployment (or
 	// the allocations) to become healthy, counted from the "-> applying" event.
 	ApplyTimeout time.Duration
+	// SpecRetention is how long a deployment that has ended keeps its specs
+	// (config.Config.SpecRetention); 0 keeps them forever.
+	SpecRetention time.Duration
 	// SyncWindowLocation is the time zone the jobs' sync windows
 	// (nops_sync_window) are read in; nil is UTC.
 	SyncWindowLocation *time.Location
@@ -354,6 +361,7 @@ func New(o Options) *Engine {
 		driftInterval:  o.DriftInterval,
 		engineInterval: o.EngineInterval,
 		applyTimeout:   o.ApplyTimeout,
+		specRetention:  o.SpecRetention,
 		syncLoc:        syncLoc,
 		now:            time.Now,
 		parseCache:     map[string]parseEntry{},

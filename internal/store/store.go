@@ -155,6 +155,9 @@ type Deployment struct {
 	PromotedAt         time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// SpecsDroppedAt is when DropEndedSpecs emptied JobSpec, JobSource, JobVars
+	// and the hooks' specs; zero while the deployment keeps them.
+	SpecsDroppedAt time.Time
 	// Hooks are the hooks the deployment runs, frozen with it. CreateDeployment
 	// writes them; reading a deployment does not load them, see DeploymentHooks.
 	Hooks []DeploymentHook
@@ -688,7 +691,7 @@ func (s *Store) AppliedSince(ctx context.Context, deploymentID string) (time.Tim
 
 const deploymentCols = `id, job_id, namespace, repository, commit_sha, commit_subject, commit_author, spec_hash, job_spec,
 	job_source, job_vars, plan_diff, diff_hash, policy, state, cas_index, applied_index, applied_version, eval_id, error, decided_by, decided_at,
-	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, created_at, updated_at`
+	retried_by, retried_at, retry_of, window_lifted_by, promotion_wait_since, promoted_at, specs_dropped_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -700,13 +703,13 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		decidedAt                           sql.NullString
 		subject, author, retriedBy, retried sql.NullString
 		retryOf, liftedBy                   sql.NullString
-		waitSince, promoted                 sql.NullString
+		waitSince, promoted, specsDropped   sql.NullString
 		applied, appliedVersion             sql.Null[uint64]
 		policy, state, createdAt, updatedAt string
 	)
 	if err := r.Scan(&d.ID, &d.JobID, &d.Namespace, &d.Repository, &d.CommitSHA, &subject, &author, &d.SpecHash, &d.JobSpec, &source, &vars, &plan, &diffHash,
 		&policy, &state, &d.CASIndex, &applied, &appliedVersion, &eval, &errMsg, &by, &decidedAt, &retriedBy, &retried,
-		&retryOf, &liftedBy, &waitSince, &promoted, &createdAt, &updatedAt); err != nil {
+		&retryOf, &liftedBy, &waitSince, &promoted, &specsDropped, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	d.JobSource, d.JobVars = source.String, vars.String
@@ -729,6 +732,9 @@ func scanDeployment(r scanner) (*Deployment, error) {
 		return nil, err
 	}
 	if d.PromotedAt, err = parseTime(promoted.String); err != nil {
+		return nil, err
+	}
+	if d.SpecsDroppedAt, err = parseTime(specsDropped.String); err != nil {
 		return nil, err
 	}
 	if d.CreatedAt, err = parseTime(createdAt); err != nil {

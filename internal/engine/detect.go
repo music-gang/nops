@@ -154,6 +154,9 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	if err := e.gcHookRevisions(ctx); err != nil {
 		return st, err
 	}
+	if err := e.dropEndedSpecs(ctx); err != nil {
+		return st, err
+	}
 
 	// A file that does not parse looks exactly like a removed one: with any,
 	// the check is skipped and the last complete one stands.

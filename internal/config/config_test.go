@@ -136,6 +136,7 @@ func TestLoadDefaults(t *testing.T) {
 		EngineInterval:   5 * time.Second,
 		HookPollInterval: 5 * time.Second,
 		ApplyTimeout:     10 * time.Minute,
+		SpecRetention:    720 * time.Hour,
 		// The server's timeouts, with no listen block.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       time.Minute,
@@ -248,6 +249,7 @@ acl {
 		EngineInterval:     5 * time.Second,
 		HookPollInterval:   5 * time.Second,
 		ApplyTimeout:       10 * time.Minute,
+		SpecRetention:      720 * time.Hour,
 		SyncWindowLocation: time.UTC,
 		LogLevel:           slog.LevelDebug,
 	}
@@ -1609,6 +1611,7 @@ drift_interval        = "15m"
 engine_interval       = "7s"
 hook_poll_interval    = "3s"
 apply_timeout         = "1h"
+spec_retention        = "2160h"
 sync_window_time_zone = "UTC"
 webhook_secret_file   = "`+secretFile+`"
 `)
@@ -1617,11 +1620,23 @@ webhook_secret_file   = "`+secretFile+`"
 		t.Fatal(err)
 	}
 	got := []any{c.LogLevel, c.DBPath, c.PublicURL, c.BasePath, c.GitPollInterval, c.DriftInterval, c.EngineInterval,
-		c.HookPollInterval, c.ApplyTimeout, c.SyncWindowLocation, c.WebhookSecretFile, c.WebhookSecret}
+		c.HookPollInterval, c.ApplyTimeout, c.SpecRetention, c.SyncWindowLocation, c.WebhookSecretFile, c.WebhookSecret}
 	want := []any{slog.LevelDebug, "/var/lib/nops/nops.db", "https://nops.example.com/nops", "/nops", 2 * time.Minute, 15 * time.Minute, 7 * time.Second,
-		3 * time.Second, time.Hour, time.UTC, secretFile, "webhook-shared-secret"}
+		3 * time.Second, time.Hour, 2160 * time.Hour, time.UTC, secretFile, "webhook-shared-secret"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("\n got %v\nwant %v", got, want)
+	}
+}
+
+// spec_retention = "0s" keeps the specs forever.
+func TestLoadSpecRetentionOff(t *testing.T) {
+	file := writeConfig(t, defaultRepo+`spec_retention = "0s"`+"\n")
+	c, err := Load([]string{"-config", file}, envOf(map[string]string{"NOPS_PUBLIC_URL": ""}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SpecRetention != 0 {
+		t.Errorf("spec retention = %v, want 0", c.SpecRetention)
 	}
 }
 
@@ -1721,6 +1736,8 @@ func TestLoadTopLevelInvalid(t *testing.T) {
 		{"hook_poll_interval", `""`, "hook_poll_interval: time: invalid duration"},
 		{"apply_timeout", `"1d"`, "apply_timeout: time: unknown unit"},
 		{"apply_timeout", `600`, "apply_timeout"},
+		{"spec_retention", `"-1h"`, `spec_retention: duration "-1h" must not be negative`},
+		{"spec_retention", `"30d"`, "spec_retention: time: unknown unit"},
 		{"sync_window_time_zone", `"Mars/Olympus"`, "sync_window_time_zone: unknown time zone"},
 		{"sync_window_time_zone", `"Local"`, "sync_window_time_zone: \"Local\" is not an IANA time zone"},
 		{"webhook_secret_file", `"` + missing + `"`, "webhook_secret_file: open " + missing},

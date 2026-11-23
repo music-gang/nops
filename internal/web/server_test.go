@@ -78,7 +78,7 @@ func TestTemplatesRenderEveryPage(t *testing.T) {
 		StateLabel: stateLabel(store.StatePendingApproval), StateClass: stateClass(store.StatePendingApproval),
 		Error: "boom", CommitSHA: "abcdef1234567890", CommitShort: "abcdef1", CommitURL: "https://git.test/c/abcdef1",
 		CommitSubj: "subject", CommitAuthor: "me", SpecHash: "hash", SpecShort: "hash", CASIndex: 7, EvalID: "eval", EvalShort: "eval",
-		DecidedBy: "alice", DecidedAt: tv, RetriedBy: "alice", RetriedAt: tv, CreatedAt: tv, UpdatedAt: tv,
+		DecidedBy: "alice", DecidedAt: tv, RetriedBy: "alice", RetriedAt: tv, CreatedAt: tv, UpdatedAt: tv, SpecsDropped: tv,
 	}
 	summary := nomadx.Summarize(diff)
 	dd := deploymentDetailData{

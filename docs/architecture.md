@@ -64,7 +64,9 @@ A job's drift, hooks and state live in memory and are rebuilt every cycle;
 only deployments go to SQLite. A deployment stores the full spec to register,
 with the file and var-file it was parsed from, so apply registers exactly what
 was planned and approved. The dashboard never shows that spec, only the
-redacted diff.
+redacted diff. Once a deployment has ended, Nops drops them, with its hooks'
+specs, after the [`spec_retention`](configuration.md#storage-intervals-and-timeouts)
+period, except from the latest completed deployment of each job.
 
 ### Rules detection keeps
 

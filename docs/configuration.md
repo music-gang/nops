@@ -271,6 +271,7 @@ apply_timeout     = "15m"
 | Attribute | Default | Meaning |
 |---|---|---|
 | `db_path` | `nops.db` | SQLite database file. |
+| `spec_retention` | `720h` | How long a deployment that has ended keeps the spec, the job file and var-file, and its hooks' specs. The latest completed deployment of each job keeps them. `0`: forever. |
 | `log_level` | `info` | `debug`, `info`, `warn` or `error`. |
 | `git_poll_interval` | `1m` | How often Nops polls each repository. |
 | `drift_interval` | `5m` | How often Nops checks Nomad for drift without a new commit. |
