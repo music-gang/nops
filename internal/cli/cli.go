@@ -60,8 +60,8 @@ type call struct {
 	getenv      func(string) string
 	addr        string // the -addr of a command that builds its own client
 	out, errOut io.Writer
-	serve       *flag.FlagSet // the flags of "nops serve"
-	table       []command     // every command: the completion lists them, and the table lists the completion
+	server      Server
+	table       []command // every command: the completion lists them, and the table lists the completion
 }
 
 type command struct {
@@ -84,11 +84,20 @@ type command struct {
 // takesJob is whether the command names a job, and so takes -namespace.
 func (c command) takesJob() bool { return c.arg == "<job>" }
 
+// Server is what the commands take from internal/config, which main gives
+// them: the tests of internal/config import this package.
+type Server struct {
+	// Flags is the flags of "nops serve": the completion offers them. It may
+	// be nil.
+	Flags *flag.FlagSet
+	// Validate checks a -config file for nops config validate.
+	Validate func(file string) error
+}
+
 // Run runs the command in args (the arguments after the program name) and
 // returns the exit code. getenv reads the environment; stdin answers the
-// question of approve and deploy-now. serve is the flags of "nops serve", which
-// main runs: the completion offers them, and it may be nil.
-func Run(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, serve *flag.FlagSet) int {
+// question of approve and deploy-now.
+func Run(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, server Server) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return exitUsage
@@ -117,7 +126,7 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdin i
 		return exitUsage
 	}
 
-	err := cmd.exec(ctx, rest, getenv, stdin, stdout, stderr, serve)
+	err := cmd.exec(ctx, rest, getenv, stdin, stdout, stderr, server)
 	var ue usageError
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
@@ -159,9 +168,9 @@ func (c *command) flagSet(k *call, s *settings, out io.Writer) *flag.FlagSet {
 	return fs
 }
 
-func (c *command) exec(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, serve *flag.FlagSet) error {
+func (c *command) exec(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, server Server) error {
 	var s settings
-	k := &call{ctx: ctx, in: bufio.NewReader(stdin), stdin: stdin, getenv: getenv, out: stdout, errOut: stderr, serve: serve, table: commands}
+	k := &call{ctx: ctx, in: bufio.NewReader(stdin), stdin: stdin, getenv: getenv, out: stdout, errOut: stderr, server: server, table: commands}
 	fs := c.flagSet(k, &s, stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: nops %s [flags]%s\n\n%s\n\n", c.name, strings.TrimRight(" "+c.arg, " "), c.help)

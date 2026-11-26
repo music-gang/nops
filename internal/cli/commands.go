@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -49,6 +50,20 @@ var commands = []command{
 	{name: "acl token self", help: "show the token this client uses", run: runTokenSelf},
 	{name: "completion", arg: "<shell>", offline: true, help: "print the completion script of bash or zsh, offline", run: runCompletion},
 	{name: "secret generate", offline: true, help: "print a new random secret, offline", run: runSecretGenerate},
+	{name: "config validate", arg: "<file>", offline: true, help: "check a configuration file of nops serve, offline", run: runConfigValidate},
+}
+
+// runConfigValidate checks the file as nops serve would read it. An invalid
+// file is an error whose lines are the messages of nops serve.
+func runConfigValidate(k *call) error {
+	if k.server.Validate == nil {
+		return errors.New("this build can't check a configuration file")
+	}
+	if err := k.server.Validate(k.arg); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(k.out, "the configuration is valid")
+	return err
 }
 
 func runSecretGenerate(k *call) error {

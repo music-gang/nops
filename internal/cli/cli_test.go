@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/nomad/api"
 
+	"github.com/music-gang/nops/internal/config"
 	"github.com/music-gang/nops/internal/redact"
 )
 
@@ -57,7 +58,7 @@ func newStub(t *testing.T, answers map[string]answer) (*stub, string) {
 func run(t *testing.T, env map[string]string, stdin string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = Run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, nil)
+	code = Run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, Server{Validate: config.Validate})
 	return code, out.String(), errOut.String()
 }
 
@@ -515,6 +516,49 @@ func TestSecretGenerateTakesNoAPIFlags(t *testing.T) {
 		if code, out, _ := run(t, nil, "", args...); code != 2 || out != "" {
 			t.Errorf("%v: exit %d, stdout %q, want 2 and nothing", args, code, out)
 		}
+	}
+}
+
+func TestConfigValidate(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	valid := write("valid.hcl", `repository "apps" {
+  url = "https://git.example.com/ops/apps.git"
+}
+auth "basic" {
+  type       = "basic"
+  users_file = "/missing/users"
+}
+`)
+	invalid := write("invalid.hcl", `apply_timeout = "0s"`+"\n")
+
+	// No NOPS_ADDR and no token: it runs offline.
+	code, out, errOut := run(t, nil, "", "config", "validate", valid)
+	if code != exitOK || out != "the configuration is valid\n" || errOut != "" {
+		t.Errorf("valid: exit %d, stdout %q, stderr %q; want 0 and one line on stdout", code, out, errOut)
+	}
+	code, out, errOut = run(t, nil, "", "config", "validate", invalid)
+	if code != exitError || out != "" || !strings.HasPrefix(errOut, "nops config validate: ") ||
+		!strings.Contains(errOut, "apply_timeout:") || !strings.Contains(errOut, "an auth block in -config is required") {
+		t.Errorf("invalid: exit %d, stdout %q, stderr %q; want 1 and every error on stderr", code, out, errOut)
+	}
+	for _, args := range [][]string{
+		{"config", "validate"},
+		{"config", "validate", valid, invalid},
+		{"config", "validate", "-addr", "http://x", valid},
+	} {
+		if code, out, _ := run(t, nil, "", args...); code != exitUsage || out != "" {
+			t.Errorf("%v: exit %d, stdout %q, want 2 and nothing", args, code, out)
+		}
+	}
+	if code, _, errOut := run(t, nil, "", "config"); code != exitUsage || !strings.Contains(errOut, "config takes a subcommand: validate") {
+		t.Errorf("config: exit %d, stderr %q, want the subcommand listed", code, errOut)
 	}
 }
 

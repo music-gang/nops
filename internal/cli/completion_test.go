@@ -20,7 +20,7 @@ func completion(t *testing.T, shell string) string {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	args := []string{"completion", shell}
-	if code := Run(context.Background(), args, func(string) string { return "" }, strings.NewReader(""), &out, &errOut, config.FlagSet(io.Discard)); code != 0 || errOut.Len() != 0 {
+	if code := Run(context.Background(), args, func(string) string { return "" }, strings.NewReader(""), &out, &errOut, Server{Flags: config.FlagSet(io.Discard)}); code != 0 || errOut.Len() != 0 {
 		t.Fatalf("nops completion %s: exit %d, stderr %q", shell, code, errOut.String())
 	}
 	return out.String()
@@ -107,7 +107,7 @@ func TestBashCompletion(t *testing.T) {
 		words []string
 		want  []string // nil: nothing
 	}{
-		{[]string{"nops", ""}, []string{"jobs", "acl", "completion", "secret", "serve"}},
+		{[]string{"nops", ""}, []string{"jobs", "acl", "completion", "config", "secret", "serve"}},
 		{[]string{"nops", "ac"}, []string{"acl"}},
 		{[]string{"nops", "acl", ""}, []string{"binding-rule", "policy", "token"}},
 		{[]string{"nops", "acl", "token", "cr"}, []string{"create"}},
@@ -124,6 +124,7 @@ func TestBashCompletion(t *testing.T) {
 		{[]string{"nops", "backup", ""}, files},
 		{[]string{"nops", "backup", "a"}, []string{"a.hcl"}},
 		{[]string{"nops", "acl", "policy", "apply", "name", ""}, files},
+		{[]string{"nops", "config", "validate", ""}, files},
 		{[]string{"nops", "acl", "policy", "apply", "-description", "x", "name", ""}, files},
 		{[]string{"nops", "jobs", "-token-file", ""}, files},
 		{[]string{"nops", "serve", "-db-path", ""}, files},

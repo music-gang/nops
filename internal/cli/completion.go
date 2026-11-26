@@ -75,7 +75,7 @@ func runCompletion(k *call) error {
 	if !ok {
 		return usageErrorf("%q is not a shell: %s", k.arg, strings.Join(shellNames, " or "))
 	}
-	return t.Execute(k.out, completionTree(k.table, k.serve))
+	return t.Execute(k.out, completionTree(k.table, k.server.Flags))
 }
 
 // completionTree is the root of the command line and every group and command

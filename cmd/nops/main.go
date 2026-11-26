@@ -49,7 +49,7 @@ func main() {
 	defer cancel()
 
 	if len(os.Args) < 2 || os.Args[1] != "serve" {
-		os.Exit(cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, config.FlagSet(io.Discard)))
+		os.Exit(cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, cli.Server{Flags: config.FlagSet(io.Discard), Validate: config.Validate}))
 	}
 
 	cfg, err := config.Load(os.Args[2:], os.Getenv, os.Stderr)
