@@ -1789,3 +1789,138 @@ func TestLoadTopLevelOptionsRemoved(t *testing.T) {
 		})
 	}
 }
+
+// Validate opens none of the files the configuration names: their paths are
+// on the server's machine, and none of these exists.
+func TestValidateReadsNoNamedFile(t *testing.T) {
+	file := writeFile(t, "nops.hcl", `webhook_secret_file = "/missing/webhook"
+
+listen {
+  tls {
+    cert_file = "/missing/nops.crt"
+    key_file  = "/missing/nops.key"
+  }
+}
+
+nomad {
+  token_file  = "/missing/nomad-token"
+  ca_cert     = "/missing/ca.pem"
+  client_cert = "/missing/cli.pem"
+  client_key  = "/missing/cli-key.pem"
+}
+
+repository "apps" {
+  url        = "https://git.example.com/ops/apps.git"
+  token_file = "/missing/git-token"
+}
+
+auth "basic" {
+  type        = "basic"
+  users_file  = "/missing/users"
+  groups_file = "/missing/groups"
+}
+
+acl {
+  enabled              = true
+  bootstrap_token_file = "/missing/bootstrap"
+}
+
+notify "slack" {
+  type     = "slack"
+  url_file = "/missing/slack-url"
+}
+
+notify "gotify" {
+  type       = "gotify"
+  url        = "https://gotify.example.com"
+  token_file = "/missing/gotify-token"
+}
+`)
+	if err := Validate(file); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// An invalid file gets the messages Load gives without flags or variables.
+func TestValidateGivesTheMessagesOfLoad(t *testing.T) {
+	file := writeConfig(t, `apply_timeout = "0s"
+listen {
+  addr = "8080"
+}
+nomad {
+  addr = "nomad:4646"
+}
+repository "a b" {
+  url = "`+repo+`"
+}
+`)
+	_, want := Load([]string{"-config", file}, rawEnvOf(nil), io.Discard)
+	if want == nil {
+		t.Fatal("Load: no error")
+	}
+	got := Validate(file)
+	if got == nil || got.Error() != want.Error() {
+		t.Errorf("Validate: %v\nwant the error of Load: %v", got, want)
+	}
+}
+
+// Every attribute is checked, also one a flag would override.
+func TestValidateChecksWhatAFlagOverrides(t *testing.T) {
+	file := writeConfig(t, defaultRepo+`log_level = "loud"
+listen {
+  addr = "8080"
+}
+`)
+	if _, err := Load([]string{"-config", file, "-listen-addr", ":9090", "-log-level", "info"}, envOf(nil), io.Discard); err != nil {
+		t.Fatalf("Load with the flags: %v", err)
+	}
+	err := Validate(file)
+	checkErr(t, err, "-config "+file+": ", "log_level:")
+	checkErr(t, err, "-config "+file+": ", "listen: addr:")
+}
+
+// A file attribute only counts as set, so the rules between attributes still
+// apply.
+func TestValidateKeepsTheRulesBetweenAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, want string
+	}{
+		{"git token over http", `repository "a" {
+  url        = "http://git.example.com/a.git"
+  token_file = "/missing/token"
+}
+`, "a git token needs an https:// url"},
+		{"tls without a key", defaultRepo + `listen {
+  tls {
+    cert_file = "/missing/nops.crt"
+    key_file  = ""
+  }
+}
+`, "listen: tls: key_file: required"},
+		{"client cert without a key", defaultRepo + `nomad {
+  client_cert = "/missing/cli.pem"
+}
+`, "must be set together with client_key"},
+		{"acl without a token", defaultRepo + `acl {
+  enabled = true
+}
+`, "required with enabled = true"},
+		{"token without the acl", defaultRepo + `acl {
+  bootstrap_token_file = "/missing/bootstrap"
+}
+`, "is set without enabled = true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(writeConfig(t, tc.content))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Validate: %v, want an error with %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateMissingFile(t *testing.T) {
+	if err := Validate(filepath.Join(t.TempDir(), "nops.hcl")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Validate: %v, want a missing file", err)
+	}
+}

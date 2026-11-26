@@ -19,6 +19,7 @@ Every option of the Nops server, `nops serve`. To run Nops on a cluster, see
   job don't change what Nops manages.
 - Durations use Go syntax (`90s`, `5m`, `1h`) and must be positive.
 - Nops reports every invalid option at once and refuses to start.
+  `nops config validate <file>` checks a file before it reaches the server.
 - `nops serve -h` lists every flag. `nops -version` prints the version.
 
 ### Secrets

@@ -161,6 +161,9 @@ type Config struct {
 	// over them or not, in the order of the options. nops serve logs a WARN
 	// for each.
 	DeprecatedVariables []DeprecatedVariable
+
+	// files reads the files the configuration names.
+	files files
 }
 
 // DeprecatedVariable is a NOPS_* variable of nops serve that is set, and what
@@ -404,21 +407,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	set := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	c := &Config{
-		NomadNamespaces:    []string{api.DefaultNamespace},
-		NomadTimeout:       defaultNomadTimeout,
-		ReadHeaderTimeout:  defaultReadHeaderTimeout,
-		ReadTimeout:        defaultReadTimeout,
-		WriteTimeout:       defaultWriteTimeout,
-		IdleTimeout:        defaultIdleTimeout,
-		GitPollInterval:    defaultGitPollInterval,
-		DriftInterval:      defaultDriftInterval,
-		EngineInterval:     defaultEngineInterval,
-		HookPollInterval:   defaultHookPollInterval,
-		ApplyTimeout:       defaultApplyTimeout,
-		SpecRetention:      defaultSpecRetention,
-		SyncWindowLocation: time.UTC,
-	}
+	c := newConfig()
 	var errs []error
 	explicit := make(map[string]bool) // the options given by flag or variable
 	for i, o := range options {
@@ -448,6 +437,57 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 			errs = append(errs, fmt.Errorf("%s was removed: %s", o.valueEnv, o.replacedBy))
 		}
 	}
+	errs = append(errs, c.loadFile(explicit)...)
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Validate checks the -config file at file as Load does with no flag and no
+// variable, with the same messages, and opens none of the files it names: a
+// *_file attribute only counts as set. Every attribute is checked, also those
+// a flag would override.
+func Validate(file string) error {
+	c := newConfig()
+	c.files.skip = true
+	for _, o := range options {
+		if err := o.set(c, o.def); err != nil {
+			return fmt.Errorf("the default of -%s: %w", o.name, err)
+		}
+	}
+	var err error
+	if c.ConfigFile, err = readableFile(file); err != nil {
+		return err
+	}
+	return errors.Join(c.loadFile(nil)...)
+}
+
+// newConfig is the configuration with the defaults of the options that have
+// no flag.
+func newConfig() *Config {
+	return &Config{
+		NomadNamespaces:    []string{api.DefaultNamespace},
+		NomadTimeout:       defaultNomadTimeout,
+		ReadHeaderTimeout:  defaultReadHeaderTimeout,
+		ReadTimeout:        defaultReadTimeout,
+		WriteTimeout:       defaultWriteTimeout,
+		IdleTimeout:        defaultIdleTimeout,
+		GitPollInterval:    defaultGitPollInterval,
+		DriftInterval:      defaultDriftInterval,
+		EngineInterval:     defaultEngineInterval,
+		HookPollInterval:   defaultHookPollInterval,
+		ApplyTimeout:       defaultApplyTimeout,
+		SpecRetention:      defaultSpecRetention,
+		SyncWindowLocation: time.UTC,
+	}
+}
+
+// loadFile reads the -config file, validates it and checks the rules between
+// options. An attribute that has a flag counts only when its option is not in
+// explicit, the options given by flag or variable.
+func (c *Config) loadFile(explicit map[string]bool) []error {
+	var errs []error
 	fc, fileErr := readConfigFile(c.ConfigFile)
 	errs = append(errs, c.loadTopLevel(fc, explicit)...)
 	// The nomad block first: a repository's jobs must match its namespaces.
@@ -457,11 +497,7 @@ func Load(args []string, getenv func(string) string, out io.Writer) (*Config, er
 	errs = append(errs, c.loadAuth(fc, fileErr)...)
 	errs = append(errs, c.loadACL(fc)...)
 	errs = append(errs, c.loadNotify(fc)...)
-	errs = append(errs, c.check()...)
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
-	}
-	return c, nil
+	return append(errs, c.check()...)
 }
 
 // check validates the rules that involve more than one option, and fills
@@ -587,7 +623,7 @@ func (c *Config) loadRepositories(fc *fileConfig, fileErr error) []error {
 		errs = append(errs, fileErr)
 	}
 	if fc != nil {
-		repos, repoErrs := repositoriesOf(fc, c.ConfigFile, c.NomadNamespaces)
+		repos, repoErrs := repositoriesOf(fc, c.ConfigFile, c.NomadNamespaces, c.files)
 		c.Repositories = repos
 		errs = append(errs, repoErrs...)
 	}
@@ -679,7 +715,7 @@ func (c *Config) loadTopLevel(fc *fileConfig, explicit map[string]bool) []error 
 		}
 	}
 	c.WebhookSecretFile = fc.WebhookSecretFile
-	if c.WebhookSecret, err = secretFile(fc.WebhookSecretFile); err != nil {
+	if c.WebhookSecret, err = c.files.secret(fc.WebhookSecretFile); err != nil {
 		fail("webhook_secret_file", err)
 	}
 	return errs
@@ -732,7 +768,7 @@ func (c *Config) loadListen(fc *fileConfig, explicit map[string]bool) []error {
 				errs = append(errs, fmt.Errorf("-config %s: listen: tls: %s: required", c.ConfigFile, f.name))
 				continue
 			}
-			file, err := readableFile(f.in)
+			file, err := c.files.readable(f.in)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("-config %s: listen: tls: %s: %w", c.ConfigFile, f.name, err))
 				continue
@@ -771,7 +807,7 @@ func (c *Config) loadNomad(fc *fileConfig, explicit map[string]bool) []error {
 		}
 	}
 	c.NomadTokenFile = b.TokenFile
-	if c.NomadToken, err = secretFile(b.TokenFile); err != nil {
+	if c.NomadToken, err = c.files.secret(b.TokenFile); err != nil {
 		fail("token_file", err)
 	}
 	if c.NomadUIURL, err = optionalURL(b.UIURL); err != nil {
@@ -786,7 +822,7 @@ func (c *Config) loadNomad(fc *fileConfig, explicit map[string]bool) []error {
 		{"client_cert", b.ClientCert, &c.NomadClientCert},
 		{"client_key", b.ClientKey, &c.NomadClientKey},
 	} {
-		if *f.out, err = readableFile(f.in); err != nil {
+		if *f.out, err = c.files.readable(f.in); err != nil {
 			fail(f.name, err)
 		}
 	}
@@ -850,9 +886,9 @@ func (c *Config) loadAuth(fc *fileConfig, fileErr error) []error {
 		// is significant (Authentik's has one) and must be kept.
 		{"issuer_url", b.IssuerURL, httpURL, &a.IssuerURL},
 		{"client_id", b.ClientID, required, &a.ClientID},
-		{"client_secret_file", b.ClientSecretFile, secretFile, &a.ClientSecret},
-		{"users_file", b.UsersFile, readableFile, &a.UsersFile},
-		{"groups_file", b.GroupsFile, readableFile, &a.GroupsFile},
+		{"client_secret_file", b.ClientSecretFile, c.files.secret, &a.ClientSecret},
+		{"users_file", b.UsersFile, c.files.readable, &a.UsersFile},
+		{"groups_file", b.GroupsFile, c.files.readable, &a.GroupsFile},
 	} {
 		required, taken := takes[f.name]
 		switch {
@@ -914,7 +950,7 @@ func (c *Config) loadACL(fc *fileConfig) []error {
 	fail := func(format string, a ...any) []error {
 		return []error{fmt.Errorf("-config %s: acl: bootstrap_token_file: %s", c.ConfigFile, fmt.Sprintf(format, a...))}
 	}
-	tok, err := secretFile(b.BootstrapTokenFile)
+	tok, err := c.files.secret(b.BootstrapTokenFile)
 	switch {
 	case err != nil:
 		return fail("%v", err)
@@ -922,7 +958,7 @@ func (c *Config) loadACL(fc *fileConfig) []error {
 		return fail(`required with enabled = true: make the token with "nops secret generate"`)
 	case !b.Enabled && tok != "":
 		return fail("is set without enabled = true")
-	case b.Enabled && !secret.Valid(tok):
+	case b.Enabled && !c.files.skip && !secret.Valid(tok):
 		return fail(`the token is not a secret made by "nops secret generate"`)
 	}
 	c.ACL, c.ACLBootstrapTokenFile, c.ACLBootstrapToken = b.Enabled, b.BootstrapTokenFile, tok
@@ -972,9 +1008,9 @@ func (c *Config) loadNotify(fc *fileConfig) []error {
 			read func(string) (string, error)
 			out  *string
 		}{
-			{"url_file", b.URLFile, urlFile, &n.URL},
+			{"url_file", b.URLFile, c.files.url, &n.URL},
 			{"url", b.URL, func(v string) (string, error) { return optionalURL(v) }, &n.URL},
-			{"token_file", b.TokenFile, secretFile, &n.Token},
+			{"token_file", b.TokenFile, c.files.secret, &n.Token},
 		} {
 			required, taken := takes[a.name]
 			switch {
@@ -1015,7 +1051,7 @@ func (c *Config) loadNotify(fc *fileConfig) []error {
 // repositoriesOf reads the repository blocks of fc, the decoded -config file
 // at file. Every error names the file, and the block it is about. namespaces
 // are the managed ones, which the namespace of a jobs pattern must match.
-func repositoriesOf(fc *fileConfig, file string, namespaces []string) ([]Repository, []error) {
+func repositoriesOf(fc *fileConfig, file string, namespaces []string, files files) ([]Repository, []error) {
 	var (
 		repos []Repository
 		errs  []error
@@ -1044,7 +1080,7 @@ func repositoriesOf(fc *fileConfig, file string, namespaces []string) ([]Reposit
 		if b.Username != nil {
 			r.Username = *b.Username
 		}
-		if r.Token, err = secretFile(b.TokenFile); err != nil {
+		if r.Token, err = files.secret(b.TokenFile); err != nil {
 			fail("token_file", err)
 		}
 		if b.Jobs != nil {
@@ -1274,6 +1310,31 @@ func basePathOf(publicURL string) string {
 		return ""
 	}
 	return p
+}
+
+// files reads the files the configuration names. With skip, it opens none
+// and gives back the path: an attribute only counts as set.
+type files struct{ skip bool }
+
+func (f files) secret(path string) (string, error) {
+	if f.skip {
+		return path, nil
+	}
+	return secretFile(path)
+}
+
+func (f files) url(path string) (string, error) {
+	if f.skip {
+		return path, nil
+	}
+	return urlFile(path)
+}
+
+func (f files) readable(path string) (string, error) {
+	if f.skip {
+		return path, nil
+	}
+	return readableFile(path)
 }
 
 // urlFile reads a URL that carries a secret (a Discord or Slack webhook
