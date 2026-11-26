@@ -18,6 +18,7 @@ func TestParse(t *testing.T) {
 		pre, post       []string
 		isHook          bool
 		timeout         time.Duration
+		applyTimeout    time.Duration
 		notifyCompleted bool
 		wantIssues      []Issue
 	}{
@@ -292,6 +293,58 @@ func TestParse(t *testing.T) {
 				{SeverityWarn, KeyNotifyCompleted, "set but nops_managed is not \"true\": ignored"},
 			},
 		},
+		{
+			name:         "an apply timeout of its own",
+			in:           map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyApplyTimeout: "2h"},
+			managed:      true,
+			policy:       PolicyAuto,
+			applyTimeout: 2 * time.Hour,
+		},
+		{
+			name:         "an apply timeout under the default is kept",
+			in:           map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyApplyTimeout: "30s"},
+			managed:      true,
+			policy:       PolicyAuto,
+			applyTimeout: 30 * time.Second,
+		},
+		{
+			name:    "an invalid apply timeout falls back to none",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyApplyTimeout: "2 hours"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyApplyTimeout, "invalid duration \"2 hours\": time: unknown unit \" hours\" in duration \"2 hours\""},
+			},
+		},
+		{
+			name:    "a non positive apply timeout falls back to none",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyApplyTimeout: "0s"},
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyApplyTimeout, "duration \"0s\" must be positive"},
+			},
+		},
+		{
+			name:         "an apply timeout on an unmanaged job is a warning and still parses",
+			in:           map[string]string{KeyApplyTimeout: "2h"},
+			policy:       PolicyNone,
+			applyTimeout: 2 * time.Hour,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyApplyTimeout, "set but nops_managed is not \"true\": ignored"},
+			},
+		},
+		{
+			name:         "an apply timeout on a hook is ignored with a warning",
+			in:           map[string]string{KeyRole: "hook", KeyApplyTimeout: "2h"},
+			policy:       PolicyNone,
+			isHook:       true,
+			timeout:      DefaultHookTimeout,
+			applyTimeout: 2 * time.Hour,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyApplyTimeout, "set but nops_role is \"hook\": ignored"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -311,6 +364,9 @@ func TestParse(t *testing.T) {
 			}
 			if got.Timeout != tc.timeout {
 				t.Errorf("Timeout = %s, want %s", got.Timeout, tc.timeout)
+			}
+			if got.ApplyTimeout != tc.applyTimeout {
+				t.Errorf("ApplyTimeout = %s, want %s", got.ApplyTimeout, tc.applyTimeout)
 			}
 			if got.IsHook != tc.isHook {
 				t.Errorf("IsHook = %v, want %v", got.IsHook, tc.isHook)

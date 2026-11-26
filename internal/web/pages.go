@@ -193,7 +193,7 @@ type planStep struct {
 	// Revision is the first 8 hex of the hook's spec hash: which version of the
 	// hook runs.
 	Revision string
-	Timeout  string
+	Timeout  string // for a hook, and for "health" the apply timeout
 	Text     string // for "register"
 }
 
@@ -252,8 +252,10 @@ type deploymentDetailData struct {
 // planSteps reads what approving d will run: the hooks it froze at detection,
 // in the order they run (which one, at which revision, and how long it may
 // take, from the hook's own spec), and the register and health steps between
-// the two phases. The specs themselves are never rendered.
-func planSteps(d *store.Deployment, hooks []store.DeploymentHook) []planStep {
+// the two phases, the health step with the apply timeout. The specs themselves
+// are never rendered.
+func planSteps(d *store.Deployment, hooks []store.DeploymentHook, applyTimeout time.Duration) []planStep {
+	health := planStep{Kind: "health", Timeout: duration(applyTimeout)}
 	hookStep := func(kind string, h store.DeploymentHook) planStep {
 		return planStep{Kind: kind, Job: h.HookID, Revision: strings.TrimPrefix(h.Revision, h.HookID+"-"), Timeout: hookTimeout(h)}
 	}
@@ -261,7 +263,7 @@ func planSteps(d *store.Deployment, hooks []store.DeploymentHook) []planStep {
 	if engine.Rerun(d) {
 		// The failed deployment this retries had registered: the job is live as
 		// the spec says, and what is left starts at the health check.
-		steps = append(steps, planStep{Kind: "health"})
+		steps = append(steps, health)
 	} else {
 		for _, h := range hooks {
 			if h.Phase == "pre" {
@@ -272,7 +274,7 @@ func planSteps(d *store.Deployment, hooks []store.DeploymentHook) []planStep {
 		if d.CASIndex != 0 {
 			register = fmt.Sprintf("Update the job in Nomad, only if it has not changed since (index %d).", d.CASIndex)
 		}
-		steps = append(steps, planStep{Kind: "register", Text: register}, planStep{Kind: "health"})
+		steps = append(steps, planStep{Kind: "register", Text: register}, health)
 	}
 	for _, h := range hooks {
 		if h.Phase == "post" {
@@ -366,7 +368,12 @@ func (s *server) deploymentView(w http.ResponseWriter, r *http.Request, id, noti
 			s.serverError(w, r, "list frozen hooks", err)
 			return deploymentDetailData{}, false
 		}
-		data.Steps = planSteps(d, frozen)
+		timeout, err := s.engine.ApplyTimeout(d)
+		if err != nil {
+			s.serverError(w, r, "read the apply timeout", err)
+			return deploymentDetailData{}, false
+		}
+		data.Steps = planSteps(d, frozen, timeout)
 	}
 	for _, e := range events {
 		data.Events = append(data.Events, eventView{

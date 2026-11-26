@@ -496,15 +496,39 @@ func submissionOf(d *store.Deployment) *api.JobSubmission {
 // the job's only active slot (invariant 6) for good. The clock is the same as
 // stepHealth's: the "-> applying" event, which a restart does not move.
 func (e *Engine) registerRetry(ctx context.Context, log *slog.Logger, d *store.Deployment, cause error) {
+	timeout, err := e.ApplyTimeout(d)
+	if err != nil {
+		log.ErrorContext(ctx, "read the apply timeout", "error", err)
+		return
+	}
 	since, err := e.store.AppliedSince(ctx, d.ID)
 	if err != nil {
 		log.ErrorContext(ctx, "read applied timestamp", "error", err)
 		return
 	}
-	if e.now().After(since.Add(e.applyTimeout)) {
+	if e.now().After(since.Add(timeout)) {
 		e.applyTransition(ctx, log, d, store.StateFailed,
-			fmt.Sprintf("could not register within %s: %v", e.applyTimeout, cause))
+			fmt.Sprintf("could not register within %s: %v", timeout, cause))
 	}
+}
+
+// ApplyTimeout is how long an apply of d may take: the job's
+// nops_apply_timeout in the spec d froze at detection, so an approval covers
+// it, or else the apply_timeout of the configuration.
+func (e *Engine) ApplyTimeout(d *store.Deployment) (time.Duration, error) {
+	job, err := parseJobSpec(d)
+	if err != nil {
+		return 0, err
+	}
+	return e.applyTimeoutOf(job), nil
+}
+
+// applyTimeoutOf is ApplyTimeout for the job spec of a deployment.
+func (e *Engine) applyTimeoutOf(job *api.Job) time.Duration {
+	if t := meta.Parse(job.Meta).ApplyTimeout; t > 0 {
+		return t
+	}
+	return e.applyTimeout
 }
 
 // stepHealth waits for the applied job version to become healthy, bounded by
@@ -514,6 +538,11 @@ func (e *Engine) registerRetry(ctx context.Context, log *slog.Logger, d *store.D
 // healthy (see docs/archive/engine-apply.md, decision 10).
 func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Deployment) {
 	waiting := !d.PromotionWaitSince.IsZero() && d.PromotedAt.IsZero()
+	timeout, err := e.ApplyTimeout(d)
+	if err != nil {
+		log.ErrorContext(ctx, "read the apply timeout", "error", err)
+		return
+	}
 	if !waiting {
 		since, err := e.store.AppliedSince(ctx, d.ID)
 		if err != nil {
@@ -523,8 +552,8 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 		if !d.PromotedAt.IsZero() {
 			since = d.PromotedAt
 		}
-		if e.now().After(since.Add(e.applyTimeout)) {
-			msg := fmt.Sprintf("apply did not become healthy within %s", e.applyTimeout)
+		if e.now().After(since.Add(timeout)) {
+			msg := fmt.Sprintf("apply did not become healthy within %s", timeout)
 			evals, err := e.nomad.Evaluations(ctx, d.Namespace, d.JobID)
 			switch {
 			case err != nil:
@@ -566,7 +595,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 		e.awaitPromotion(ctx, log, d)
 	case healthPromoted:
 		if waiting {
-			e.promoted(ctx, log, d)
+			e.promoted(ctx, log, d, timeout)
 		}
 	default:
 		// still waiting: nothing to do this cycle but say once why, when no
@@ -601,14 +630,14 @@ func (e *Engine) awaitPromotion(ctx context.Context, log *slog.Logger, d *store.
 
 // promoted records that the canaries a deployment waited for are promoted: the
 // apply timeout counts again, from now, for the rest of the rollout.
-func (e *Engine) promoted(ctx context.Context, log *slog.Logger, d *store.Deployment) {
+func (e *Engine) promoted(ctx context.Context, log *slog.Logger, d *store.Deployment, timeout time.Duration) {
 	wrote, err := e.store.MarkPromoted(ctx, d.ID)
 	if err != nil {
 		log.ErrorContext(ctx, "record the promotion of the canaries", "error", err)
 		return
 	}
 	if wrote {
-		log.InfoContext(ctx, "canaries promoted in Nomad: the apply timeout counts again", "apply_timeout", e.applyTimeout)
+		log.InfoContext(ctx, "canaries promoted in Nomad: the apply timeout counts again", "apply_timeout", timeout)
 	}
 }
 
@@ -1039,7 +1068,7 @@ func (e *Engine) Promote(ctx context.Context, id, actor string) error {
 		e.log.ErrorContext(ctx, "record the promotion of the canaries", "deployment_id", id, "error", err)
 	case wrote:
 		e.log.InfoContext(ctx, "canaries promoted in Nomad: the apply timeout counts again", "deployment_id", id,
-			"apply_timeout", e.applyTimeout)
+			"apply_timeout", e.applyTimeoutOf(job))
 	}
 	return nil
 }

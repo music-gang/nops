@@ -519,6 +519,26 @@ func TestStepRegisterNomadErrorRetriesThenFailsAtApplyTimeout(t *testing.T) {
 	}
 }
 
+// The job's nops_apply_timeout bounds the register too.
+func TestStepRegisterTimeoutOfTheJob(t *testing.T) {
+	h := newHarness(t)
+	h.engine.applyTimeout = time.Minute
+	d := h.createApplying("web", managed("web", "auto", map[string]string{meta.KeyApplyTimeout: "2h"}), 0)
+	h.nomad.planErr["web"] = errors.New("nomad is unreachable")
+
+	h.clock.Advance(2 * time.Minute)
+	h.step(d)
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("past the configuration's timeout: state = %s, want applying", got.State)
+	}
+
+	h.clock.Advance(2 * time.Hour)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateFailed || !strings.Contains(got.Error, "could not register within 2h0m0s") {
+		t.Fatalf("past the job's timeout: state = %s (%q), want failed within 2h0m0s", got.State, got.Error)
+	}
+}
+
 // A restart does not extend the bound: it counts from the stored event.
 func TestStepRegisterTimeoutSurvivesRestart(t *testing.T) {
 	h := newHarness(t)
@@ -958,6 +978,40 @@ func TestStepHealthTimeoutFails(t *testing.T) {
 	got := h.get(d.ID)
 	if got.State != store.StateFailed {
 		t.Fatalf("state = %s, want failed (timeout)", got.State)
+	}
+}
+
+// The job's nops_apply_timeout bounds the wait for health in place of the
+// configuration's, longer or shorter.
+func TestStepHealthTimeoutOfTheJob(t *testing.T) {
+	for _, tc := range []struct {
+		name, timeout string
+		before, after time.Duration
+		want          string
+	}{
+		{"longer than the configuration's", "2h", 2 * time.Minute, 2*time.Hour + time.Second, "within 2h0m0s"},
+		{"shorter than the configuration's", "30s", 29 * time.Second, 31 * time.Second, "within 30s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.engine.applyTimeout = time.Minute
+			job := managed("web", "auto", map[string]string{meta.KeyApplyTimeout: tc.timeout}, taskGroup("g", 1, false))
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3) // registered, no allocation placed yet
+
+			h.clock.Advance(tc.before)
+			h.step(d)
+			if got := h.get(d.ID); got.State != store.StateApplying {
+				t.Fatalf("before the job's timeout: state = %s (%s), want applying", got.State, got.Error)
+			}
+
+			h.clock.Advance(tc.after - tc.before)
+			h.step(h.get(d.ID))
+			got := h.get(d.ID)
+			if got.State != store.StateFailed || !strings.Contains(got.Error, tc.want) {
+				t.Fatalf("after the job's timeout: state = %s (%q), want failed %s", got.State, got.Error, tc.want)
+			}
+		})
 	}
 }
 

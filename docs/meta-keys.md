@@ -11,6 +11,7 @@ block, in the HCL in git. It never writes them.
 | `nops_policy` | `auto` / `approval` / `none` | `none` | Who gives the go-ahead: see [policies](policies.md). |
 | `nops_pre_hook` | Hook job IDs, comma-separated | — | [Hooks](hooks.md) to run, in order, before the apply. |
 | `nops_post_hook` | Same | — | Hooks to run, in order, once the new version is healthy. |
+| `nops_apply_timeout` | Go duration | [`apply_timeout`](configuration.md#storage-intervals-and-timeouts) | How long an [apply](architecture.md#the-apply-timeout) of the job may take. |
 | `nops_role` | `"hook"` | — | Marks a [hook job](hooks.md). |
 | `nops_timeout` | Go duration, on a hook job | `5m` | How long the hook may run. |
 | `nops_notify_completed` | `"true"` / `"false"` | `"false"` | Also [notify](logs-and-notifications.md#notifications) when a deployment completes. |
