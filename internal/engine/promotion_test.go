@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/nomad/api"
 
+	"github.com/music-gang/nops/internal/meta"
 	"github.com/music-gang/nops/internal/store"
 )
 
@@ -128,6 +129,28 @@ func TestCanaryPromotionRestartsTheApplyTimeout(t *testing.T) {
 	h.step(h.get(d.ID))
 	if got := h.get(d.ID); got.State != store.StateFailed {
 		t.Fatalf("state = %s a minute after the promotion, want failed: the rollout that follows has the apply timeout", got.State)
+	}
+}
+
+// After the promotion, the rollout has the job's own apply timeout in full.
+func TestCanaryPromotionRestartsTheApplyTimeoutOfTheJob(t *testing.T) {
+	h := newHarness(t)
+	d := h.waitingForPromotion(canaryJob(false, map[string]string{meta.KeyApplyTimeout: "2h"}))
+	h.step(d)
+	h.clock.Advance(3 * time.Hour)
+
+	h.nomad.setDeployment("web", canaryDeployment(promotedCanary()))
+	h.step(h.get(d.ID))
+	h.clock.Advance(2*time.Hour - time.Second)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateApplying {
+		t.Fatalf("state = %s (%s) just under 2h after the promotion, want applying", got.State, got.Error)
+	}
+
+	h.clock.Advance(2 * time.Second)
+	h.step(h.get(d.ID))
+	if got := h.get(d.ID); got.State != store.StateFailed {
+		t.Fatalf("state = %s 2h after the promotion, want failed", got.State)
 	}
 }
 

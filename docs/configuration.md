@@ -278,7 +278,7 @@ apply_timeout     = "15m"
 | `drift_interval` | `5m` | How often Nops checks Nomad for drift without a new commit. |
 | `engine_interval` | `5s` | How often the engine advances active deployments. |
 | `hook_poll_interval` | `5s` | How often Nops checks a running hook. |
-| `apply_timeout` | `10m` | How long an [apply](architecture.md#the-apply-timeout) may take. Covers the register and the wait for health. |
+| `apply_timeout` | `10m` | How long an [apply](architecture.md#the-apply-timeout) may take, unless the job sets [`nops_apply_timeout`](meta-keys.md). Covers the register and the wait for health. |
 | `sync_window_time_zone` | `UTC` | IANA time zone of the [sync windows](policies.md#sync-window). |
 
 A hook's timeout is set on the hook job with `nops_timeout`

@@ -74,6 +74,7 @@ type Engine interface {
 	DismissOrphan(ctx context.Context, namespace, jobID, deploymentID, actor string) error
 	UndismissOrphan(ctx context.Context, namespace, jobID, actor string) error
 	Status() engine.Status
+	ApplyTimeout(d *store.Deployment) (time.Duration, error)
 }
 
 // AccessStore is what the access control needs from SQLite: the ACL policies,

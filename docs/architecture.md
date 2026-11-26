@@ -127,11 +127,11 @@ doesn't become healthy fails; Nops doesn't roll back.
 
 ### The apply timeout
 
-`apply_timeout` counts from the start of the apply and covers the register
-and the wait for health. When it runs out while no node has room for part of
-the job, its message says what ran out. It pauses while canaries wait for
-someone to promote them, and restarts in full after the promotion. Promote
-from the deployment's page or in Nomad.
+`apply_timeout`, or the job's `nops_apply_timeout`, counts from the start of
+the apply and covers the register and the wait for health. When it runs out
+while no node has room for part of the job, its message says what ran out. It
+pauses while canaries wait for someone to promote them, and restarts in full
+after the promotion. Promote from the deployment's page or in Nomad.
 
 ## Hook revisions
 

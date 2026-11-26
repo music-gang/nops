@@ -25,6 +25,9 @@ const (
 	KeyRole            = "nops_role"
 	KeyTimeout         = "nops_timeout"
 	KeyNotifyCompleted = "nops_notify_completed"
+	// KeyApplyTimeout is how long an apply of the job may take, in place of
+	// the apply_timeout of the configuration.
+	KeyApplyTimeout = "nops_apply_timeout"
 	// KeySyncWindow and KeySyncWindowDuration say when Nops may deploy a job on
 	// its own: a cron expression for when the window opens and how long it stays
 	// open (docs/meta-keys.md).
@@ -37,7 +40,7 @@ const DefaultHookTimeout = 5 * time.Minute
 
 var knownKeys = map[string]struct{}{
 	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {}, KeyNotifyCompleted: {},
-	KeySyncWindow: {}, KeySyncWindowDuration: {},
+	KeyApplyTimeout: {}, KeySyncWindow: {}, KeySyncWindowDuration: {},
 }
 
 // removedKeys are keys that used to exist, with what replaces them: still
@@ -94,6 +97,10 @@ type Config struct {
 	// when either key is invalid. It is set whatever the policy is: only
 	// policy auto is gated by it (docs/policies.md).
 	SyncWindow *SyncWindow
+	// ApplyTimeout is how long an apply of the job may take
+	// (nops_apply_timeout); zero when not declared or invalid, for the
+	// apply_timeout of the configuration.
+	ApplyTimeout time.Duration
 	// Timeout is how long a hook job may run (nops_timeout, or
 	// DefaultHookTimeout); zero for a job that is not a hook.
 	Timeout time.Duration
@@ -205,6 +212,21 @@ func Parse(m map[string]string) Config {
 		}
 		if ignored != "" {
 			add(SeverityWarn, KeyNotifyCompleted, "%s", ignored)
+		}
+	}
+
+	if v, ok := m[KeyApplyTimeout]; ok {
+		d, err := time.ParseDuration(v)
+		switch {
+		case err != nil:
+			add(SeverityError, KeyApplyTimeout, "invalid duration %q: %v", v, err)
+		case d <= 0:
+			add(SeverityError, KeyApplyTimeout, "duration %q must be positive", v)
+		default:
+			c.ApplyTimeout = d
+		}
+		if ignored != "" {
+			add(SeverityWarn, KeyApplyTimeout, "%s", ignored)
 		}
 	}
 

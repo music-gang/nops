@@ -242,8 +242,12 @@ type fakeEngine struct {
 	observations   []engine.Observation
 	orphans        []engine.Orphan
 	status         engine.Status
-	accessor       string // the accessor ID the last Approve ran with
-	identity       string // the identity of the person the last Approve ran for
+	// applyTimeout is what ApplyTimeout answers for every deployment: 10m,
+	// the configuration's default, when zero.
+	applyTimeout    time.Duration
+	applyTimeoutErr error
+	accessor        string // the accessor ID the last Approve ran with
+	identity        string // the identity of the person the last Approve ran for
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -319,6 +323,13 @@ func (f *fakeEngine) PausedAll() *engine.Hold { return f.allPause }
 func (f *fakeEngine) Observations() []engine.Observation { return f.observations }
 func (f *fakeEngine) Orphans() []engine.Orphan           { return f.orphans }
 func (f *fakeEngine) Status() engine.Status              { return f.status }
+
+func (f *fakeEngine) ApplyTimeout(*store.Deployment) (time.Duration, error) {
+	if f.applyTimeout == 0 {
+		return 10 * time.Minute, f.applyTimeoutErr
+	}
+	return f.applyTimeout, f.applyTimeoutErr
+}
 
 // fakeGit is the repository named default, with snap and status, then the
 // repositories of more.

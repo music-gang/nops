@@ -136,7 +136,7 @@ func TestDuration(t *testing.T) {
 
 func TestPlanSteps(t *testing.T) {
 	d := sampleDeployment()
-	steps := planSteps(d, sampleHooks())
+	steps := planSteps(d, sampleHooks(), 2*time.Hour)
 	kinds := make([]string, len(steps))
 	for i, st := range steps {
 		kinds[i] = st.Kind
@@ -150,13 +150,16 @@ func TestPlanSteps(t *testing.T) {
 	if steps[0].Revision != "0a1b2c3d" || steps[3].Revision != "9f8e7d6c" {
 		t.Errorf("revisions = %q / %q, want the 8 hex of each frozen hook", steps[0].Revision, steps[3].Revision)
 	}
+	if steps[2].Timeout != "2h" {
+		t.Errorf("health step timeout = %q, want the apply timeout 2h", steps[2].Timeout)
+	}
 	if !strings.Contains(steps[1].Text, "index 42") {
 		t.Errorf("register step = %q, want the CAS index", steps[1].Text)
 	}
 
 	d.CASIndex = 0
 	d.JobSpec = `{"ID":"web"}`
-	steps = planSteps(d, nil)
+	steps = planSteps(d, nil, 2*time.Hour)
 	if len(steps) != 2 || !strings.HasPrefix(steps[0].Text, "Create the job") {
 		t.Errorf("a new job with no hooks: steps %+v; want create + health", steps)
 	}
@@ -168,7 +171,7 @@ func TestPlanSteps(t *testing.T) {
 		{Phase: "pre", Position: 1, HookID: "migrate", Revision: "migrate-22222222", JobSpec: "not json"},
 		{Phase: "post", Position: 0, HookID: "smoke", Revision: "smoke-33333333", JobSpec: `{}`},
 		{Phase: "post", Position: 1, HookID: "notify", Revision: "notify-44444444", JobSpec: `{}`},
-	})
+	}, 2*time.Hour)
 	var seq []string
 	for _, st := range steps {
 		seq = append(seq, st.Kind+":"+st.Job)
@@ -818,7 +821,7 @@ func TestDeploymentPage(t *testing.T) {
 		"default/web", "Pending approval", `href="/jobs/default/web"`,
 		`href="https://git.test/commit/abc123def456"`, "abc123d", "feat(web): scale up", "by Iacopo", "1h ago",
 		// the decision, with what it will do
-		"Review", "Run the pre-hook", "web-migrate", "timeout 10m", "Wait for the new version to become healthy",
+		"Review", "Run the pre-hook", "web-migrate", "timeout 10m", "Wait for the new version to become healthy (timeout 10m).",
 		"Run the post-hook", "web-smoke", "only if it has not changed since (index 42)",
 		// which version of each hook the approval covers
 		"@0a1b2c3d", "@9f8e7d6c",
@@ -858,6 +861,21 @@ func TestDeploymentPageFailsLoudWhenFrozenHooksCannotBeRead(t *testing.T) {
 	rec := ts.do("GET", "/deployments/d1", nil, ts.session("alice"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500: a page that cannot say what Approve will run must not offer it", rec.Code)
+	}
+}
+
+// The health step gives the apply timeout of the deployment, which may be the
+// job's own.
+func TestDeploymentPageGivesTheApplyTimeout(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{deployment: sampleDeployment()}, &fakeEngine{applyTimeout: 2 * time.Hour}, "")
+	mustContain(t, ts.get("/deployments/d1"), "Wait for the new version to become healthy (timeout 2h).")
+}
+
+func TestDeploymentPageFailsLoudWhenTheApplyTimeoutCannotBeRead(t *testing.T) {
+	ts := newTestServer(t, &fakeStore{deployment: sampleDeployment()}, &fakeEngine{applyTimeoutErr: errors.New("bad spec")}, "")
+	rec := ts.do("GET", "/deployments/d1", nil, ts.session("alice"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500", rec.Code)
 	}
 }
 
@@ -1306,7 +1324,7 @@ func TestReviewOfARetryWithNothingToRegister(t *testing.T) {
 	st := &fakeStore{deployment: d, hooks: sampleHooks()}
 
 	page := newTestServer(t, st, &fakeEngine{}, "").get("/deployments/d1")
-	mustContain(t, page, "Wait for the new version to become healthy.", "Run the post-hook")
+	mustContain(t, page, "Wait for the new version to become healthy (timeout 10m).", "Run the post-hook")
 	mustNotContain(t, page, "Run the pre-hook", "Update the job in Nomad", "Create the job in Nomad")
 }
 
