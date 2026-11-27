@@ -75,6 +75,17 @@ func (g *Group) Snapshots() []Snapshot {
 	return out
 }
 
+// Select is Watcher.Select of the repository named repo. ok is false for a
+// repository the group does not have.
+func (g *Group) Select(repo string, files map[string]string) (_ []File, ok bool) {
+	for _, w := range g.watchers {
+		if w.opts.Name == repo {
+			return w.Select(files), true
+		}
+	}
+	return nil, false
+}
+
 // Changed is signalled after a poll of any repository picks up a new commit.
 func (g *Group) Changed() <-chan struct{} {
 	return g.changed

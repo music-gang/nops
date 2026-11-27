@@ -75,6 +75,7 @@ type Engine interface {
 	UndismissOrphan(ctx context.Context, namespace, jobID, actor string) error
 	Status() engine.Status
 	ApplyTimeout(d *store.Deployment) (time.Duration, error)
+	Plan(ctx context.Context, snap gitwatch.Snapshot, allow func(namespace string) bool) (engine.Plan, error)
 }
 
 // AccessStore is what the access control needs from SQLite: the ACL policies,
@@ -106,6 +107,8 @@ type AccessStore interface {
 // it.
 type Git interface {
 	Repositories() []gitwatch.Repo
+	// Select picks the job files of a repository from files sent for a plan.
+	Select(repo string, files map[string]string) ([]gitwatch.File, bool)
 }
 
 var (

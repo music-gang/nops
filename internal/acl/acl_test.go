@@ -203,6 +203,25 @@ func TestManagementAllowsEverything(t *testing.T) {
 	}
 }
 
+func TestAnywhere(t *testing.T) {
+	for name, tc := range map[string]struct {
+		acl  *ACL
+		want bool
+	}{
+		"management":             {Management(), true},
+		"no ACL policy":          {New(), false},
+		"one namespace":          {New(mustParse(t, `namespace "ci" { capabilities = ["plan"] }`)), true},
+		"write":                  {New(mustParse(t, `namespace "*" { policy = "write" }`)), true},
+		"read only":              {New(mustParse(t, `namespace "*" { policy = "read" }`)), false},
+		"denied by another":      {New(mustParse(t, `namespace "ci" { capabilities = ["plan"] }`), mustParse(t, `namespace "ci" { policy = "deny" }`)), false},
+		"a narrower deny leaves": {New(mustParse(t, "namespace \"*\" { capabilities = [\"plan\"] }\nnamespace \"prod\" { policy = \"deny\" }")), true},
+	} {
+		if got := tc.acl.Anywhere(Plan); got != tc.want {
+			t.Errorf("%s: Anywhere(plan) = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
 // The pause outside the namespaces pauses every job; the one of a namespace
 // pauses a job. Neither grants the other, and write does not reach the global one.
 func TestPauseOfEveryJobIsNotThePauseOfAJob(t *testing.T) {

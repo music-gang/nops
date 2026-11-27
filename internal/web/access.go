@@ -139,6 +139,12 @@ func carriesPolicy() check {
 	}
 }
 
+// anywhere needs the capability on some namespace: for a request whose
+// namespaces are known once it is read, and checked one by one then.
+func anywhere(c acl.Capability) check {
+	return func(_ *server, _ *http.Request, sub *subject) (bool, error) { return sub.acl.Anywhere(c), nil }
+}
+
 // management needs a management token.
 func management() check {
 	return func(_ *server, _ *http.Request, sub *subject) (bool, error) { return sub.acl.Management(), nil }

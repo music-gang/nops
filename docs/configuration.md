@@ -127,7 +127,9 @@ listen {
 | `idle_timeout` | `2m` | How long an idle connection stays open. |
 
 A [backup](running-nops.md#backups) download isn't cut while it moves: `write_timeout`
-limits each block it writes, not the whole file.
+limits each block it writes, not the whole file. A
+[plan](cli.md#planning-a-change) isn't cut while it waits or runs:
+`write_timeout` counts from its answer.
 
 #### Certificate and key
 

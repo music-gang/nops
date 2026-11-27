@@ -248,6 +248,18 @@ type fakeEngine struct {
 	applyTimeoutErr error
 	accessor        string // the accessor ID the last Approve ran with
 	identity        string // the identity of the person the last Approve ran for
+	plan            engine.Plan
+	planErr         error
+	planCalls       []gitwatch.Snapshot
+	planAllow       func(string) bool // what the last Plan was given
+	planWait        time.Duration     // how long Plan takes
+}
+
+func (f *fakeEngine) Plan(_ context.Context, snap gitwatch.Snapshot, allow func(string) bool) (engine.Plan, error) {
+	f.planCalls = append(f.planCalls, snap)
+	f.planAllow = allow
+	time.Sleep(f.planWait)
+	return f.plan, f.planErr
 }
 
 func (f *fakeEngine) Approve(ctx context.Context, id, specHash, actor string) error {
@@ -341,6 +353,19 @@ type fakeGit struct {
 
 func (f *fakeGit) Repositories() []gitwatch.Repo {
 	return append([]gitwatch.Repo{{Name: "default", Snapshot: f.snap, Status: f.status}}, f.more...)
+}
+
+// Select keeps the files of a repository it has, as job files, sorted.
+func (f *fakeGit) Select(repo string, files map[string]string) ([]gitwatch.File, bool) {
+	if !slices.ContainsFunc(f.Repositories(), func(r gitwatch.Repo) bool { return r.Name == repo }) {
+		return nil, false
+	}
+	var out []gitwatch.File
+	for p, c := range files {
+		out = append(out, gitwatch.File{Path: p, Content: c})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, true
 }
 
 // -- test setup --------------------------------------------------------------

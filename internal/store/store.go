@@ -849,11 +849,15 @@ const (
 		ORDER BY namespace, job_id`
 	orphanCandidatesSQL = `SELECT ` + deploymentCols + ` FROM deployments
 		WHERE id IN (SELECT completed_id FROM latest_deployments
-			WHERE namespace = ? AND NOT EXISTS (SELECT 1 FROM orphan_dismissals
+			WHERE namespace = ? AND ` + notDismissedSQL + `)
+		ORDER BY job_id`
+	orphanCandidateSQL = `SELECT ` + deploymentCols + ` FROM deployments
+		WHERE id IN (SELECT completed_id FROM latest_deployments
+			WHERE namespace = ? AND job_id = ? AND ` + notDismissedSQL + `)`
+	notDismissedSQL = `NOT EXISTS (SELECT 1 FROM orphan_dismissals
 				WHERE orphan_dismissals.namespace = latest_deployments.namespace
 				  AND orphan_dismissals.job_id = latest_deployments.job_id
-				  AND orphan_dismissals.deployment_id = latest_deployments.completed_id))
-		ORDER BY job_id`
+				  AND orphan_dismissals.deployment_id = latest_deployments.completed_id)`
 )
 
 // LatestPerJob returns the most recent deployment of every job that ever had
@@ -869,6 +873,19 @@ func (s *Store) LatestPerJob(ctx context.Context) ([]*Deployment, error) {
 // leave the repository. A dismissal costs nothing to the read.
 func (s *Store) OrphanCandidates(ctx context.Context, namespace string) ([]*Deployment, error) {
 	return s.queryDeployments(ctx, orphanCandidatesSQL, namespace)
+}
+
+// OrphanCandidate is OrphanCandidates for one job: ErrNotFound when the job
+// is none.
+func (s *Store) OrphanCandidate(ctx context.Context, namespace, jobID string) (*Deployment, error) {
+	d, err := scanDeployment(s.db.QueryRowContext(ctx, orphanCandidateSQL, namespace, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("orphan candidate %s/%s: %w", namespace, jobID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("orphan candidate %s/%s: %w", namespace, jobID, err)
+	}
+	return d, nil
 }
 
 // DeploymentHooks returns the hooks a deployment froze, pre before post and by
