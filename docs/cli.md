@@ -41,6 +41,7 @@ A command that takes a `<job>` looks for it in the namespace you set.
 | `nops undismiss <job>` | Undo a dismissal. |
 | `nops deploy-now <job>` | Show the drift, ask for confirmation, and [deploy now](policies.md#sync-window). `-yes` skips the question. |
 | `nops fetch` | Ask for a git poll now. |
+| `nops plan <dir>` | [Plan a change](#planning-a-change) to the repository checked out in the directory. `-repository` names its repository block and `-commit` sets [`nops_commit`](meta-keys.md#syntax-and-parsing); both are required. |
 | `nops backup <file>` | Save a [backup](running-nops.md#backups) of the database to the file. |
 | `nops login` | Log in with the [login mode](dashboard.md#authentication) of Nops and save the session for its URL, in `nops/session` under your user configuration directory. Basic asks for the username and password. OIDC opens the browser, which must run on the same machine. The session lasts 12 hours. |
 | `nops logout` | Revoke the session `nops login` saved and forget it. |
@@ -86,6 +87,30 @@ client prints the command for the next one.
 | `-decided-by` | `decided_by`, on `nops deployments` |
 | `-since`, `-until` | `since`, `until`, on `nops deployments` |
 | `-warnings` | `warnings`, on `nops jobs` |
+
+## Planning a change
+
+`nops plan` shows what Nops would do with a change before it is merged, so a
+pipeline on the pull request can check it. Nops plans the files of the
+directory as detection would after the merge: with the `path` and `jobs` of
+the repository block, the files of the other repositories, and the cluster,
+the pauses and the deployments as they are now. It writes nothing.
+
+For each job, the answer gives the
+[sync state](dashboard.md#sync-state-of-a-job) it would have, its policy,
+hooks, meta issues, and redacted diff. The jobs of other repositories that run
+a hook the repository holds, or held, are in it too. It also lists the files
+that wouldn't make a job and the jobs the change removes from the repository:
+one waiting for approval is superseded, and one Nops deployed that still runs
+becomes an [orphan](architecture.md#orphan-jobs). The command exits with 1 on
+an error that keeps a job from deploying: invalid meta, on the job or on a hook,
+a missing hook, a file that doesn't make a job, a plan Nomad refuses, or a
+namespace where the token lacks `plan`.
+
+The token needs the `plan` [capability](acl.md#acl-policies). Nops runs one
+plan at a time: another one waits, and the command waits up to 10 minutes. A
+pull request from a fork gets no secrets from the forge, so its pipeline can't
+call Nops.
 
 ## Output
 

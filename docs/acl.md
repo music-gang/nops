@@ -79,6 +79,7 @@ capability of their own:
 | `deploy-now` | Deploy a job outside its sync window. |
 | `pause` | Pause and resume a job. |
 | `dismiss` | Dismiss an [orphan](architecture.md#orphan-jobs) and undo it. |
+| `plan` | [Plan a change](cli.md#planning-a-change) to the job files of a repository before it is merged. |
 
 The top-level `capabilities` list holds the ones that belong to no namespace:
 

@@ -3,6 +3,7 @@ package gitwatch
 import (
 	"context"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -127,5 +128,38 @@ func TestGroupCommitURL(t *testing.T) {
 	}
 	if got := g.CommitURL("other", "abc"); got != "" {
 		t.Errorf("CommitURL(other) = %q, want empty", got)
+	}
+}
+
+// Select reads the files a client sends as a poll reads the same tree: under
+// the repository's path, each job file with its vars file.
+func TestGroupSelectReadsFilesAsAPoll(t *testing.T) {
+	files := map[string]string{
+		"nomad/api.nomad.hcl":     `job "api" {}`,
+		"nomad/api.vars.hcl":      `tag = "1"`,
+		"nomad/sub/worker.nomad":  `job "worker" {}`,
+		"nomad/lone.vars.hcl":     `unused = true`,
+		"nomad/README.md":         "not a job",
+		"other/ignored.nomad.hcl": `job "ignored" {}`,
+		"nomadic/ignored.nomad":   `job "ignored" {}`,
+		"top.nomad.hcl":           `job "top" {}`,
+	}
+	r := newTestRepo(t, "main")
+	r.commit(files)
+	log, _ := testLogger()
+	g := NewGroup(New(Options{Name: "apps", URL: r.url, Branch: "main", Path: "nomad", PollInterval: time.Hour, Timeout: time.Minute}, log))
+	if err := g.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := g.Select("apps", files)
+	if !ok {
+		t.Fatal("Select does not know the repository apps")
+	}
+	if want := g.Snapshots()[0].Files; !reflect.DeepEqual(got, want) {
+		t.Errorf("Select = %+v, want what the poll read: %+v", got, want)
+	}
+	if _, ok := g.Select("nope", files); ok {
+		t.Error("Select knows a repository the group does not have")
 	}
 }

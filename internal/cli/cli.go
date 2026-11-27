@@ -55,6 +55,7 @@ type call struct {
 	all         bool // -all: every job, no job argument
 	flags       aclFlags
 	list        listArgs // the flags of a list
+	plan        planFlags
 	in          *bufio.Reader
 	stdin       io.Reader
 	getenv      func(string) string

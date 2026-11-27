@@ -61,6 +61,8 @@ type Store interface {
 	// OrphanCandidates is used by the orphan check (see
 	// docs/archive/engine-detection.md#orphan-jobs).
 	OrphanCandidates(ctx context.Context, namespace string) ([]*store.Deployment, error)
+	// OrphanCandidate is the same for one job, which a plan uses (Plan).
+	OrphanCandidate(ctx context.Context, namespace, jobID string) (*store.Deployment, error)
 	// DeploymentHooks and HookRevisionsInUse are used by the hook revisions
 	// (see docs/archive/engine-detection.md#hook-revisions).
 	DeploymentHooks(ctx context.Context, deploymentID string) ([]store.DeploymentHook, error)
@@ -187,6 +189,10 @@ type Observation struct {
 	// page says so rather than offer the button again. The next cycle that runs
 	// replaces the observation, and the request is a deployment or dropped.
 	DeployNowBy string
+	// HookProblem is why a deployment of this job would fail at once, "" when
+	// nothing says: a hook it declares is missing from the repository or has
+	// invalid meta (`pre-hook "id" not found in repo`).
+	HookProblem string
 	// NomadError is what failed in Nomad when this cycle read or planned the
 	// job, and why ("plan job: ..."); empty when Nomad answered. With it set,
 	// the drift and any block are unknown: Drift, PlanDiff and BlockedBy stay
@@ -284,6 +290,10 @@ type Engine struct {
 	// would replace the observations of the other with older ones.
 	detectMu sync.Mutex
 
+	// planSem lets one plan run at a time (Plan): each one parses and plans
+	// the files of a repository through Nomad.
+	planSem chan struct{}
+
 	mu           sync.RWMutex
 	parseCache   map[string]parseEntry
 	observations map[jobKey]Observation
@@ -373,6 +383,7 @@ func New(o Options) *Engine {
 		inFlight:       map[string]struct{}{},
 		noRoom:         map[string]string{},
 		kick:           make(chan struct{}, 1),
+		planSem:        make(chan struct{}, 1),
 	}
 }
 

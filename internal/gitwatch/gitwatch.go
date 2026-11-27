@@ -354,44 +354,90 @@ type varsEntry struct {
 
 // collect walks tree recursively and pairs every job file with its vars
 // file, if any. tree is rooted at Options.Path, so paths are joined back to
-// the repository root. A *.vars.hcl with no matching job file is logged at
-// WARN and dropped.
+// the repository root.
 func (w *Watcher) collect(tree *object.Tree) ([]File, error) {
+	iter := tree.Files()
+	defer iter.Close()
+	files, lone, err := w.pair(func() (string, func() (string, error), error) {
+		f, err := iter.Next()
+		if err != nil {
+			return "", nil, err
+		}
+		return f.Name, f.Contents, nil
+	})
+	for _, p := range lone {
+		w.log.Warn("gitwatch: vars file with no matching job", "repo", w.opts.Name, "path", p)
+	}
+	return files, err
+}
+
+// Select picks, from files given by their path in the repository with their
+// content, the job files a snapshot of the repository would hold, each with
+// its vars file: those under Options.Path, as a poll reads them. A vars file
+// with no job file is dropped.
+func (w *Watcher) Select(files map[string]string) []File {
+	prefix := w.opts.Path + "/"
+	names := make([]string, 0, len(files))
+	for p := range files {
+		if w.opts.Path == "" || strings.HasPrefix(p, prefix) {
+			names = append(names, p)
+		}
+	}
+	sort.Strings(names)
+	i := 0
+	out, _, _ := w.pair(func() (string, func() (string, error), error) {
+		if i == len(names) {
+			return "", nil, io.EOF
+		}
+		p := names[i]
+		i++
+		name := p
+		if w.opts.Path != "" {
+			name = strings.TrimPrefix(p, prefix)
+		}
+		return name, func() (string, error) { return files[p], nil }, nil
+	})
+	return out
+}
+
+// pair reads the files next yields, by their name relative to Options.Path,
+// until io.EOF, and pairs every job file with its vars file, if any. lone are
+// the paths of the *.vars.hcl files with no matching job file, which are
+// dropped.
+func (w *Watcher) pair(next func() (name string, read func() (string, error), err error)) (files []File, lone []string, err error) {
 	var jobs []*File
 	keys := make(map[*File]string)
 	vars := make(map[string]varsEntry)
 
-	iter := tree.Files()
-	defer iter.Close()
 	for {
-		f, err := iter.Next()
+		fname, read, err := next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("walk tree: %w", err)
+			return nil, nil, fmt.Errorf("walk tree: %w", err)
 		}
 
-		dir, base := path.Split(f.Name)
+		dir, base := path.Split(fname)
 		switch {
 		case strings.HasSuffix(base, varsSuffix):
-			content, err := f.Contents()
+			content, err := read()
 			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", w.repoPath(f.Name), err)
+				return nil, nil, fmt.Errorf("read %s: %w", w.repoPath(fname), err)
 			}
 			key := dir + strings.TrimSuffix(base, varsSuffix)
-			vars[key] = varsEntry{path: w.repoPath(f.Name), content: content}
+			vars[key] = varsEntry{path: w.repoPath(fname), content: content}
 
 		default:
 			name, ok := jobName(base)
 			if !ok {
 				continue
 			}
-			content, err := f.Contents()
+			content, err := read()
 			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", w.repoPath(f.Name), err)
+				return nil, nil, fmt.Errorf("read %s: %w", w.repoPath(fname), err)
 			}
-			jf := &File{Path: w.repoPath(f.Name), Content: content}
+			jf := &File{Path: w.repoPath(fname), Content: content}
 			jobs = append(jobs, jf)
 			keys[jf] = dir + name
 		}
@@ -406,16 +452,24 @@ func (w *Watcher) collect(tree *object.Tree) ([]File, error) {
 	}
 	for key, v := range vars {
 		if !used[key] {
-			w.log.Warn("gitwatch: vars file with no matching job", "repo", w.opts.Name, "path", v.path)
+			lone = append(lone, v.path)
 		}
 	}
+	sort.Strings(lone)
 
-	files := make([]File, len(jobs))
+	files = make([]File, len(jobs))
 	for i, jf := range jobs {
 		files[i] = *jf
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return files, nil
+	return files, lone, nil
+}
+
+// Wanted reports whether a file of this base name is one a snapshot reads: a
+// job file or a vars file.
+func Wanted(base string) bool {
+	_, job := jobName(base)
+	return job || strings.HasSuffix(base, varsSuffix)
 }
 
 // jobName reports whether base is a job file name and returns its name

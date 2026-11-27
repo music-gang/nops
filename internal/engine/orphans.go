@@ -23,10 +23,10 @@ import (
 //
 // A Nomad failure on one candidate is an ERROR and skips that job; a store
 // failure is returned (never swallow a SQLite error).
-func (e *Engine) findOrphans(ctx context.Context, present map[jobKey]bool) ([]Orphan, error) {
+func (dc *decider) findOrphans(ctx context.Context, c cycle, present map[jobKey]bool) ([]Orphan, error) {
 	var orphans []Orphan
-	for _, ns := range e.namespaces {
-		deployed, err := e.store.OrphanCandidates(ctx, ns)
+	for _, ns := range dc.namespaces {
+		deployed, err := c.orphanCandidates(ctx, ns)
 		if err != nil {
 			return nil, fmt.Errorf("list deployed jobs of namespace %s: %w", ns, err)
 		}
@@ -34,12 +34,13 @@ func (e *Engine) findOrphans(ctx context.Context, present map[jobKey]bool) ([]Or
 			if present[jobKey{ns, d.JobID}] {
 				continue
 			}
-			live, err := e.nomad.Job(ctx, ns, d.JobID)
+			live, err := dc.nomad.Job(ctx, ns, d.JobID)
 			switch {
 			case errors.Is(err, nomadx.ErrJobNotFound):
 				continue // purged: nothing left to report
 			case err != nil:
-				e.log.ErrorContext(ctx, "orphan check: get live job", "job", d.JobID, "namespace", ns, "error", err)
+				c.log().ErrorContext(ctx, "orphan check: get live job", "job", d.JobID, "namespace", ns, "error", err)
+				c.failed(FileError{Namespace: ns, JobID: d.JobID, Error: "orphan check: get live job: " + err.Error()})
 				continue
 			}
 			if live.Stop != nil && *live.Stop {
@@ -54,7 +55,7 @@ func (e *Engine) findOrphans(ctx context.Context, present map[jobKey]bool) ([]Or
 			}
 			orphans = append(orphans, Orphan{
 				JobID: d.JobID, Namespace: ns, Policy: d.Policy, LastDeploymentID: d.ID,
-				NomadStatus: status, ObservedAt: e.now(),
+				NomadStatus: status, ObservedAt: dc.now(),
 			})
 		}
 	}

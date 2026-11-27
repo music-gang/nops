@@ -97,16 +97,25 @@ type WindowStatus struct {
 // only a job under policy auto. The window is read in the instance's time zone
 // (Options.SyncWindowLocation).
 func (e *Engine) windowStatus(cfg meta.Config) *WindowStatus {
+	return windowStatusAt(cfg, e.now(), e.syncLoc)
+}
+
+func (dc *decider) windowStatus(cfg meta.Config) *WindowStatus {
+	return windowStatusAt(cfg, dc.now(), dc.syncLoc)
+}
+
+// windowStatusAt is the status of a job's sync window at now, read in syncLoc.
+func windowStatusAt(cfg meta.Config, now time.Time, syncLoc *time.Location) *WindowStatus {
 	if cfg.Policy != meta.PolicyAuto || cfg.SyncWindow == nil {
 		return nil
 	}
-	now := e.now().In(e.syncLoc)
+	now = now.In(syncLoc)
 	w := cfg.SyncWindow
-	ws := &WindowStatus{Spec: w.Spec, Duration: w.Duration, Zone: e.syncLoc.String(), Open: w.Open(now)}
+	ws := &WindowStatus{Spec: w.Spec, Duration: w.Duration, Zone: syncLoc.String(), Open: w.Open(now)}
 	if ws.Open {
-		ws.Until = w.NextClose(now).In(e.syncLoc)
+		ws.Until = w.NextClose(now).In(syncLoc)
 	} else {
-		ws.Until = w.NextOpen(now).In(e.syncLoc)
+		ws.Until = w.NextOpen(now).In(syncLoc)
 	}
 	return ws
 }
@@ -178,7 +187,18 @@ func (e *Engine) pauseOf(ctx context.Context, namespace, jobID string) (*Hold, e
 // allPause reads the pause of every job straight from the store. It returns nil
 // when there is none.
 func (e *Engine) allPause(ctx context.Context) (*Hold, error) {
-	p, err := e.store.AllPause(ctx)
+	return allPauseIn(ctx, e.store)
+}
+
+func (dc *decider) allPause(ctx context.Context) (*Hold, error) {
+	return allPauseIn(ctx, dc.store)
+}
+
+// allPauseIn reads the pause of every job from st.
+func allPauseIn(ctx context.Context, st interface {
+	AllPause(ctx context.Context) (store.Pause, error)
+}) (*Hold, error) {
+	p, err := st.AllPause(ctx)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, nil

@@ -27,6 +27,7 @@ const (
 	DeployNow Capability = "deploy-now"
 	Pause     Capability = "pause"   // pause and resume
 	Dismiss   Capability = "dismiss" // dismiss an orphan and undo it
+	Plan      Capability = "plan"    // plan a change to a repository's job files
 )
 
 // The capabilities that belong to no namespace. Fetch asks for a git poll,
@@ -44,7 +45,7 @@ var globalCapabilities = []Capability{Fetch, Pause, Backup, Metrics}
 
 // namespaceCapabilities is what the shorthand "write" stands for. A new
 // capability of a namespace joins it, so a list written by hand never gains one.
-var namespaceCapabilities = []Capability{Read, Approve, Promote, Retry, DeployNow, Pause, Dismiss}
+var namespaceCapabilities = []Capability{Read, Approve, Promote, Retry, DeployNow, Pause, Dismiss, Plan}
 
 // The shorthands of a namespace block.
 const (
@@ -226,6 +227,25 @@ func (a *ACL) Global(c Capability) bool {
 	for _, p := range a.policies {
 		if slices.Contains(p.Global, c) {
 			return true
+		}
+	}
+	return false
+}
+
+// Anywhere reports whether the ACL may grant c on some namespace: a block
+// grants it that no block of the same ACL policies' level denies. It is the
+// gate of a request whose namespaces are known only once it is read; each
+// namespace is then checked with Allow.
+func (a *ACL) Anywhere(c Capability) bool {
+	sc := a.Scope(c)
+	if sc.All {
+		return true
+	}
+	for _, l := range sc.Levels {
+		for _, g := range l.Grant {
+			if !slices.Contains(l.Deny, g) {
+				return true
+			}
 		}
 	}
 	return false

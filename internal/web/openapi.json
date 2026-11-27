@@ -334,6 +334,28 @@
         }
       }
     },
+    "/api/plan": {
+      "post": {
+        "summary": "Plan a change to the job files of a repository",
+        "description": "What the next detection cycle would do if the repository held these files. It writes nothing. Needs the capability plan on a namespace; a job of a namespace without it is an error. One plan runs at a time.",
+        "operationId": "planChange",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlanRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "What the cycle would do for each job of the repository.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Plan" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/backup": {
       "get": {
         "summary": "A backup of the database, as a SQLite file",
@@ -924,6 +946,75 @@
           "action": { "type": "string", "enum": ["create", "update", "delete", "revoke", "backup"] },
           "kind": { "type": "string", "enum": ["acl-policy", "binding-rule", "token", "database"] },
           "object": { "type": "string", "description": "The name of an ACL policy, the ID of a binding rule, or the accessor ID of a token. Empty for a backup." }
+        }
+      },
+      "PlanRequest": {
+        "type": "object",
+        "required": ["repository", "commit", "files"],
+        "properties": {
+          "repository": { "type": "string", "description": "The name of a repository block." },
+          "commit": { "type": "string", "description": "The full SHA of the commit, for nops_commit." },
+          "files": {
+            "type": "array",
+            "description": "Every job file and var-file of the repository. A file outside its path, or of another kind, is left out.",
+            "items": { "$ref": "#/components/schemas/PlanFile" }
+          }
+        }
+      },
+      "PlanFile": {
+        "type": "object",
+        "required": ["path", "content"],
+        "properties": {
+          "path": { "type": "string", "description": "The path of the file in the repository." },
+          "content": { "type": "string" }
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "required": ["jobs", "errors", "removed"],
+        "properties": {
+          "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/PlannedJob" } },
+          "errors": { "type": "array", "items": { "$ref": "#/components/schemas/PlanError" } },
+          "removed": { "type": "array", "items": { "$ref": "#/components/schemas/RemovedJob" } },
+          "removed_unchecked": { "type": "boolean", "description": "A file of a repository does not parse, which keeps Nops from reading any job as removed." }
+        }
+      },
+      "PlannedJob": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Job" },
+          {
+            "type": "object",
+            "required": ["repository", "file"],
+            "properties": {
+              "repository": { "type": "string", "description": "The repository planned, or another one for a job that runs a hook of it." },
+              "file": { "type": "string" },
+              "diff": { "type": "object", "description": "The redacted plan diff, as Nomad's JSON. Absent without drift." },
+              "pre_hooks": { "type": "array", "items": { "type": "string" } },
+              "post_hooks": { "type": "array", "items": { "type": "string" } },
+              "issues": { "type": "array", "items": { "$ref": "#/components/schemas/Issue" } },
+              "error": { "type": "string", "description": "Why the job would not deploy: invalid meta, a hook missing or invalid, or what Nomad answered." }
+            }
+          }
+        ]
+      },
+      "PlanError": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "file": { "type": "string" },
+          "namespace": { "type": "string" },
+          "job": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      },
+      "RemovedJob": {
+        "type": "object",
+        "required": ["namespace", "job", "orphan"],
+        "properties": {
+          "namespace": { "type": "string" },
+          "job": { "type": "string" },
+          "superseded": { "type": "string", "description": "The deployment waiting for the job that would be superseded." },
+          "orphan": { "type": "boolean", "description": "The job would be an orphan: deployed by Nops, still running." }
         }
       }
     }
