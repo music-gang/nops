@@ -4,6 +4,42 @@ What changes in each release of Nops, newest first. Before upgrading, read
 [Upgrading](docs/running-nops.md#upgrading). Release candidates are on the
 [GitHub releases](https://github.com/music-gang/nops/releases) only.
 
+## v0.17.0
+
+### Features
+
+- `cli`: `nops config validate <file>` checks a configuration file as
+  `nops serve` reads it, with the same messages, and exits non-zero when it's
+  invalid. It runs offline, so a pipeline can check the file before it
+  reaches the server ([commands](docs/cli.md#commands),
+  [#344](https://github.com/music-gang/nops/pull/344)).
+- `engine`: `nops plan` and `POST /api/plan` show what Nops would do with a
+  change to a repository before it's merged, so a pipeline on the pull
+  request can check it: each job's sync state, policy, hooks, meta issues and
+  redacted diff, and the jobs the change removes. Nops writes nothing, and
+  the command exits non-zero on an error that keeps a job from deploying. It
+  takes the new `plan` capability, which `policy = "write"` grants
+  ([planning a change](docs/cli.md#planning-a-change),
+  [#347](https://github.com/music-gang/nops/pull/347)).
+- `meta`: `nops_apply_timeout` sets a job's own apply timeout, with
+  `apply_timeout` as the default. The deployment's page shows the one that
+  applies ([the apply timeout](docs/architecture.md#the-apply-timeout),
+  [#345](https://github.com/music-gang/nops/pull/345)).
+- `meta`: a `batch` or `sysbatch` job with `nops_healthy = "running"` is
+  healthy once it runs instead of once its run is over, so its post-hooks
+  run while it still runs. Without a Nomad deployment, a running allocation
+  now counts once its tasks have run for 10 seconds without a restart: a job
+  whose task fails in its first seconds fails its deployment instead of
+  completing it ([healthy](docs/architecture.md#healthy),
+  [#346](https://github.com/music-gang/nops/pull/346)).
+
+### Other changes
+
+- The dependencies are updated: `modernc.org/sqlite` moves to v1.63.0
+  ([#343](https://github.com/music-gang/nops/pull/343)).
+- The image's base, `distroless/static-debian13`, moves to a newer digest
+  ([#339](https://github.com/music-gang/nops/pull/339)).
+
 ## v0.16.0
 
 ### Breaking changes
