@@ -579,6 +579,33 @@ func TestAllocationsCarryGroupAndDeploymentHealth(t *testing.T) {
 	}
 }
 
+// RunningSince is the latest start or restart of the tasks meant to run, and
+// zero while one of them is not running.
+func TestAllocationsRunningSince(t *testing.T) {
+	_, c := newStub(t, 200, `[
+	  {"ID":"a1","ClientStatus":"running","TaskStates":{
+	    "init":{"State":"dead","Failed":false,"StartedAt":"2026-11-27T10:00:00Z"},
+	    "main":{"State":"running","StartedAt":"2026-11-27T10:00:05Z"},
+	    "side":{"State":"running","StartedAt":"2026-11-27T10:00:01Z","Restarts":1,"LastRestart":"2026-11-27T10:00:09Z"}}},
+	  {"ID":"a2","ClientStatus":"running","TaskStates":{
+	    "main":{"State":"pending","StartedAt":"2026-11-27T10:00:05Z","Restarts":1,"LastRestart":"2026-11-27T10:00:07Z"}}},
+	  {"ID":"a3","ClientStatus":"running","TaskStates":{
+	    "init":{"State":"dead","Failed":true},
+	    "main":{"State":"running","StartedAt":"2026-11-27T10:00:05Z"}}},
+	  {"ID":"a4","ClientStatus":"pending"}
+	]`)
+	got, err := c.Allocations(context.Background(), "default", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []time.Time{time.Date(2026, 11, 27, 10, 0, 9, 0, time.UTC), {}, {}, {}}
+	for i, w := range want {
+		if !got[i].RunningSince.Equal(w) {
+			t.Errorf("%s: RunningSince = %v, want %v", got[i].ID, got[i].RunningSince, w)
+		}
+	}
+}
+
 func TestPromoteDeployment(t *testing.T) {
 	s, c := newStub(t, 200, `{"EvalID":"e1","DeploymentModifyIndex":9}`)
 	if err := c.PromoteDeployment(context.Background(), "apps", "dep-1"); err != nil {

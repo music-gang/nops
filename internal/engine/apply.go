@@ -188,7 +188,7 @@ func nextAfterDecision(d *store.Deployment, job *api.Job) store.State {
 	if Rerun(d) {
 		return store.StateApplying
 	}
-	if len(meta.Parse(job.Meta).PreHooks) > 0 {
+	if len(meta.ParseJob(job).PreHooks) > 0 {
 		return store.StatePreHook
 	}
 	return store.StateApplying
@@ -221,7 +221,7 @@ func (e *Engine) stepDetected(ctx context.Context, log *slog.Logger, d *store.De
 		log.ErrorContext(ctx, "read the job's pause", "error", err)
 		return
 	}
-	if hold := holdOn(holdFrom(pause, e.windowStatus(meta.Parse(job.Meta))), d); hold != nil {
+	if hold := holdOn(holdFrom(pause, e.windowStatus(meta.ParseJob(job))), d); hold != nil {
 		log.DebugContext(ctx, "detected deployment of a held job left to detection", "reason", hold.Reason)
 		e.kickDetection()
 		return
@@ -525,7 +525,7 @@ func (e *Engine) ApplyTimeout(d *store.Deployment) (time.Duration, error) {
 
 // applyTimeoutOf is ApplyTimeout for the job spec of a deployment.
 func (e *Engine) applyTimeoutOf(job *api.Job) time.Duration {
-	if t := meta.Parse(job.Meta).ApplyTimeout; t > 0 {
+	if t := meta.ParseJob(job).ApplyTimeout; t > 0 {
 		return t
 	}
 	return e.applyTimeout
@@ -587,7 +587,7 @@ func (e *Engine) stepHealth(ctx context.Context, log *slog.Logger, d *store.Depl
 			return
 		}
 		next := store.StateCompleted
-		if len(meta.Parse(job.Meta).PostHooks) > 0 {
+		if len(meta.ParseJob(job).PostHooks) > 0 {
 			next = store.StatePostHook
 		}
 		e.applyTransition(ctx, log, d, next, reason)
@@ -660,7 +660,8 @@ const (
 // its Nomad deployment when there is one tracking exactly that apply, else
 // via the allocations of that job version (a batch job, or an update stanza
 // that produces no Nomad deployment): every one complete for a batch or
-// sysbatch job, running or complete for any other, once Nomad has placed the
+// sysbatch job without nops_healthy = "running", running for minRunning or
+// complete for any other, once Nomad has placed the
 // whole version (for a system or sysbatch job, on the nodes with room for
 // it). healthWaiting means neither healthy nor failed; reason says why for
 // healthFailed, for healthHealthy how many allocations Nomad replaced on the
@@ -780,13 +781,20 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	case blocked:
 		return healthWaiting, evals.NoRoom, nil // part of the version waits for room
 	}
-	toCompletion := runsToCompletion(live)
+	spec, err := parseJobSpec(d)
+	if err != nil {
+		return healthWaiting, "", err
+	}
+	toCompletion := runsToCompletion(live) && meta.ParseJob(spec).Healthy != meta.HealthyRunning
 	for _, a := range ours {
 		if a.NextAllocation != "" || a.ClientStatus == "complete" {
 			continue
 		}
 		if a.ClientStatus != "running" || toCompletion {
 			return healthWaiting, evals.NoRoom, nil // still starting, or still running a batch
+		}
+		if a.RunningSince.IsZero() || e.now().Sub(a.RunningSince) < minRunning {
+			return healthWaiting, evals.NoRoom, nil // not running long enough yet
 		}
 	}
 	reason := ""
@@ -804,6 +812,11 @@ func (e *Engine) applyHealth(ctx context.Context, log *slog.Logger, d *store.Dep
 	}
 	return healthHealthy, reason, nil
 }
+
+// minRunning is how long the tasks of an allocation run without a restart
+// before it counts as running, when no Nomad deployment decides it: Nomad's
+// default min_healthy_time.
+const minRunning = 10 * time.Second
 
 // perNodeHealthy is the health of d once its Nomad deployment is successful.
 // A system job's deployment leaves out the nodes with no room for it: the

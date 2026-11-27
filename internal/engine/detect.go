@@ -268,7 +268,7 @@ func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[s
 			"job", id, "declared_namespace", ns, "managed_namespaces", e.namespaces)
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
-	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.Parse(entry.job.Meta), src: jobSource{file: f.Content, vars: vars}}, fileParsed, RefusedFile{}
+	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.ParseJob(entry.job), src: jobSource{file: f.Content, vars: vars}}, fileParsed, RefusedFile{}
 }
 
 // commitVariable is the HCL variable every job file may declare to get the
@@ -827,7 +827,7 @@ func notifyOnCompleted(ctx context.Context, d *store.Deployment, log *slog.Logge
 		log.ErrorContext(ctx, "parse job spec for the completed notification opt-in", "deployment_id", d.ID, "error", err)
 		return false
 	}
-	return meta.Parse(job.Meta).NotifyCompleted
+	return meta.ParseJob(&job).NotifyCompleted
 }
 
 func storePolicy(p meta.Policy) store.Policy {

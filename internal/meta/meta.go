@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/cronexpr"
+	"github.com/hashicorp/nomad/api"
 )
 
 const prefix = "nops_"
@@ -28,6 +29,8 @@ const (
 	// KeyApplyTimeout is how long an apply of the job may take, in place of
 	// the apply_timeout of the configuration.
 	KeyApplyTimeout = "nops_apply_timeout"
+	// KeyHealthy says when a batch or sysbatch job is healthy.
+	KeyHealthy = "nops_healthy"
 	// KeySyncWindow and KeySyncWindowDuration say when Nops may deploy a job on
 	// its own: a cron expression for when the window opens and how long it stays
 	// open (docs/meta-keys.md).
@@ -40,7 +43,7 @@ const DefaultHookTimeout = 5 * time.Minute
 
 var knownKeys = map[string]struct{}{
 	KeyManaged: {}, KeyPolicy: {}, KeyPreHook: {}, KeyPostHook: {}, KeyRole: {}, KeyTimeout: {}, KeyNotifyCompleted: {},
-	KeyApplyTimeout: {}, KeySyncWindow: {}, KeySyncWindowDuration: {},
+	KeyApplyTimeout: {}, KeyHealthy: {}, KeySyncWindow: {}, KeySyncWindowDuration: {},
 }
 
 // removedKeys are keys that used to exist, with what replaces them: still
@@ -57,6 +60,16 @@ const (
 	PolicyAuto     Policy = "auto"
 	PolicyApproval Policy = "approval"
 	PolicyNone     Policy = "none"
+)
+
+// Healthy is when a batch or sysbatch job is healthy (nops_healthy).
+type Healthy string
+
+const (
+	// HealthyComplete: once every allocation is complete, the default.
+	HealthyComplete Healthy = "complete"
+	// HealthyRunning: once every allocation is running or complete.
+	HealthyRunning Healthy = "running"
 )
 
 // Severity of a validation issue. The caller logs Warn at WARN and Error at ERROR.
@@ -101,6 +114,10 @@ type Config struct {
 	// (nops_apply_timeout); zero when not declared or invalid, for the
 	// apply_timeout of the configuration.
 	ApplyTimeout time.Duration
+	// Healthy is nops_healthy as declared; empty when not declared or
+	// invalid, for the rule of the job's type. It is set on a job of a type
+	// it does not apply to as well: only a batch or sysbatch job reads it.
+	Healthy Healthy
 	// Timeout is how long a hook job may run (nops_timeout, or
 	// DefaultHookTimeout); zero for a job that is not a hook.
 	Timeout time.Duration
@@ -118,10 +135,20 @@ func (c Config) HasErrors() bool {
 	return false
 }
 
-// Parse reads the nops_* keys of a job's meta map. It never fails: invalid
+// ParseJob is Parse for the meta and the type of job.
+func ParseJob(job *api.Job) Config {
+	jobType := ""
+	if job.Type != nil {
+		jobType = *job.Type
+	}
+	return Parse(job.Meta, jobType)
+}
+
+// Parse reads the nops_* keys of the meta map of a job of type jobType, as
+// Nomad names it; empty is Nomad's default, service. It never fails: invalid
 // input is reported through Config.Issues and resolved to the most
 // conservative reading. Values are case-sensitive.
-func Parse(m map[string]string) Config {
+func Parse(m map[string]string, jobType string) Config {
 	c := Config{Policy: PolicyNone}
 	var issues []Issue
 	add := func(sev Severity, key, format string, args ...any) {
@@ -227,6 +254,24 @@ func Parse(m map[string]string) Config {
 		}
 		if ignored != "" {
 			add(SeverityWarn, KeyApplyTimeout, "%s", ignored)
+		}
+	}
+
+	if v, ok := m[KeyHealthy]; ok {
+		switch h := Healthy(v); h {
+		case HealthyComplete, HealthyRunning:
+			c.Healthy = h
+		default:
+			add(SeverityError, KeyHealthy, "invalid value %q (want running or complete)", v)
+		}
+		switch {
+		case ignored != "":
+			add(SeverityWarn, KeyHealthy, "%s", ignored)
+		case jobType != api.JobTypeBatch && jobType != api.JobTypeSysbatch:
+			if jobType == "" {
+				jobType = api.JobTypeService
+			}
+			add(SeverityWarn, KeyHealthy, "set on a %s job, only a batch or sysbatch job reads it: ignored", jobType)
 		}
 	}
 

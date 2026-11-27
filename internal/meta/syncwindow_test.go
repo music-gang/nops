@@ -101,7 +101,7 @@ func TestParseSyncWindow(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := Parse(tc.in)
+			c := Parse(tc.in, "")
 			if (c.SyncWindow != nil) != tc.wantWindow {
 				t.Errorf("SyncWindow = %+v, want set: %v", c.SyncWindow, tc.wantWindow)
 			}
@@ -123,7 +123,7 @@ func TestParseSyncWindow(t *testing.T) {
 }
 
 func TestSyncWindowKeepsWhatWasWritten(t *testing.T) {
-	c := Parse(managedAuto(map[string]string{KeySyncWindow: "0 9 * * 1-5", KeySyncWindowDuration: "9h30m"}))
+	c := Parse(managedAuto(map[string]string{KeySyncWindow: "0 9 * * 1-5", KeySyncWindowDuration: "9h30m"}), "")
 	if c.SyncWindow == nil || c.SyncWindow.Spec != "0 9 * * 1-5" || c.SyncWindow.Duration != 9*time.Hour+30*time.Minute {
 		t.Errorf("SyncWindow = %+v, want the expression and the duration as written", c.SyncWindow)
 	}
@@ -131,7 +131,7 @@ func TestSyncWindowKeepsWhatWasWritten(t *testing.T) {
 
 func window(t *testing.T, spec, duration string) *SyncWindow {
 	t.Helper()
-	c := Parse(managedAuto(map[string]string{KeySyncWindow: spec, KeySyncWindowDuration: duration}))
+	c := Parse(managedAuto(map[string]string{KeySyncWindow: spec, KeySyncWindowDuration: duration}), "")
 	if c.SyncWindow == nil {
 		t.Fatalf("window %q for %s is invalid: %v", spec, duration, c.Issues)
 	}
@@ -245,7 +245,7 @@ func TestSyncWindowNextClose(t *testing.T) {
 // only 5 fields (docs/policies.md#sync-window).
 func TestSyncWindowAcceptsWhatPeriodicAccepts(t *testing.T) {
 	for _, spec := range []string{"0 9 * * 1-5", "0 9 * * MON-FRI", "0 9 * * * 2099", "0 0 9 * * * *", "@daily", "@hourly"} {
-		c := Parse(managedAuto(map[string]string{KeySyncWindow: spec, KeySyncWindowDuration: "1h"}))
+		c := Parse(managedAuto(map[string]string{KeySyncWindow: spec, KeySyncWindowDuration: "1h"}), "")
 		if c.SyncWindow == nil || len(c.Issues) != 0 {
 			t.Errorf("%q: window %v, issues %v; want it accepted", spec, c.SyncWindow, c.Issues)
 		}

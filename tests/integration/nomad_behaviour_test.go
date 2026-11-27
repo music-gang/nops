@@ -1088,3 +1088,71 @@ job %q {
 		t.Errorf("blocked evaluations = %+v, want one for group waits", blocked)
 	}
 }
+
+// TestRunningSinceMovesOnARestart checks what apply health reads to wait for a
+// running allocation to stay up: while a task waits to be restarted the
+// allocation is pending and RunningSince is zero, and once it runs again
+// RunningSince is its new start, so a task that keeps failing never counts as
+// running for long.
+func TestRunningSinceMovesOnARestart(t *testing.T) {
+	c, raw := newClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	id := uniqueID(t, raw, "restart")
+
+	job, err := c.ParseHCL(ctx, "default", fmt.Sprintf(`
+job %q {
+  type = "batch"
+  group "g" {
+    restart {
+      attempts = 2
+      delay    = "2s"
+      mode     = "fail"
+    }
+    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "sleep 2; exit 1"]
+      }
+    }
+  }
+}`, id), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RegisterCAS(ctx, job, 0, false, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var first, again time.Time
+	waited := false // pending with RunningSince zero after the first start
+	for again.IsZero() {
+		allocs, err := c.Allocations(ctx, "default", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(allocs) == 1 {
+			a := allocs[0]
+			switch {
+			case first.IsZero():
+				if a.ClientStatus == "running" {
+					first = a.RunningSince
+				}
+			case a.ClientStatus == "pending" && a.RunningSince.IsZero():
+				waited = true
+			case waited && a.ClientStatus == "running" && a.RunningSince.After(first):
+				again = a.RunningSince
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("first start %v, zero while restarting %v, start after the restart %v: want all three", first, waited, again)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}

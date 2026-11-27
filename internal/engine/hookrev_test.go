@@ -20,13 +20,13 @@ import (
 func hookFiles(jobs ...*api.Job) map[string]parsedFile {
 	m := make(map[string]parsedFile, len(jobs))
 	for _, j := range jobs {
-		m[*j.ID] = parsedFile{path: *j.ID + ".nomad.hcl", job: j, cfg: meta.Parse(j.Meta)}
+		m[*j.ID] = parsedFile{path: *j.ID + ".nomad.hcl", job: j, cfg: meta.ParseJob(j)}
 	}
 	return m
 }
 
 func cfgOf(extra map[string]string) meta.Config {
-	return meta.Parse(managed("web", "auto", extra).Meta)
+	return meta.ParseJob(managed("web", "auto", extra))
 }
 
 func TestFreezeHooksWithoutHooksKeepsTheTargetHash(t *testing.T) {

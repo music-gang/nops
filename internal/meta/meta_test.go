@@ -7,18 +7,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/nomad/api"
 )
 
 func TestParse(t *testing.T) {
 	tests := []struct {
 		name            string
 		in              map[string]string
+		jobType         string
 		managed         bool
 		policy          Policy
 		pre, post       []string
 		isHook          bool
 		timeout         time.Duration
 		applyTimeout    time.Duration
+		healthy         Healthy
 		notifyCompleted bool
 		wantIssues      []Issue
 	}{
@@ -345,11 +349,91 @@ func TestParse(t *testing.T) {
 				{SeverityWarn, KeyApplyTimeout, "set but nops_role is \"hook\": ignored"},
 			},
 		},
+		{
+			name:    "a batch job healthy once running",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "running"},
+			jobType: "batch",
+			managed: true,
+			policy:  PolicyAuto,
+			healthy: HealthyRunning,
+		},
+		{
+			name:    "a sysbatch job healthy once complete, as without the key",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "complete"},
+			jobType: "sysbatch",
+			managed: true,
+			policy:  PolicyAuto,
+			healthy: HealthyComplete,
+		},
+		{
+			name:    "an invalid healthy rule falls back to none",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "Running"},
+			jobType: "batch",
+			managed: true,
+			policy:  PolicyNone,
+			wantIssues: []Issue{
+				{SeverityError, KeyHealthy, "invalid value \"Running\" (want running or complete)"},
+			},
+		},
+		{
+			name:    "a healthy rule on a service job is ignored with a warning",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "complete"},
+			jobType: "service",
+			managed: true,
+			policy:  PolicyAuto,
+			healthy: HealthyComplete,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyHealthy, "set on a service job, only a batch or sysbatch job reads it: ignored"},
+			},
+		},
+		{
+			name:    "a job without a type is a service job",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "running"},
+			managed: true,
+			policy:  PolicyAuto,
+			healthy: HealthyRunning,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyHealthy, "set on a service job, only a batch or sysbatch job reads it: ignored"},
+			},
+		},
+		{
+			name:    "a healthy rule on a system job is ignored with a warning",
+			in:      map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "running"},
+			jobType: "system",
+			managed: true,
+			policy:  PolicyAuto,
+			healthy: HealthyRunning,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyHealthy, "set on a system job, only a batch or sysbatch job reads it: ignored"},
+			},
+		},
+		{
+			name:    "a healthy rule on an unmanaged job is ignored with a warning",
+			in:      map[string]string{KeyHealthy: "running"},
+			jobType: "batch",
+			policy:  PolicyNone,
+			healthy: HealthyRunning,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyHealthy, "set but nops_managed is not \"true\": ignored"},
+			},
+		},
+		{
+			name:    "a healthy rule on a hook is ignored with a warning",
+			in:      map[string]string{KeyRole: "hook", KeyHealthy: "running"},
+			jobType: "batch",
+			policy:  PolicyNone,
+			isHook:  true,
+			timeout: DefaultHookTimeout,
+			healthy: HealthyRunning,
+			wantIssues: []Issue{
+				{SeverityWarn, KeyHealthy, "set but nops_role is \"hook\": ignored"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Parse(tc.in)
+			got := Parse(tc.in, tc.jobType)
 			if got.Managed != tc.managed {
 				t.Errorf("Managed = %v, want %v", got.Managed, tc.managed)
 			}
@@ -368,6 +452,9 @@ func TestParse(t *testing.T) {
 			if got.ApplyTimeout != tc.applyTimeout {
 				t.Errorf("ApplyTimeout = %s, want %s", got.ApplyTimeout, tc.applyTimeout)
 			}
+			if got.Healthy != tc.healthy {
+				t.Errorf("Healthy = %q, want %q", got.Healthy, tc.healthy)
+			}
 			if got.IsHook != tc.isHook {
 				t.Errorf("IsHook = %v, want %v", got.IsHook, tc.isHook)
 			}
@@ -381,14 +468,27 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// ParseJob reads the meta and the type of a job, a missing type as Nomad's
+// default, service.
+func TestParseJob(t *testing.T) {
+	m := map[string]string{KeyManaged: "true", KeyPolicy: "auto", KeyHealthy: "running"}
+	batch := api.JobTypeBatch
+	if got := ParseJob(&api.Job{Type: &batch, Meta: m}); len(got.Issues) != 0 || got.Healthy != HealthyRunning {
+		t.Errorf("batch job: %+v, want healthy once running and no issue", got)
+	}
+	if got := ParseJob(&api.Job{Meta: m}); len(got.Issues) != 1 || got.Issues[0].Key != KeyHealthy {
+		t.Errorf("job without a type: issues %+v, want nops_healthy ignored on a service job", got.Issues)
+	}
+}
+
 func TestHasErrors(t *testing.T) {
-	if Parse(map[string]string{KeyManaged: "true", KeyPolicy: "auto"}).HasErrors() {
+	if Parse(map[string]string{KeyManaged: "true", KeyPolicy: "auto"}, "").HasErrors() {
 		t.Error("valid config reports errors")
 	}
-	if !Parse(map[string]string{KeyManaged: "true", KeyPolicy: "x"}).HasErrors() {
+	if !Parse(map[string]string{KeyManaged: "true", KeyPolicy: "x"}, "").HasErrors() {
 		t.Error("invalid policy does not report errors")
 	}
-	if Parse(map[string]string{"nops_typo": "x"}).HasErrors() {
+	if Parse(map[string]string{"nops_typo": "x"}, "").HasErrors() {
 		t.Error("warning-only config reports errors")
 	}
 }
@@ -426,7 +526,7 @@ func TestDocKeysTableMatchesTheKeys(t *testing.T) {
 	}
 
 	if cells := documented[KeyPolicy]; len(cells) > 1 {
-		want := string(Parse(map[string]string{KeyManaged: "true"}).Policy)
+		want := string(Parse(map[string]string{KeyManaged: "true"}, "").Policy)
 		if got := strings.Trim(strings.TrimSpace(cells[1]), "`"); got != want {
 			t.Errorf("docs/meta-keys.md gives %s the default %q, a managed job without it gets %q", KeyPolicy, got, want)
 		}

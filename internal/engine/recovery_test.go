@@ -205,7 +205,7 @@ func TestRecoveryAfterRestart(t *testing.T) {
 				d := h.applyingWithIndex("web", job, 9)
 				h.liveApplied("web", job, 12, 4)
 				h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
-				h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running"})
+				h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running", RunningSince: runningLongAgo})
 				return d
 			},
 			done: func(d *store.Deployment) bool { return d.State == store.StateFailed },

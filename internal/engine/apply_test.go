@@ -155,7 +155,7 @@ func frozenFromSpec(spec string) []store.DeploymentHook {
 	if err := json.Unmarshal([]byte(spec), &job); err != nil {
 		return nil
 	}
-	cfg := meta.Parse(job.Meta)
+	cfg := meta.ParseJob(&job)
 	var out []store.DeploymentHook
 	for _, ph := range []struct {
 		phase string
@@ -557,6 +557,11 @@ func TestStepRegisterTimeoutSurvivesRestart(t *testing.T) {
 
 // -- tests: health ------------------------------------------------------
 
+// runningLongAgo is when the tasks of a running allocation started in the
+// tests that don't look at how long they have run: an hour before the
+// harness clock starts, well past minRunning.
+var runningLongAgo = time.Date(2026, 9, 24, 11, 0, 0, 0, time.UTC)
+
 // applyingWithIndex creates jobID's deployment registered at appliedIndex, as
 // job version 3.
 func (h *harness) applyingWithIndex(jobID string, job *api.Job, appliedIndex uint64) *store.Deployment {
@@ -634,7 +639,7 @@ func TestStepHealthAllocationsPathNoNomadDeployment(t *testing.T) {
 	// No Nomad deployment tracks this job (e.g. batch): health falls back to
 	// the allocations of the applied job version.
 	h.liveApplied("web", job, 9, 3)
-	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running"})
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running", RunningSince: runningLongAgo})
 
 	h.step(d)
 
@@ -665,7 +670,7 @@ func TestStepHealthAllocationsPathWaitsForABatchRunToComplete(t *testing.T) {
 			job.Type = &tc.jobType
 			d := h.applyingWithIndex("web", job, 9)
 			h.liveApplied("web", job, 9, 3)
-			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: tc.status, DesiredStatus: "run"})
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: tc.status, RunningSince: runningLongAgo, DesiredStatus: "run"})
 
 			h.step(d)
 
@@ -676,12 +681,90 @@ func TestStepHealthAllocationsPathWaitsForABatchRunToComplete(t *testing.T) {
 	}
 }
 
+// A batch or sysbatch job with nops_healthy = "running" is healthy once it
+// runs, as a service job is; with "complete", once its run is over, as
+// without the key.
+func TestStepHealthOfABatchJobWithTheHealthyKey(t *testing.T) {
+	for _, tc := range []struct {
+		jobType, healthy, status string
+		want                     store.State
+	}{
+		{api.JobTypeBatch, "running", "running", store.StateCompleted},
+		{api.JobTypeBatch, "running", "complete", store.StateCompleted},
+		{api.JobTypeSysbatch, "running", "running", store.StateCompleted},
+		{api.JobTypeBatch, "complete", "running", store.StateApplying},
+		{api.JobTypeBatch, "complete", "complete", store.StateCompleted},
+	} {
+		t.Run(tc.jobType+" "+tc.healthy+" "+tc.status, func(t *testing.T) {
+			h := newHarness(t)
+			job := managed("web", "auto", map[string]string{meta.KeyHealthy: tc.healthy})
+			job.Type = &tc.jobType
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: tc.status, DesiredStatus: "run", RunningSince: runningLongAgo})
+
+			h.step(d)
+
+			if got := h.get(d.ID); got.State != tc.want {
+				t.Fatalf("state = %s (%s), want %s", got.State, got.Error, tc.want)
+			}
+		})
+	}
+}
+
+// Without a Nomad deployment, a running allocation counts once its tasks have
+// run for minRunning without a restart: one that fails right after it starts
+// does not make the deployment healthy.
+func TestStepHealthWaitsForTheTasksToRunLongEnough(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  func() *api.Job
+	}{
+		{"service", func() *api.Job { return managed("web", "auto", nil) }},
+		{"batch healthy once running", func() *api.Job {
+			j := managed("web", "auto", map[string]string{meta.KeyHealthy: "running"})
+			batch := api.JobTypeBatch
+			j.Type = &batch
+			return j
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			job := tc.job()
+			d := h.applyingWithIndex("web", job, 9)
+			h.liveApplied("web", job, 9, 3)
+			alloc := nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running", DesiredStatus: "run"}
+
+			// A task not running, for instance waiting to restart.
+			h.nomad.setAllocs("web", alloc)
+			h.step(d)
+			if got := h.get(d.ID); got.State != store.StateApplying {
+				t.Fatalf("with a task not running: state = %s, want applying", got.State)
+			}
+
+			alloc.RunningSince = h.clock.Now()
+			h.nomad.setAllocs("web", alloc)
+			h.clock.Advance(minRunning - time.Second)
+			h.step(h.get(d.ID))
+			if got := h.get(d.ID); got.State != store.StateApplying {
+				t.Fatalf("running for less than %s: state = %s, want applying", minRunning, got.State)
+			}
+
+			h.clock.Advance(2 * time.Second)
+			h.step(h.get(d.ID))
+			if got := h.get(d.ID); got.State != store.StateCompleted {
+				t.Fatalf("running for %s: state = %s (%s), want completed", minRunning, got.State, got.Error)
+			}
+		})
+	}
+}
+
 func TestStepHealthCompletedNotifiesWhenOptedIn(t *testing.T) {
 	h := newHarness(t)
 	job := managed("web", "auto", map[string]string{meta.KeyNotifyCompleted: "true"})
 	d := h.applyingWithIndex("web", job, 9)
 	h.liveApplied("web", job, 9, 3)
-	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running"})
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: "running", RunningSince: runningLongAgo})
 
 	h.step(d)
 
@@ -731,7 +814,7 @@ func TestStepHealthAllocationsPathFollowsNomadsReschedule(t *testing.T) {
 			name: "lost and replaced by a running one",
 			allocs: []nomadx.Alloc{
 				{ID: "a1", JobVersion: 3, ClientStatus: "lost", DesiredStatus: "stop", Failure: "alloc is lost since its node is down", NextAllocation: "a2"},
-				{ID: "a2", JobVersion: 3, ClientStatus: "running", DesiredStatus: "run"},
+				{ID: "a2", JobVersion: 3, ClientStatus: "running", RunningSince: runningLongAgo, DesiredStatus: "run"},
 			},
 			want: store.StateCompleted, message: "healthy after Nomad replaced 1 failed or lost allocation",
 		},
@@ -833,7 +916,7 @@ func TestStepHealthAllocationsPathLiveJobModifiedFails(t *testing.T) {
 	d := h.applyingWithIndex("web", job, 9)
 	h.liveApplied("web", job, 12, 4)
 	h.nomad.setDrift("web", &api.JobDiff{Type: "Edited", ID: "web"})
-	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running"})
+	h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 4, ClientStatus: "running", RunningSince: runningLongAgo})
 
 	h.step(d)
 
@@ -887,7 +970,7 @@ func TestStepHealthAllocationsPathWaitsForRoom(t *testing.T) {
 			job.Type = &jobType
 			d := h.applyingWithIndex("web", job, 9)
 			h.liveApplied("web", job, 9, 3)
-			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, DesiredStatus: "run"})
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, RunningSince: runningLongAgo, DesiredStatus: "run"})
 			h.nomad.evals["web"] = nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
 
 			h.step(d)
@@ -917,7 +1000,7 @@ func TestStepHealthAllocationsPathPerNodeJobSkipsFullNodes(t *testing.T) {
 			job.Type = &jobType
 			d := h.applyingWithIndex("web", job, 9)
 			h.liveApplied("web", job, 9, 3)
-			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, DesiredStatus: "run"})
+			h.nomad.setAllocs("web", nomadx.Alloc{ID: "a1", JobVersion: 3, ClientStatus: placed, RunningSince: runningLongAgo, DesiredStatus: "run"})
 			h.nomad.evals["web"] = nomadx.Evaluations{Blocked: true, NoRoom: "no room on 1 node (memory)"}
 
 			h.step(d)

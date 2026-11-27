@@ -254,7 +254,7 @@ func TestAScaleWhileWaitingForHealthKeepsTheDeployment(t *testing.T) {
 	h.nomad.setAllocs("web",
 		nomadx.Alloc{ID: "a0", JobVersion: ours - 1, ClientStatus: "failed", Failure: "before the register"},
 		nomadx.Alloc{ID: "a1", JobVersion: ours, ClientStatus: "complete"},
-		nomadx.Alloc{ID: "a2", JobVersion: scaled, ClientStatus: "running"},
+		nomadx.Alloc{ID: "a2", JobVersion: scaled, ClientStatus: "running", RunningSince: runningLongAgo},
 	)
 	h.step(h.get(d.ID))
 	if got := h.get(d.ID); got.State != store.StateCompleted {
@@ -270,7 +270,7 @@ func TestAnAllocationOfTheRegisteredVersionStillFailsTheDeploymentAfterAScale(t 
 	h.scaleAppliedTo(3, d.AppliedIndex+1)
 	h.nomad.setAllocs("web",
 		nomadx.Alloc{ID: "a1", JobVersion: ours, ClientStatus: "failed", Failure: "oom"},
-		nomadx.Alloc{ID: "a2", JobVersion: h.liveVersion(), ClientStatus: "running"},
+		nomadx.Alloc{ID: "a2", JobVersion: h.liveVersion(), ClientStatus: "running", RunningSince: runningLongAgo},
 	)
 	h.step(h.get(d.ID))
 
