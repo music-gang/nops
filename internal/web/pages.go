@@ -291,7 +291,7 @@ func hookTimeout(h store.DeploymentHook) string {
 	if err := json.Unmarshal([]byte(h.JobSpec), &job); err != nil {
 		return ""
 	}
-	return duration(meta.Parse(job.Meta).Timeout)
+	return duration(meta.ParseJob(&job).Timeout)
 }
 
 // deploymentView assembles everything /deployments/{id} and its status

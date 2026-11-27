@@ -283,6 +283,113 @@ job %q {
 	}
 }
 
+// healthyOnceRunningHCL is a managed batch job with nops_healthy = "running"
+// whose task runs cmd, restarted by Nomad up to restarts times, a second
+// apart, and never rescheduled.
+func healthyOnceRunningHCL(id, cmd string, restarts int) string {
+	return fmt.Sprintf(`
+job %q {
+  type = "batch"
+  meta {
+    nops_managed = "true"
+    nops_policy  = "auto"
+    nops_healthy = "running"
+  }
+  group "g" {
+    restart {
+      attempts = %d
+      delay    = "1s"
+      mode     = "fail"
+    }
+    reschedule {
+      attempts  = 0
+      unlimited = false
+    }
+    task "t" {
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", %q]
+      }
+    }
+  }
+}`, id, restarts, cmd)
+}
+
+// applyUntilDone runs the apply loop on the deployment Detect creates for hcl
+// until it completes or fails, and returns it.
+func applyUntilDone(t *testing.T, jobID, hcl string) *store.Deployment {
+	t.Helper()
+	ctx := context.Background()
+	snap := staticSnapshot{changed: make(chan struct{}, 1), snap: gitwatch.Snapshot{
+		Commit: "c1", Files: []gitwatch.File{{Path: "job.nomad.hcl", Content: hcl}},
+	}}
+	e, st := newEngine(t, snap)
+	if err := e.Detect(ctx); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	d, err := st.ActiveDeployment(ctx, "default", jobID)
+	if err != nil {
+		t.Fatalf("ActiveDeployment: %v", err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go e.RunApply(runCtx)
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		got, err := st.GetDeployment(ctx, d.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == store.StateCompleted || got.State == store.StateFailed {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment did not finish in time: %+v", got)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// TestEngineApplyBatchHealthyOnceRunningCompletesWhileItRuns: a long batch job
+// with nops_healthy = "running" completes its deployment while it runs, once
+// its task has run for 10 seconds.
+func TestEngineApplyBatchHealthyOnceRunningCompletesWhileItRuns(t *testing.T) {
+	c, raw := newClient(t)
+	jobID := uniqueID(t, raw, "worker")
+
+	got := applyUntilDone(t, jobID, healthyOnceRunningHCL(jobID, "sleep 600", 0))
+	done := time.Now()
+	if got.State != store.StateCompleted {
+		t.Fatalf("deployment %s (%s), want completed while the job runs", got.State, got.Error)
+	}
+	allocs, err := c.Allocations(context.Background(), "default", jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allocs) != 1 || allocs[0].ClientStatus != "running" {
+		t.Fatalf("allocations = %+v, want one still running", allocs)
+	}
+	if ran := done.Sub(allocs[0].RunningSince); ran < 10*time.Second {
+		t.Errorf("completed after the task ran %s, want at least 10s", ran)
+	}
+}
+
+// TestEngineApplyBatchHealthyOnceRunningThatKeepsRestartingFails: a batch job
+// with nops_healthy = "running" whose task fails 2 seconds after each start is
+// running each time Nops looks, but never for long: its deployment fails, and
+// never completes.
+func TestEngineApplyBatchHealthyOnceRunningThatKeepsRestartingFails(t *testing.T) {
+	_, raw := newClient(t)
+	jobID := uniqueID(t, raw, "crashloop")
+
+	got := applyUntilDone(t, jobID, healthyOnceRunningHCL(jobID, "sleep 2; exit 1", 3))
+	if got.State != store.StateFailed {
+		t.Fatalf("deployment %s, want failed: the task never ran for 10 seconds", got.State)
+	}
+}
+
 // managedCanaryHCL is a managed service under policy auto with one canary and
 // no auto-promotion, and a post-hook: its Nomad deployment waits for a human
 // after the canary is healthy. tag is what a commit changes between versions.

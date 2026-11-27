@@ -62,7 +62,7 @@ func TestExamplesParse(t *testing.T) {
 						t.Errorf("%s: service %q has provider %q, want \"nomad\"", filepath.Base(path), svc.Name, svc.Provider)
 					}
 				}
-				cfg := meta.Parse(job.Meta)
+				cfg := meta.ParseJob(job)
 				for _, issue := range cfg.Issues {
 					t.Errorf("%s: %s: %s", filepath.Base(path), issue.Severity, issue)
 				}

@@ -218,7 +218,7 @@ func (r *Runner) dispatch(ctx context.Context, log *slog.Logger, req Request, ru
 	if err != nil {
 		return Result{}, false, err
 	}
-	if !meta.Parse(parent.Meta).IsHook {
+	if !meta.ParseJob(parent).IsHook {
 		return fail("job %q is not a hook: it must set meta nops_role = %q", run.HookJobID, "hook")
 	}
 	if parent.Type == nil || (*parent.Type != api.JobTypeBatch && *parent.Type != api.JobTypeSysbatch) {

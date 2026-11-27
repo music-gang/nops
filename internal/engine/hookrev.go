@@ -91,7 +91,7 @@ func freezeHooks(cfg meta.Config, hooks map[string]parsedFile, targetHash string
 func frozenTimeout(h store.DeploymentHook) time.Duration {
 	var job api.Job
 	if err := json.Unmarshal([]byte(h.JobSpec), &job); err == nil {
-		if t := meta.Parse(job.Meta).Timeout; t > 0 {
+		if t := meta.ParseJob(&job).Timeout; t > 0 {
 			return t
 		}
 	}
@@ -196,7 +196,7 @@ func (e *Engine) gcHookRevisionsIn(ctx context.Context, ns string) error {
 	}
 	var candidates []string
 	for _, s := range stubs {
-		if s.ParentID == "" && !s.Stop && revisionRe.MatchString(s.ID) && meta.Parse(s.Meta).IsHook {
+		if s.ParentID == "" && !s.Stop && revisionRe.MatchString(s.ID) && meta.Parse(s.Meta, s.Type).IsHook {
 			candidates = append(candidates, s.ID)
 		}
 	}

@@ -242,6 +242,8 @@ type JobStub struct {
 	Status   string
 	// Stop is true for a job that has been deregistered without a purge.
 	Stop bool
+	// Type is the job's type: service, batch, system or sysbatch.
+	Type string
 	Meta map[string]string
 }
 
@@ -260,7 +262,7 @@ func (c *Client) ListJobs(ctx context.Context, ns string) ([]JobStub, error) {
 	}
 	out := make([]JobStub, 0, len(stubs))
 	for _, s := range stubs {
-		out = append(out, JobStub{ID: s.ID, ParentID: s.ParentID, Status: s.Status, Stop: s.Stop, Meta: s.Meta})
+		out = append(out, JobStub{ID: s.ID, ParentID: s.ParentID, Status: s.Status, Stop: s.Stop, Type: s.Type, Meta: s.Meta})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
@@ -325,6 +327,11 @@ type Alloc struct {
 	// FollowupEvalID is the evaluation that reschedules this allocation once
 	// its reschedule delay has passed. Empty when none is waiting.
 	FollowupEvalID string
+	// RunningSince is since when every task of the allocation that has not
+	// finished well has been running without a restart, as the client's clock
+	// says: the latest of their starts and restarts. Zero while one of them is
+	// not running.
+	RunningSince time.Time
 }
 
 // Allocations lists every allocation of a job, including finished ones.
@@ -351,6 +358,7 @@ func (c *Client) Allocations(ctx context.Context, ns, jobID string) ([]Alloc, er
 			TaskGroup:      s.TaskGroup,
 			NextAllocation: s.NextAllocation,
 			FollowupEvalID: s.FollowupEvalID,
+			RunningSince:   runningSince(s.TaskStates),
 		}
 		if ds := s.DeploymentStatus; ds != nil {
 			a.Healthy, a.Canary = ds.Healthy, ds.Canary
@@ -487,6 +495,34 @@ func (c *Client) LatestDeployment(ctx context.Context, ns, jobID string) (*api.D
 		return nil, nil
 	}
 	return d, nil
+}
+
+// The states of a task, which the api package has no constants for.
+const (
+	taskStateRunning = "running"
+	taskStateDead    = "dead"
+)
+
+// runningSince is Alloc.RunningSince for the task states of an allocation. A
+// task that finished without failing, like a prestart task, does not count.
+func runningSince(states map[string]*api.TaskState) time.Time {
+	var since time.Time
+	for _, ts := range states {
+		switch {
+		case ts == nil:
+			continue
+		case ts.State == taskStateDead && !ts.Failed:
+			continue
+		case ts.State != taskStateRunning:
+			return time.Time{}
+		}
+		for _, t := range []time.Time{ts.StartedAt, ts.LastRestart} {
+			if t.After(since) {
+				since = t
+			}
+		}
+	}
+	return since
 }
 
 // failure builds a human-readable reason for a failed allocation.
