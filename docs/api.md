@@ -54,6 +54,7 @@ and `/api/backup` answers the database file.
 | `POST /api/pause` | [Pause every job](policies.md#pausing-a-job). Optional body: `{"reason": "..."}`. |
 | `POST /api/resume` | Resume every job. |
 | `POST /api/fetch` | Ask for a poll of every repository now. |
+| `POST /api/plan` | [Plan a change](cli.md#planning-a-change). Body: `{"repository": "...", "commit": "...", "files": [{"path": "...", "content": "..."}]}`, with the name of a repository block, the commit for `nops_commit`, and every job file and var-file of the repository at its path there. Answers what detection would decide for each job. |
 | `GET /api/backup` | A [backup](running-nops.md#backups) of the database, as a SQLite file. |
 | `GET /api/acl/policies` | The [ACL policies](acl.md#acl-policies): all with a management token, the token's own otherwise. |
 | `GET /api/acl/policies/{name}` | One ACL policy with its rules. |

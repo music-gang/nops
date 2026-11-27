@@ -29,6 +29,7 @@ var commands = []command{
 	{name: "dismiss", arg: "<job>", help: "stop reporting a job removed from git that still runs in Nomad", run: runDismiss},
 	{name: "undismiss", arg: "<job>", help: "undo the dismissal of a job", run: action(http.MethodPost, jobAction("undismiss"), "undismissed")},
 	{name: "fetch", help: "ask for a git poll now", run: action(http.MethodPost, func(*call) string { return "/api/fetch" }, "asked for a poll")},
+	{name: "plan", arg: "<dir>", flags: planFlagSet, help: "show what Nops would do with the repository checked out in a directory", run: runPlan},
 	{name: "backup", arg: "<file>", help: "save a backup of the database to a file", run: runBackup},
 	{name: "login", own: true, flags: loginFlags, help: "log in and save the session", run: runLogin},
 	{name: "logout", own: true, help: "revoke the saved session and forget it", run: runLogout},

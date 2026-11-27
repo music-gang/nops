@@ -70,6 +70,20 @@ func TestOrphanCandidatesLeaveOutTheDismissed(t *testing.T) {
 	if got, err := s.OrphanCandidates(ctx, "prod"); err != nil || len(got) != 1 || got[0].ID != other.ID {
 		t.Errorf("OrphanCandidates(prod) = %v, %v, want its web", got, err)
 	}
+
+	// One job at a time, the same answers.
+	if got, err := s.OrphanCandidate(ctx, "default", "db"); err != nil || got.ID != db.ID {
+		t.Errorf("OrphanCandidate(default, db) = %v, %v, want db", got, err)
+	}
+	if got, err := s.OrphanCandidate(ctx, "prod", "web"); err != nil || got.ID != other.ID {
+		t.Errorf("OrphanCandidate(prod, web) = %v, %v, want its web", got, err)
+	}
+	if _, err := s.OrphanCandidate(ctx, "default", "web"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OrphanCandidate of the dismissed = %v, want ErrNotFound", err)
+	}
+	if _, err := s.OrphanCandidate(ctx, "default", "never"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OrphanCandidate of a job never deployed = %v, want ErrNotFound", err)
+	}
 }
 
 func TestDismissOrphanTakesOnlyTheLatestCompletedDeployment(t *testing.T) {

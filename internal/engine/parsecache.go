@@ -27,13 +27,6 @@ func hashOf(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// cachedParse looks up a previous result for (content, vars) in the cache
-// snapshot taken at the start of the cycle.
-func (e *Engine) cachedParse(prev map[string]parseEntry, key string) (parseEntry, bool) {
-	entry, ok := prev[key]
-	return entry, ok
-}
-
 // snapshotParseCache returns the cache built by the previous cycle, to look
 // hits up in, without holding the lock while parsing.
 func (e *Engine) snapshotParseCache() map[string]parseEntry {

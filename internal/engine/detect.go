@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/nomad/api"
 
@@ -48,7 +49,7 @@ func (e *Engine) Detect(ctx context.Context) error {
 	e.detectMu.Lock()
 	defer e.detectMu.Unlock()
 	start := e.now()
-	st, err := e.detect(ctx)
+	st, err := e.decider().run(ctx, liveCycle{e}, e.snapshots.Snapshots())
 	st.At = e.now()
 	st.Duration = st.At.Sub(start)
 	if err != nil {
@@ -58,17 +59,18 @@ func (e *Engine) Detect(ctx context.Context) error {
 	return err
 }
 
-// detect is Detect without the bookkeeping: the returned Status carries the
-// counts of the cycle, whether or not it ended in an error.
-func (e *Engine) detect(ctx context.Context) (Status, error) {
+// run is one detection cycle of the snapshots, acting through c, without the
+// bookkeeping of Detect: the returned Status carries the counts of the cycle,
+// whether or not it ended in an error.
+func (dc *decider) run(ctx context.Context, c cycle, snaps []gitwatch.Snapshot) (Status, error) {
 	var st Status
 
-	parsed, cache, unparsed, refused := e.parseFiles(ctx, e.snapshots.Snapshots())
-	e.replaceParseCache(cache)
+	parsed, cache, unparsed, refused := dc.parseFiles(ctx, c, snaps)
+	c.parsed(cache)
 	st.Unparsed = unparsed
 	st.Refused = refused
 
-	hookFiles, managed := e.classify(ctx, parsed)
+	hookFiles, managed := dc.classify(ctx, c, parsed)
 	st.Managed = len(managed)
 
 	// A hook is found among the hooks of its job's own namespace only, in any
@@ -84,20 +86,20 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 
 	// A pause that cannot be read is a store failure like any other: a job must
 	// not be deployed on the guess that nobody paused it (invariant 7).
-	pauses, err := e.store.ActivePauses(ctx)
+	pauses, err := dc.store.ActivePauses(ctx)
 	if err != nil {
 		return st, fmt.Errorf("list active pauses: %w", err)
 	}
 	held := holds(pauses)
 	// So is the pause of every job, which holds the jobs without one of their own.
-	all, err := e.allPause(ctx)
+	all, err := dc.allPause(ctx)
 	if err != nil {
 		return st, fmt.Errorf("read the pause of every job: %w", err)
 	}
-	e.setAll(all)
+	c.pausedAll(all)
 	// So is a Deploy now request: it was accepted, and one that cannot be read is
 	// not one that may be ignored (invariant 7).
-	lifts, err := e.store.WindowLifts(ctx)
+	lifts, err := dc.store.WindowLifts(ctx)
 	if err != nil {
 		return st, fmt.Errorf("list window lifts: %w", err)
 	}
@@ -111,8 +113,11 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	for _, mf := range managed {
 		key := keyOf(mf.job)
 		seen[key] = true // classified as managed: never "removed from repo" this cycle
+		if !c.reconciles(mf, hooks[key.namespace]) {
+			continue
+		}
 
-		window := e.windowStatus(mf.cfg)
+		window := dc.windowStatus(mf.cfg)
 		var lift *store.WindowLift
 		if l, ok := asked[key]; ok {
 			lift = &l
@@ -121,7 +126,7 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 		if pause == nil {
 			pause = all
 		}
-		obs, ok, err := e.reconcileJob(ctx, mf, hooks[key.namespace], pause, window, lift)
+		obs, ok, err := dc.reconcileJob(ctx, c, mf, hooks[key.namespace], pause, window, lift)
 		if err != nil {
 			return st, err
 		}
@@ -132,29 +137,26 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 			st.Skipped++
 		}
 	}
-	e.replaceObservations(observations)
+	c.observed(observations)
 
 	// A file that does not parse looks exactly like a removed one, so with any
 	// nothing is read as removed (the same suspension as the orphan check
 	// below): a typo in the HCL, or Nomad unreachable for a parse, must not
 	// supersede what is waiting for approval.
 	if unparsed == 0 {
-		if err := e.supersedeRemoved(ctx, seen); err != nil {
+		if err := dc.supersedeRemoved(ctx, c, seen); err != nil {
 			return st, err
 		}
 		// A request for a job that is gone must not wait for it to come back.
 		for key, l := range asked {
 			if !seen[key] {
-				if err := e.dropWindowLift(ctx, l, "the job is not in the repository"); err != nil {
+				if err := c.dropWindowLift(ctx, l, "the job is not in the repository"); err != nil {
 					return st, err
 				}
 			}
 		}
 	}
-	if err := e.gcHookRevisions(ctx); err != nil {
-		return st, err
-	}
-	if err := e.dropEndedSpecs(ctx); err != nil {
+	if err := c.tidy(ctx); err != nil {
 		return st, err
 	}
 
@@ -162,18 +164,18 @@ func (e *Engine) detect(ctx context.Context) (Status, error) {
 	// the check is skipped and the last complete one stands.
 	if unparsed > 0 {
 		st.OrphanCheckSkipped = true
-		st.Orphans = len(e.Orphans())
+		st.Orphans = len(dc.orphans())
 		return st, nil
 	}
 	present := make(map[jobKey]bool, len(parsed))
 	for _, pf := range parsed {
 		present[keyOf(pf.job)] = true
 	}
-	orphans, err := e.findOrphans(ctx, present)
+	orphans, err := dc.findOrphans(ctx, c, present)
 	if err != nil {
 		return st, err
 	}
-	e.setOrphans(orphans)
+	c.orphansFound(orphans)
 	st.Orphans = len(orphans)
 	return st, nil
 }
@@ -190,20 +192,20 @@ func (pf parsedFile) fileName() string { return pf.commit.repo + ":" + pf.path }
 // The returned cache replaces the engine's: an entry for a file no longer in
 // any snapshot is dropped, so the cache never grows across cycles. A refused
 // file is neither parsed nor unparsed: it is not a job at all.
-func (e *Engine) parseFiles(ctx context.Context, snaps []gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int, refused []RefusedFile) {
-	prev := e.snapshotParseCache()
+func (dc *decider) parseFiles(ctx context.Context, c cycle, snaps []gitwatch.Snapshot) (parsed []parsedFile, next map[string]parseEntry, unparsed int, refused []RefusedFile) {
+	prev := dc.parseCache()
 	next = make(map[string]parseEntry)
 	// A file is parsed in the first managed namespace whatever it declares, so
 	// the token needs a rule there anyway (docs/running-nops.md#the-nomad-token).
 	// No namespace at all is refused by the client.
 	var parseNS string
-	if len(e.namespaces) > 0 {
-		parseNS = e.namespaces[0]
+	if len(dc.namespaces) > 0 {
+		parseNS = dc.namespaces[0]
 	}
 	for _, snap := range snaps {
 		ref := commitRef{repo: snap.Repository, sha: snap.Commit, subject: snap.Subject, author: snap.Author}
 		for _, f := range snap.Files {
-			pf, outcome, rf := e.parseFile(ctx, parseNS, prev, next, ref, f)
+			pf, outcome, rf := dc.parseFile(ctx, c, parseNS, prev, next, ref, f)
 			switch outcome {
 			case fileParsed:
 				parsed = append(parsed, pf)
@@ -228,14 +230,16 @@ const (
 
 // parseFile parses one file read at ref in namespace parseNS, and records a
 // successful parse in next. Anything but fileParsed is a file that does not
-// count as a job, logged here. The RefusedFile is set for fileRefused only.
-func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, fileOutcome, RefusedFile) {
-	log := e.log.With("repo", ref.repo, "file", f.Path, "commit", ref.sha)
+// count as a job, logged here and told to c. The RefusedFile is set for
+// fileRefused only.
+func (dc *decider) parseFile(ctx context.Context, c cycle, parseNS string, prev, next map[string]parseEntry, ref commitRef, f gitwatch.File) (parsedFile, fileOutcome, RefusedFile) {
+	log := c.log().With("repo", ref.repo, "file", f.Path, "commit", ref.sha)
+	failed := FileError{Repository: ref.repo, Path: f.Path}
 	vars := commitVars(f.Vars, ref.sha)
 	key := parseCacheKey(f.Content, vars)
-	entry, ok := e.cachedParse(prev, key)
+	entry, ok := prev[key]
 	if !ok {
-		job, err := e.nomad.ParseHCL(ctx, parseNS, f.Content, vars)
+		job, err := dc.nomad.ParseHCL(ctx, parseNS, f.Content, vars)
 		if err == nil && job != nil {
 			defaultNamespace(job)
 		}
@@ -250,22 +254,32 @@ func (e *Engine) parseFile(ctx context.Context, parseNS string, prev, next map[s
 	switch {
 	case entry.err != nil:
 		log.ErrorContext(ctx, "parse job file", "error", entry.err)
+		failed.Error = "parse job file: " + entry.err.Error()
+		c.failed(failed)
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	case entry.job.ID == nil || *entry.job.ID == "":
 		log.ErrorContext(ctx, "parsed job has no ID")
+		failed.Error = "the job has no ID"
+		c.failed(failed)
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
 	ns, id := *entry.job.Namespace, *entry.job.ID
+	failed.Namespace, failed.JobID = ns, id
 	// Refused before anything else is asked of the job: whoever pushed the file
 	// had no say over this one.
-	if patterns, ok := e.repoJobs[ref.repo]; ok && !jobAllowed(patterns, ns, id) {
+	if patterns, ok := dc.repoJobs[ref.repo]; ok && !jobAllowed(patterns, ns, id) {
 		log.ErrorContext(ctx, "the repository may not declare this job: file refused",
 			"job", id, "namespace", ns, "jobs", patterns)
+		failed.Error = fmt.Sprintf("the repository may not declare this job: its jobs are %s", strings.Join(patterns, ", "))
+		c.failed(failed)
 		return parsedFile{}, fileRefused, RefusedFile{Repository: ref.repo, Path: f.Path, Namespace: ns, JobID: id}
 	}
-	if !e.managedNS[ns] {
+	if !dc.managedNS[ns] {
 		log.ErrorContext(ctx, "job declares a namespace nops does not manage",
-			"job", id, "declared_namespace", ns, "managed_namespaces", e.namespaces)
+			"job", id, "declared_namespace", ns, "managed_namespaces", dc.namespaces)
+		failed.Namespace = ""
+		failed.Error = fmt.Sprintf("the job declares namespace %q, which Nops does not manage", ns)
+		c.failed(failed)
 		return parsedFile{}, fileUnparsed, RefusedFile{}
 	}
 	return parsedFile{path: f.Path, commit: ref, job: entry.job, cfg: meta.ParseJob(entry.job), src: jobSource{file: f.Content, vars: vars}}, fileParsed, RefusedFile{}
@@ -308,7 +322,7 @@ func defaultNamespace(job *api.Job) {
 // (the conservative reading, since nops cannot tell which one is meant). Every issue found by meta.Parse is logged
 // here, whatever the file turns out to be. A job with nops_role = "hook"
 // takes precedence over nops_managed on the same file.
-func (e *Engine) classify(ctx context.Context, parsed []parsedFile) (hooks, managed []parsedFile) {
+func (dc *decider) classify(ctx context.Context, c cycle, parsed []parsedFile) (hooks, managed []parsedFile) {
 	byKey := make(map[jobKey][]parsedFile, len(parsed))
 	for _, pf := range parsed {
 		key := keyOf(pf.job)
@@ -332,22 +346,41 @@ func (e *Engine) classify(ctx context.Context, parsed []parsedFile) (hooks, mana
 			for i, pf := range group {
 				files[i] = pf.fileName()
 			}
-			e.log.ErrorContext(ctx, "two files parse to the same job ID: both ignored",
+			c.log().ErrorContext(ctx, "two files parse to the same job ID: both ignored",
 				"job", key.id, "namespace", key.namespace, "files", files)
+			for _, pf := range group {
+				c.failed(FileError{Repository: pf.commit.repo, Path: pf.path, Namespace: key.namespace, JobID: key.id,
+					Error: "two files parse to this job, so both are ignored: " + strings.Join(files, ", ")})
+			}
 			continue
 		}
 		pf := group[0]
 		for _, iss := range pf.cfg.Issues {
-			logIssue(ctx, e.log, key.id, pf, iss)
+			logIssue(ctx, c.log(), key.id, pf, iss)
 		}
 		switch {
 		case pf.cfg.IsHook:
+			if pf.cfg.HasErrors() {
+				c.failed(FileError{Repository: pf.commit.repo, Path: pf.path, Namespace: key.namespace, JobID: key.id,
+					Error: "the hook has invalid meta: " + issueErrors(pf.cfg.Issues)})
+			}
 			hooks = append(hooks, pf)
 		case pf.cfg.Managed:
 			managed = append(managed, pf)
 		}
 	}
 	return hooks, managed
+}
+
+// issueErrors writes the issues of severity error as one line.
+func issueErrors(issues []meta.Issue) string {
+	var out []string
+	for _, iss := range issues {
+		if iss.Severity == meta.SeverityError {
+			out = append(out, iss.Key+": "+iss.Message)
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 func logIssue(ctx context.Context, log *slog.Logger, jobID string, pf parsedFile, iss meta.Issue) {
@@ -368,20 +401,24 @@ func logIssue(ctx context.Context, log *slog.Logger, jobID string, pf parsedFile
 // is. ok is false when the job was skipped for a failure of nops scoped to it
 // (already logged): the caller keeps no observation for it this cycle rather
 // than showing stale data.
-func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
+func (dc *decider) reconcileJob(ctx context.Context, c cycle, mf parsedFile, hooks map[string]parsedFile, pause *Hold, window *WindowStatus, lift *store.WindowLift) (obs Observation, ok bool, err error) {
 	key := keyOf(mf.job)
 	jobID, ns, commit := key.id, key.namespace, mf.commit
-	log := e.log.With("job", jobID, "namespace", ns, "repo", commit.repo, "commit", commit.sha)
+	log := c.log().With("job", jobID, "namespace", ns, "repo", commit.repo, "commit", commit.sha)
+
+	skipped := func(what string, err error) (Observation, bool, error) {
+		log.ErrorContext(ctx, what, "error", err)
+		c.failed(FileError{Repository: commit.repo, Path: mf.path, Namespace: ns, JobID: jobID, Error: what + ": " + err.Error()})
+		return Observation{}, false, nil
+	}
 
 	targetHash, err := specHash(mf.job)
 	if err != nil {
-		log.ErrorContext(ctx, "compute spec hash", "error", err)
-		return Observation{}, false, nil
+		return skipped("compute spec hash", err)
 	}
 	frozen, hash, problem, err := freezeHooks(mf.cfg, hooks, targetHash)
 	if err != nil {
-		log.ErrorContext(ctx, "freeze hooks", "error", err)
-		return Observation{}, false, nil
+		return skipped("freeze hooks", err)
 	}
 
 	// A Deploy now request lifts the window, for the spec the person saw and no
@@ -394,14 +431,14 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 	obs = Observation{
 		JobID: jobID, Namespace: ns, Repository: commit.repo, FilePath: mf.path,
 		Policy: mf.cfg.Policy, SpecHash: hash, PreHooks: hookRefs(mf.cfg.PreHooks, hooks), PostHooks: hookRefs(mf.cfg.PostHooks, hooks),
-		Issues: mf.cfg.Issues, ObservedAt: e.now(), Hold: hold, Window: window,
+		Issues: mf.cfg.Issues, ObservedAt: dc.now(), Hold: hold, Window: window, HookProblem: problem,
 	}
 
 	var (
 		live      *api.Job
 		liveIndex uint64
 	)
-	live, err = e.nomad.Job(ctx, ns, jobID)
+	live, err = dc.nomad.Job(ctx, ns, jobID)
 	switch {
 	case errors.Is(err, nomadx.ErrJobNotFound):
 		live = nil
@@ -417,12 +454,11 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 	if live != nil {
 		planJob, err = substituteScalingCounts(mf.job, live)
 		if err != nil {
-			log.ErrorContext(ctx, "copy live scaling counts", "error", err)
-			return Observation{}, false, nil
+			return skipped("copy live scaling counts", err)
 		}
 	}
 
-	plan, err := e.nomad.Plan(ctx, planJob)
+	plan, err := dc.nomad.Plan(ctx, planJob)
 	if err != nil {
 		log.ErrorContext(ctx, "plan job", "error", err)
 		obs.NomadError = "plan job: " + err.Error()
@@ -444,14 +480,14 @@ func (e *Engine) reconcileJob(ctx context.Context, mf parsedFile, hooks map[stri
 		obs.Drift, obs.PlanDiff = true, string(redacted)
 	}
 
-	blockedBy, blockedReason, err := e.reconcileDeployment(ctx, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, diffHash, redacted, planJob, mf.src, hold, liftedBy)
+	blockedBy, blockedReason, err := dc.reconcileDeployment(ctx, c, log, key, commit, mf.cfg, hash, frozen, problem, liveIndex, drift, diffHash, redacted, planJob, mf.src, hold, liftedBy)
 	if err != nil {
 		return obs, true, err
 	}
 	obs.BlockedBy, obs.BlockedReason = blockedBy, blockedReason
 	if lift != nil {
 		// What a deployment did not use up is dropped now, never kept for later.
-		if err := e.dropWindowLift(ctx, *lift, liftDropReason(*lift, hash, pause, window, obs)); err != nil {
+		if err := c.dropWindowLift(ctx, *lift, liftDropReason(*lift, hash, pause, window, obs)); err != nil {
 			return obs, true, err
 		}
 	}
@@ -511,11 +547,11 @@ func liftDropReason(l store.WindowLift, hash string, pause *Hold, window *Window
 // index that moved while the diff kept the hash a deployment was detected with
 // is a scale, not an outside edit: the deployment stays, at the new index, and
 // a failed or rejected one keeps blocking (invariant 2).
-func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
+func (dc *decider) reconcileDeployment(ctx context.Context, c cycle, log *slog.Logger, key jobKey, commit commitRef, cfg meta.Config,
 	hash string, frozen []store.DeploymentHook, problem string, liveIndex uint64, drift bool, diffHash string, redacted []byte, planJob *api.Job, src jobSource, hold *Hold, liftedBy string) (blockedBy, blockedReason string, err error) {
 
 	jobID := key.id
-	active, err := e.store.ActiveDeployment(ctx, key.namespace, jobID)
+	active, err := dc.store.ActiveDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		active = nil
@@ -529,29 +565,29 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 			return "", "", nil
 		case store.StateDetected, store.StatePendingApproval:
 			if cfg.Policy != meta.PolicyNone && active.SpecHash == hash && active.CASIndex != liveIndex && sameDiff(active.DiffHash, diffHash) {
-				if err := e.moveCASIndex(ctx, log, active, liveIndex); err != nil {
+				if err := c.moveCASIndex(ctx, log, active, liveIndex); err != nil {
 					return "", "", err
 				}
 			}
 			switch {
 			case cfg.Policy == meta.PolicyNone:
-				if err := e.transition(ctx, log, active, store.StateSuperseded, "policy changed to none"); err != nil {
+				if err := c.transition(ctx, log, active, store.StateSuperseded, "policy changed to none"); err != nil {
 					return "", "", err
 				}
 			case active.SpecHash != hash:
-				if err := e.transition(ctx, log, active, store.StateSuperseded, fmt.Sprintf("newer spec at commit %s", commit.sha)); err != nil {
+				if err := c.transition(ctx, log, active, store.StateSuperseded, fmt.Sprintf("newer spec at commit %s", commit.sha)); err != nil {
 					return "", "", err
 				}
 			case active.CASIndex != liveIndex:
-				if err := e.transition(ctx, log, active, store.StateSuperseded, "job modified outside nops"); err != nil {
+				if err := c.transition(ctx, log, active, store.StateSuperseded, "job modified outside nops"); err != nil {
 					return "", "", err
 				}
 			case !drift && !Rerun(active):
-				if err := e.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
+				if err := c.transition(ctx, log, active, store.StateCompleted, "already in sync"); err != nil {
 					return "", "", err
 				}
 			case holdOn(hold, active) != nil && active.State == store.StateDetected && active.Policy == store.PolicyAuto:
-				if err := e.transition(ctx, log, active, store.StateSuperseded, hold.Reason); err != nil {
+				if err := c.transition(ctx, log, active, store.StateSuperseded, hold.Reason); err != nil {
 					return "", "", err
 				}
 			default:
@@ -560,7 +596,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 					// it to pending_approval in a second write, which did not land.
 					// Apply never advances it (invariant 3), so this is the only
 					// way it gets to a human.
-					return "", "", e.leaveDetected(ctx, log, active, problem, commit.sha)
+					return "", "", dc.leaveDetected(ctx, c, log, active, problem, commit.sha)
 				}
 				return "", "", nil // still approvable / still pending: nothing to do
 			}
@@ -574,7 +610,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 	// The block is worked out before the hold: a hold gates the start and
 	// hides nothing, so a blocked job stays blocked, with its Retry, while it
 	// is held too.
-	latest, err := e.store.LatestDeployment(ctx, key.namespace, jobID)
+	latest, err := dc.store.LatestDeployment(ctx, key.namespace, jobID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		latest = nil
@@ -627,17 +663,7 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 		born, message = store.StatePendingApproval, "waiting for approval"
 	}
 	d.State = born
-	if err := e.store.CreateDeployment(ctx, d); err != nil {
-		if errors.Is(err, store.ErrActiveDeployment) {
-			log.WarnContext(ctx, "active deployment appeared concurrently: skipped this cycle", "error", err)
-			return "", "", nil
-		}
-		return "", "", fmt.Errorf("create deployment for %s: %w", jobID, err)
-	}
-	if born != store.StateDetected {
-		e.announce(ctx, log, d, store.StateDetected, born, message)
-	}
-	return "", "", nil
+	return "", "", c.create(ctx, log, d, message)
 }
 
 // leaveDetected moves a `detected` deployment that `auto` apply must not pick
@@ -645,11 +671,11 @@ func (e *Engine) reconcileDeployment(ctx context.Context, log *slog.Logger, key 
 // approve), else to pending_approval. Detection creates a deployment in that
 // state now; this is for one a nops that created it in two writes left
 // `detected` under approval.
-func (e *Engine) leaveDetected(ctx context.Context, log *slog.Logger, d *store.Deployment, problem, sha string) error {
+func (dc *decider) leaveDetected(ctx context.Context, c cycle, log *slog.Logger, d *store.Deployment, problem, sha string) error {
 	if problem != "" {
-		return e.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, sha))
+		return c.transition(ctx, log, d, store.StateFailed, fmt.Sprintf("%s at commit %s", problem, sha))
 	}
-	return e.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
+	return c.transition(ctx, log, d, store.StatePendingApproval, "waiting for approval")
 }
 
 // blockedRetry decides whether a job's drift is blocked from a new
@@ -730,20 +756,20 @@ func Rerun(d *store.Deployment) bool {
 // whose job is no longer in the repo's snapshot. A deployment already being
 // applied (pre_hook/applying/post_hook) is left alone, and so is one of a
 // namespace nops does not manage.
-func (e *Engine) supersedeRemoved(ctx context.Context, seen map[jobKey]bool) error {
-	active, err := e.store.ListActive(ctx)
+func (dc *decider) supersedeRemoved(ctx context.Context, c cycle, seen map[jobKey]bool) error {
+	active, err := c.waiting(ctx)
 	if err != nil {
 		return fmt.Errorf("list active deployments: %w", err)
 	}
 	for _, d := range active {
-		if !e.managedNS[d.Namespace] || seen[jobKey{d.Namespace, d.JobID}] {
+		if !dc.managedNS[d.Namespace] || seen[jobKey{d.Namespace, d.JobID}] {
 			continue
 		}
 		if d.State != store.StateDetected && d.State != store.StatePendingApproval {
 			continue
 		}
-		log := e.log.With("job", d.JobID, "namespace", d.Namespace)
-		if err := e.transition(ctx, log, d, store.StateSuperseded, "job removed from repo"); err != nil {
+		log := c.log().With("job", d.JobID, "namespace", d.Namespace)
+		if err := c.transition(ctx, log, d, store.StateSuperseded, "job removed from repo"); err != nil {
 			return err
 		}
 	}

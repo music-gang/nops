@@ -178,6 +178,12 @@ func TestOpenAPISchemasMatchTheAnswers(t *testing.T) {
 		"NewACLToken":      reflect.TypeOf(apiNewACLToken{}),
 		"ACLTokenBody":     reflect.TypeOf(tokenBody{}),
 		"Change":           reflect.TypeOf(apiChange{}),
+		"PlanRequest":      reflect.TypeOf(apiPlanRequest{}),
+		"PlanFile":         reflect.TypeOf(apiPlanFile{}),
+		"Plan":             reflect.TypeOf(apiPlan{}),
+		"PlannedJob":       reflect.TypeOf(apiPlannedJob{}),
+		"PlanError":        reflect.TypeOf(apiPlanError{}),
+		"RemovedJob":       reflect.TypeOf(apiRemovedJob{}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			schema, ok := spec.Schemas[name]

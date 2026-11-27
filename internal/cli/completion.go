@@ -109,7 +109,7 @@ func completionTree(commands []command, serve *flag.FlagSet) []compNode {
 		var s settings
 		n := compNode{Flags: flagsOf(c.flagSet(&call{}, &s, io.Discard))}
 		for i, a := range strings.Fields(c.arg) {
-			n.Args = append(n.Args, compArg{Name: strings.Trim(a, "<>"), Pos: i + 1, File: a == "<file>", Words: argValues[a]})
+			n.Args = append(n.Args, compArg{Name: strings.Trim(a, "<>"), Pos: i + 1, File: a == "<file>" || a == "<dir>", Words: argValues[a]})
 		}
 		add(c.name, n, c.help)
 	}

@@ -58,6 +58,7 @@ func (s *server) apiEndpoints() []route {
 		{"POST /api/jobs/{namespace}/{job}/undismiss", inNamespace(acl.Dismiss), s.apiUndismiss},
 		{"POST /api/pause", globally(acl.Pause), s.apiPauseAll},
 		{"POST /api/resume", globally(acl.Pause), s.apiResumeAll},
+		{"POST /api/plan", anywhere(acl.Plan), s.apiPlan},
 		{"GET /api/backup", globally(acl.Backup), s.apiBackup},
 		{"GET /api/acl/policies", anyToken(), s.apiListPolicies},
 		{"GET /api/acl/policies/{name}", anyToken(), s.apiGetPolicy},
@@ -154,7 +155,12 @@ func (s *server) apiServerError(w http.ResponseWriter, r *http.Request, action s
 // leaves v as it is. It answers the 400 itself and returns false on a body that
 // is too large, is not JSON, or has a field the endpoint does not know.
 func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAPIBody))
+	return readBodyMax(w, r, v, maxAPIBody)
+}
+
+// readBodyMax is readBody with a limit of its own.
+func readBodyMax(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
 		apiError(w, http.StatusBadRequest, "the request body is not the JSON this endpoint takes: "+err.Error())
